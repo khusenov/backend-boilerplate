@@ -24,7 +24,10 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "prepare": "husky"
+    "prepare": "husky",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:studio": "prisma studio"
   },
   "repository": {
     "type": "git",
@@ -46,6 +49,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^17.0.7",
     "prettier": "^3.8.4",
+    "prisma": "^7.8.0",
     "tsup": "^8.5.1",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
@@ -53,6 +57,8 @@
   },
   "dependencies": {
     "@fastify/sensible": "^6.0.4",
+    "@prisma/client": "^7.8.0",
+    "dotenv": "^17.4.2",
     "envalid": "^8.2.0",
     "fastify": "^5.8.5"
   }

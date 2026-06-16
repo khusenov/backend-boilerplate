@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { cleanEnv, host, port, str } from 'envalid';
 
 export const env = cleanEnv(process.env, {
@@ -8,6 +9,7 @@ export const env = cleanEnv(process.env, {
     choices: ['fatal', 'error', 'warn', 'info', 'debug', 'trace'],
     default: 'info',
   }),
+  DATABASE_URL: str(),
 });
 
 export type Env = typeof env;

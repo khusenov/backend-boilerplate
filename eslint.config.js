@@ -12,12 +12,13 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         projectService: {
-          allowDefaultProject: ['eslint.config.js', 'tsup.config.ts'],
+          allowDefaultProject: ['eslint.config.js', 'tsup.config.ts', 'prisma.config.ts'],
         },
         tsconfigRootDir: import.meta.dirname,
       },
       globals: { ...globals.node },
     },
+    ignores: ['dist', 'node_modules', 'coverage', 'src/generated'],
   },
   prettier,
 );
