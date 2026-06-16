@@ -1,5 +1,7 @@
 import { fastify, type FastifyInstance } from 'fastify';
 import { fastifySensible } from '@fastify/sensible';
+import { diContainer, fastifyAwilixPlugin } from '@fastify/awilix';
+import { registerDependencies } from '@/container';
 
 export interface BuildAppOptions {
   logLevel: string;
@@ -14,6 +16,14 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   });
 
   await app.register(fastifySensible);
+  await app.register(fastifyAwilixPlugin, {
+    disposeOnClose: true,
+    disposeOnResponse: true,
+    strictBooleanEnforced: true,
+    injectionMode: 'PROXY',
+  });
+
+  registerDependencies(diContainer);
 
   app.get('/health', () => ({ status: 'ok' }));
 
