@@ -2,6 +2,7 @@ import { fastify, type FastifyInstance } from 'fastify';
 import { fastifySensible } from '@fastify/sensible';
 import { diContainer, fastifyAwilixPlugin } from '@fastify/awilix';
 import { registerDependencies } from '@/container';
+import { registerErrorHandler } from '@/presentation/http/error-handler';
 
 export interface BuildAppOptions {
   logLevel: string;
@@ -24,6 +25,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   });
 
   registerDependencies(diContainer);
+  registerErrorHandler(app);
 
   app.get('/health', () => ({ status: 'ok' }));
 

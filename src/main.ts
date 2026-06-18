@@ -7,18 +7,28 @@ async function bootstrap(): Promise<void> {
     disableRequestLogging: env.isDevelopment,
   });
 
-  const shutdown = async (signal: string): Promise<void> => {
+  const shutdown = async (signal: string, code = 0): Promise<void> => {
     app.log.info({ signal }, 'shutting down');
     setTimeout(() => {
       app.log.error('forced exit after shutdown timeout');
       process.exit(1);
     }, 10_000).unref();
     await app.close();
-    process.exit(0);
+    process.exit(code);
   };
 
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
+
+  process.on('unhandledRejection', (error) => {
+    app.log.fatal({ err: error }, 'unhandled rejection');
+    void shutdown('unhandledRejection', 1);
+  });
+
+  process.on('uncaughtException', (error) => {
+    app.log.fatal({ err: error }, 'uncaught exception');
+    void shutdown('uncaughtException', 1);
+  });
 
   try {
     await app.listen({ host: env.HOST, port: env.PORT });
