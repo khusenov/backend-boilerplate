@@ -58,13 +58,16 @@ export class User extends Entity<UserProps> {
     return this.props.status === UserStatus.Active;
   }
 
+  private static normalizeName(value: string, field: string): string {
+    const trimmed = value.trim();
+    if (!trimmed) throw new UserInvalidNameError(field);
+    return trimmed;
+  }
+
   static create(params: UserCreateParams): User {
     const now = new Date();
-    const firstName = params.firstName.trim();
-    const lastName = params.lastName.trim();
-
-    if (!firstName) throw new UserInvalidNameError('firstName');
-    if (!lastName) throw new UserInvalidNameError('lastName');
+    const firstName = this.normalizeName(params.firstName, 'firstName');
+    const lastName = this.normalizeName(params.lastName, 'lastName');
 
     return new User({
       ...params,
@@ -92,6 +95,29 @@ export class User extends Entity<UserProps> {
     if (this.isDeleted) throw new UserDeletedError(this.id);
     if (!this.isActive) return;
     this.props.status = UserStatus.Inactive;
+    this.touch();
+  }
+
+  changeFirstName(val: string): void {
+    if (this.isDeleted) throw new UserDeletedError(this.id);
+    const firstName = User.normalizeName(val, 'firstName');
+    if (this.props.firstName === firstName) return;
+    this.props.firstName = firstName;
+    this.touch();
+  }
+
+  changeLastName(val: string): void {
+    if (this.isDeleted) throw new UserDeletedError(this.id);
+    const lastName = User.normalizeName(val, 'lastName');
+    if (this.props.lastName === lastName) return;
+    this.props.lastName = lastName;
+    this.touch();
+  }
+
+  changeEmail(email: Email): void {
+    if (this.isDeleted) throw new UserDeletedError(this.id);
+    if (this.props.email.equals(email)) return;
+    this.props.email = email;
     this.touch();
   }
 
