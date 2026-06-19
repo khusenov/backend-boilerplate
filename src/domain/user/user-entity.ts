@@ -1,18 +1,6 @@
 import { Entity, type EntityProps } from '@/domain/shared/entity';
 import type { Email } from './email-vo';
-import { ConflictError, ValidationError } from '@/shared/errors';
-
-export class UserDeletedError extends ConflictError {
-  constructor(id: string) {
-    super(`User with id ${id} is deleted`, { code: 'USER_DELETED' });
-  }
-}
-
-export class UserInvalidNameError extends ValidationError {
-  constructor(field: string) {
-    super(`${field} is invalid`, { code: 'USER_NAME_INVALID' });
-  }
-}
+import { UserInvalidNameError, UserDeletedError } from './user-errors';
 
 export const UserStatus = {
   Active: 'active',
