@@ -4,6 +4,7 @@ import type { IdGenerator } from '@/application/shared/ports/id-generator';
 import { Email } from '@/domain/user/email-vo';
 import { User } from '@/domain/user/user-entity';
 import { EmailAlreadyTakenError } from '@/domain/user/user-errors';
+import { toUserDto, type UserDto } from '@/application/user/user-dto';
 
 export interface CreateUserInput {
   firstName: string;
@@ -12,9 +13,7 @@ export interface CreateUserInput {
   password: string;
 }
 
-export interface CreateUserOutput {
-  id: string;
-}
+export type CreateUserOutput = UserDto;
 
 interface CreateUserDeps {
   userRepository: UserRepository;
@@ -52,6 +51,6 @@ export class CreateUser {
 
     await this.users.create(newUser);
 
-    return { id: newUser.id };
+    return toUserDto(newUser);
   }
 }

@@ -1,4 +1,4 @@
-import { ConflictError, ValidationError } from '@/shared/errors';
+import { ConflictError, NotFoundError, ValidationError } from '@/shared/errors';
 
 export class UserDeletedError extends ConflictError {
   constructor(id: string) {
@@ -15,5 +15,11 @@ export class UserInvalidNameError extends ValidationError {
 export class EmailAlreadyTakenError extends ConflictError {
   constructor(email: string) {
     super(`Email ${email} is already taken`, { code: 'EMAIL_ALREADY_TAKEN' });
+  }
+}
+
+export class UserNotFoundError extends NotFoundError {
+  constructor(id: string) {
+    super(`User with id ${id} not found`, { code: 'USER_NOT_FOUND' });
   }
 }
