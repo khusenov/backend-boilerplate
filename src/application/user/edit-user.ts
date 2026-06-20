@@ -5,9 +5,9 @@ import { Email } from '@/domain/user/email-vo';
 
 export interface EditUserInput {
   id: string;
-  firstName?: string;
-  lastName?: string;
-  email?: string;
+  firstName?: string | undefined;
+  lastName?: string | undefined;
+  email?: string | undefined;
 }
 
 export type EditUserOutput = UserDto;

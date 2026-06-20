@@ -3,7 +3,10 @@ export interface PageQuery {
   pageSize: number;
 }
 
-export type PageQueryInput = Partial<PageQuery>;
+export interface PageQueryInput {
+  page?: number | undefined;
+  pageSize?: number | undefined;
+}
 
 export interface PageSlice<T> {
   items: T[];
