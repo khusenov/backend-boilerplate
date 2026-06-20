@@ -6,3 +6,23 @@ generator client {
 datasource db {
   provider = "mysql"
 }
+
+enum UserStatus {
+  active
+  inactive
+}
+
+model User {
+  id           String     @id @db.Char(36)
+  firstName    String     @map("first_name") @db.VarChar(100)
+  lastName     String     @map("last_name") @db.VarChar(100)
+  email        String     @unique @db.VarChar(255)
+  passwordHash String     @map("password_hash") @db.VarChar(255)
+  status       UserStatus
+  createdAt    DateTime   @map("created_at")
+  updatedAt    DateTime   @map("updated_at")
+  deletedAt    DateTime?  @map("deleted_at")
+
+  @@index([deletedAt])
+  @@map("users")
+}
