@@ -28,6 +28,8 @@ const editUserBody = z.object({
 const deleteUserParams = getUserParams;
 
 export const userRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
+  app.addHook('onRequest', app.authenticate);
+
   app.get('/', { schema: { querystring: listUsersQuery } }, async (request, reply) => {
     const { listUsers } = request.diScope.cradle;
     const page = await listUsers.execute(request.query);

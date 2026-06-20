@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { cleanEnv, host, port, str } from 'envalid';
+import { bool, cleanEnv, host, num, port, str } from 'envalid';
 
 export const env = cleanEnv(process.env, {
   NODE_ENV: str({ choices: ['development', 'test', 'production'], default: 'development' }),
@@ -10,6 +10,14 @@ export const env = cleanEnv(process.env, {
     default: 'info',
   }),
   DATABASE_URL: str(),
+  JWT_ACCESS_SECRET: str(),
+  JWT_ISSUER: str({ default: 'finflow' }),
+  JWT_AUDIENCE: str({ default: 'finflow-api' }),
+  ACCESS_TOKEN_TTL: num({ default: 900 }), // 15 minutes
+  REFRESH_TOKEN_TTL: num({ default: 60 * 60 * 24 * 14 }), // 14 days
+  COOKIE_SECRET: str({ default: '' }),
+  WEB_ORIGIN: str({ devDefault: 'http://127.0.0.1:3000' }),
+  COOKIE_SECURE: bool({ default: true, devDefault: false }),
 });
 
 export type Env = typeof env;

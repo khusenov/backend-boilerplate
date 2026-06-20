@@ -30,6 +30,13 @@ export function registerErrorHandler(app: FastifyInstance): void {
       });
     }
 
+    if (typeof error.statusCode === 'number' && error.statusCode >= 400 && error.statusCode < 500) {
+      request.log.info({ err: error }, 'client error');
+      return reply.status(error.statusCode).send({
+        error: { code: error.code ?? 'BAD_REQUEST', message: error.message, requestId: request.id },
+      });
+    }
+
     request.log.error({ err: error }, 'unhandled error');
     return reply.status(500).send({
       error: { code: 'INTERNAL', message: 'Internal Server Error', requestId: request.id },
