@@ -58,6 +58,7 @@
   "dependencies": {
     "@fastify/awilix": "^8.2.0",
     "@fastify/sensible": "^6.0.4",
+    "@prisma/adapter-mariadb": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "awilix": "^13.0.5",
     "dotenv": "^17.4.2",
