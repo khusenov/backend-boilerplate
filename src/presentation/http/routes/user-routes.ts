@@ -29,6 +29,13 @@ const deleteUserParams = getUserParams;
 
 export const userRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
   app.addHook('onRequest', app.authenticate);
+  app.addHook('onRoute', (route) => {
+    route.schema = {
+      ...route.schema,
+      tags: ['Users'],
+      security: [{ bearerAuth: [] }],
+    };
+  });
 
   app.get('/', { schema: { querystring: listUsersQuery } }, async (request, reply) => {
     const { listUsers } = request.diScope.cradle;

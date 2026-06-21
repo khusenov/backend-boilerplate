@@ -3,7 +3,13 @@ import { fastifySensible } from '@fastify/sensible';
 import { diContainer, fastifyAwilixPlugin } from '@fastify/awilix';
 import { registerDependencies } from '@/container';
 import { registerErrorHandler } from '@/presentation/http/error-handler';
-import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
+import fastifySwagger from '@fastify/swagger';
+import fastifySwaggerUi from '@fastify/swagger-ui';
+import {
+  jsonSchemaTransform,
+  serializerCompiler,
+  validatorCompiler,
+} from 'fastify-type-provider-zod';
 import { userRoutes } from '@/presentation/http/routes/user-routes';
 import { fastifyCors } from '@fastify/cors';
 import { env } from '@/config/env';
@@ -40,7 +46,23 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerDependencies(diContainer);
   registerErrorHandler(app);
 
-  app.get('/health', () => ({ status: 'ok' }));
+  if (!env.isProduction) {
+    await app.register(fastifySwagger, {
+      openapi: {
+        info: { title: 'Finflow API', version: '1.0.0' },
+        components: {
+          securitySchemes: {
+            bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+          },
+        },
+      },
+      transform: jsonSchemaTransform,
+    });
+
+    await app.register(fastifySwaggerUi, { routePrefix: '/docs' });
+  }
+
+  app.get('/health', { schema: { tags: ['Health'] } }, () => ({ status: 'ok' }));
 
   await app.register(authRoutes, { prefix: '/auth' });
   await app.register(userRoutes, { prefix: '/users' });

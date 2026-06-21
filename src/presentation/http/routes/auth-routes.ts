@@ -19,6 +19,10 @@ const refreshBody = z
   .transform((value) => value ?? {});
 
 export const authRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
+  app.addHook('onRoute', (route) => {
+    route.schema = { ...route.schema, tags: ['Auth'] };
+  });
+
   app.post('/login', { schema: { body: loginBody } }, async (request, reply) => {
     const { login, env } = request.diScope.cradle;
     const result = await login.execute(request.body);
@@ -61,11 +65,18 @@ export const authRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
     return reply.status(204).send();
   });
 
-  app.get('/me', { preHandler: [app.authenticate] }, async (request, reply) => {
-    const { getUser } = request.diScope.cradle;
-    const user = await getUser.execute({ id: request.user!.sub });
-    return reply.status(200).send(user);
-  });
+  app.get(
+    '/me',
+    {
+      preHandler: [app.authenticate],
+      schema: { security: [{ bearerAuth: [] }] },
+    },
+    async (request, reply) => {
+      const { getUser } = request.diScope.cradle;
+      const user = await getUser.execute({ id: request.user!.sub });
+      return reply.status(200).send(user);
+    },
+  );
 
   done();
 };
