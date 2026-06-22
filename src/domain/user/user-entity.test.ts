@@ -175,6 +175,16 @@ describe('User', () => {
       expect(user.updatedAt).toEqual(new Date('2026-01-01T00:00:01.000Z'));
     });
 
+    it('is a no-op when the normalized name is unchanged', () => {
+      const user = makeUser({ lastName: 'Lovelace' });
+      const before = user.updatedAt;
+      vi.advanceTimersByTime(1000);
+
+      user.changeLastName('  Lovelace  ');
+
+      expect(user.updatedAt).toBe(before);
+    });
+
     it('throws for a blank name', () => {
       expect(() => makeUser().changeLastName('   ')).toThrow(UserInvalidNameError);
     });

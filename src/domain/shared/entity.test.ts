@@ -96,6 +96,11 @@ describe('Entity', () => {
       expect(entity.equals(undefined)).toBe(false);
     });
 
+    it('returns false when compared with a non-Entity object', () => {
+      const entity = TestEntity.create(makeProps());
+      expect(entity.equals({ id: 'test-id-1' } as unknown as TestEntity)).toBe(false);
+    });
+
     it('returns false for entities of different classes with the same id', () => {
       class OtherEntity extends Entity<TestProps> {
         static create(props: TestProps): OtherEntity {
