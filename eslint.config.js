@@ -12,7 +12,12 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         projectService: {
-          allowDefaultProject: ['eslint.config.js', 'tsup.config.ts', 'prisma.config.ts'],
+          allowDefaultProject: [
+            'eslint.config.js',
+            'tsup.config.ts',
+            'prisma.config.ts',
+            'vitest.config.ts',
+          ],
         },
         tsconfigRootDir: import.meta.dirname,
       },
