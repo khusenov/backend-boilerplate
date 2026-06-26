@@ -11,7 +11,5 @@ export interface UserRepository {
 
   findByEmail(email: Email): Promise<User | null>;
 
-  create(user: User): Promise<void>;
-
-  update(user: User): Promise<void>;
+  save(user: User): Promise<void>;
 }

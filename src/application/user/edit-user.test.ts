@@ -31,8 +31,7 @@ function makeEditUser() {
     findByEmail: vi.fn<UserRepository['findByEmail']>(),
     findById: vi.fn<UserRepository['findById']>(),
     list: vi.fn<UserRepository['list']>(),
-    create: vi.fn<UserRepository['create']>(),
-    update: vi.fn<UserRepository['update']>().mockResolvedValue(undefined),
+    save: vi.fn<UserRepository['save']>().mockResolvedValue(undefined),
   } satisfies UserRepository;
 
   const sut = new EditUser({ userRepository: users });
@@ -113,8 +112,8 @@ describe('EditUser', () => {
 
       await ctx.sut.execute({ id: 'user-1', firstName: 'Janet' });
 
-      expect(ctx.users.update).toHaveBeenCalledOnce();
-      expect(ctx.users.update).toHaveBeenCalledWith(user);
+      expect(ctx.users.save).toHaveBeenCalledOnce();
+      expect(ctx.users.save).toHaveBeenCalledWith(user);
     });
 
     it('returns a mapped UserDto on success', async () => {

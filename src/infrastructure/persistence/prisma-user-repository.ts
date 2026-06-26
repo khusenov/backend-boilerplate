@@ -41,17 +41,15 @@ export class PrismaUserRepository implements UserRepository {
     return row ? toDomain(row) : null;
   }
 
-  async create(user: User): Promise<void> {
+  async save(user: User): Promise<void> {
+    // id and createdAt are immutable: written on insert, never on update.
+    const { id, createdAt, ...mutable } = toPersistence(user);
     try {
-      await this.prisma.user.create({ data: toPersistence(user) });
-    } catch (error) {
-      mapPrismaError(error);
-    }
-  }
-
-  async update(user: User): Promise<void> {
-    try {
-      await this.prisma.user.update({ where: { id: user.id }, data: toPersistence(user) });
+      await this.prisma.user.upsert({
+        where: { id },
+        create: { id, createdAt, ...mutable },
+        update: mutable,
+      });
     } catch (error) {
       mapPrismaError(error);
     }

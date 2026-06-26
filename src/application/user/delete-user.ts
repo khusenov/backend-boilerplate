@@ -22,6 +22,6 @@ export class DeleteUser {
     const user = await this.users.findById(input.id);
     if (!user) throw new UserNotFoundError(input.id);
     user.softDelete();
-    await this.users.update(user);
+    await this.users.save(user);
   }
 }

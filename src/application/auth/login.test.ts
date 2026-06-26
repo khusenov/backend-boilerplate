@@ -35,8 +35,7 @@ function makeLogin() {
     findByEmail: vi.fn<UserRepository['findByEmail']>(),
     findById: vi.fn<UserRepository['findById']>(),
     list: vi.fn<UserRepository['list']>(),
-    create: vi.fn<UserRepository['create']>(),
-    update: vi.fn<UserRepository['update']>(),
+    save: vi.fn<UserRepository['save']>(),
   } satisfies UserRepository;
 
   const hasher = {

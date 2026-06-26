@@ -39,7 +39,7 @@ export class EditUser {
     if (input.firstName !== undefined) user.changeFirstName(input.firstName);
     if (input.lastName !== undefined) user.changeLastName(input.lastName);
 
-    await this.users.update(user);
+    await this.users.save(user);
     return toUserDto(user);
   }
 }

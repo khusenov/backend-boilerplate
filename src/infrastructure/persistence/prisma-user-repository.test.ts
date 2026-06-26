@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 import { PrismaUserRepository } from './prisma-user-repository';
 import type { PrismaClient, User as UserRow } from '@/generated/prisma/client';
-import { ConflictError, NotFoundError } from '@/shared/errors';
+import { ConflictError } from '@/shared/errors';
 import { Email } from '@/domain/user/email-vo';
 import { User } from '@/domain/user/user-entity';
 
@@ -42,8 +42,11 @@ function makeRepo() {
     count: vi.fn(),
     findFirst: vi.fn(),
     findUnique: vi.fn(),
-    create: vi.fn().mockResolvedValue(undefined),
-    update: vi.fn().mockResolvedValue(undefined),
+    upsert: vi
+      .fn<
+        (args: { create: UserRow; update: Omit<UserRow, 'id' | 'createdAt'> }) => Promise<unknown>
+      >()
+      .mockResolvedValue(undefined),
   };
 
   const prisma = {
@@ -167,33 +170,30 @@ describe('PrismaUserRepository', () => {
     });
   });
 
-  describe('create', () => {
-    it('persists the user via prisma.user.create', async () => {
-      await ctx.repo.create(makeUser());
+  describe('save', () => {
+    it('upserts the user keyed on id', async () => {
+      await ctx.repo.save(makeUser());
 
-      expect(ctx.userDelegate.create).toHaveBeenCalledOnce();
-    });
-
-    it('throws ConflictError on unique constraint violation (P2002)', async () => {
-      ctx.userDelegate.create.mockRejectedValue(makePrismaError('P2002'));
-
-      await expect(ctx.repo.create(makeUser())).rejects.toThrow(ConflictError);
-    });
-  });
-
-  describe('update', () => {
-    it('updates the record by user id', async () => {
-      await ctx.repo.update(makeUser());
-
-      expect(ctx.userDelegate.update).toHaveBeenCalledWith(
+      expect(ctx.userDelegate.upsert).toHaveBeenCalledOnce();
+      expect(ctx.userDelegate.upsert).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'user-1' } }),
       );
     });
 
-    it('throws NotFoundError when record does not exist (P2025)', async () => {
-      ctx.userDelegate.update.mockRejectedValue(makePrismaError('P2025'));
+    it('writes immutable columns (id, createdAt) on insert but never on update', async () => {
+      await ctx.repo.save(makeUser());
 
-      await expect(ctx.repo.update(makeUser())).rejects.toThrow(NotFoundError);
+      const [args] = ctx.userDelegate.upsert.mock.calls[0]!;
+      expect(args.create).toHaveProperty('id', 'user-1');
+      expect(args.create).toHaveProperty('createdAt');
+      expect(args.update).not.toHaveProperty('id');
+      expect(args.update).not.toHaveProperty('createdAt');
+    });
+
+    it('translates a unique constraint violation (P2002) into ConflictError', async () => {
+      ctx.userDelegate.upsert.mockRejectedValue(makePrismaError('P2002'));
+
+      await expect(ctx.repo.save(makeUser())).rejects.toThrow(ConflictError);
     });
   });
 });

@@ -23,8 +23,7 @@ function makeCreateUser() {
     findByEmail: vi.fn<UserRepository['findByEmail']>(),
     findById: vi.fn<UserRepository['findById']>(),
     list: vi.fn<UserRepository['list']>(),
-    create: vi.fn<UserRepository['create']>().mockResolvedValue(undefined),
-    update: vi.fn<UserRepository['update']>(),
+    save: vi.fn<UserRepository['save']>().mockResolvedValue(undefined),
   } satisfies UserRepository;
 
   const hasher = {
@@ -110,8 +109,8 @@ describe('CreateUser', () => {
         password: 'pw',
       });
 
-      expect(ctx.users.create).toHaveBeenCalledOnce();
-      const [createdUser] = ctx.users.create.mock.calls[0]!;
+      expect(ctx.users.save).toHaveBeenCalledOnce();
+      const [createdUser] = ctx.users.save.mock.calls[0]!;
       expect(createdUser.id).toBe('new-user-id');
     });
 

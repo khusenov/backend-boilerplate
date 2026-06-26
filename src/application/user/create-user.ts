@@ -49,7 +49,7 @@ export class CreateUser {
       passwordHash,
     });
 
-    await this.users.create(newUser);
+    await this.users.save(newUser);
 
     return toUserDto(newUser);
   }
