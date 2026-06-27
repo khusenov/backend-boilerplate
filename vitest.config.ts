@@ -7,6 +7,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    exclude: ['test/**', '**/*.int.test.ts'],
     coverage: {
       provider: 'v8',
       include: ['src/domain/**', 'src/application/**'],

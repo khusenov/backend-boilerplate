@@ -17,6 +17,7 @@ export default tseslint.config(
             'tsup.config.ts',
             'prisma.config.ts',
             'vitest.config.ts',
+            'vitest.integration.config.ts',
           ],
         },
         tsconfigRootDir: import.meta.dirname,
