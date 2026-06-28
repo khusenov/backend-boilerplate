@@ -1,6 +1,8 @@
 export interface AccessTokenPayload {
   sub: string; // user id
   email: string;
+  systemRoleKeys: string[];
+  permissions: string[];
 }
 
 export interface AccessTokenService {

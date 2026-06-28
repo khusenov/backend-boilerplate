@@ -1,6 +1,7 @@
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { RefreshTokenRepository } from '@/domain/auth/refresh-token-repository';
 import type { OpaqueTokenService } from '@/application/shared/ports/opaque-token-service';
+import type { GrantsReader } from '@/application/shared/ports/grants-reader';
 import { SessionService } from './session-service';
 import type { AuthTokensDto } from './auth-dto';
 import { RefreshTokenInvalidError, RefreshTokenReusedError } from '@/domain/auth/auth-errors';
@@ -16,6 +17,7 @@ interface RefreshSessionDeps {
   refreshTokenRepository: RefreshTokenRepository;
   opaqueTokenService: OpaqueTokenService;
   sessionService: SessionService;
+  grants: GrantsReader;
 }
 
 export class RefreshSession {
@@ -23,17 +25,20 @@ export class RefreshSession {
   private readonly refreshTokens: RefreshTokenRepository;
   private readonly opaque: OpaqueTokenService;
   private readonly sessions: SessionService;
+  private readonly grants: GrantsReader;
 
   constructor({
     userRepository,
     refreshTokenRepository,
     opaqueTokenService,
     sessionService,
+    grants,
   }: RefreshSessionDeps) {
     this.users = userRepository;
     this.refreshTokens = refreshTokenRepository;
     this.opaque = opaqueTokenService;
     this.sessions = sessionService;
+    this.grants = grants;
   }
 
   async execute(input: RefreshSessionInput): Promise<RefreshSessionOutput> {
@@ -60,6 +65,9 @@ export class RefreshSession {
     record.markUsed();
     await this.refreshTokens.update(record);
 
-    return this.sessions.reissue(user, record.familyId);
+    // Re-resolve grants every refresh: copying old claims would let a revoked
+    // role linger for the whole refresh lifetime, defeating short access TTLs (W12).
+    const grants = await this.grants.grantsFor(user.id);
+    return this.sessions.reissue(user, record.familyId, grants);
   }
 }

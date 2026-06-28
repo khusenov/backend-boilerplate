@@ -8,6 +8,7 @@ import { Email } from '@/domain/user/email-vo';
 import { User } from '@/domain/user/user-entity';
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { PasswordHasher } from '@/application/shared/ports/password-hasher';
+import type { GrantsReader } from '@/application/shared/ports/grants-reader';
 
 const FAKE_TOKENS: AuthTokensDto = {
   accessToken: 'access.token.jwt',
@@ -43,18 +44,26 @@ function makeLogin() {
     verify: vi.fn<PasswordHasher['verify']>(),
   } satisfies PasswordHasher;
 
+  const issue = vi.fn().mockResolvedValue(FAKE_TOKENS);
   const sessions = {
-    issue: vi.fn().mockResolvedValue(FAKE_TOKENS),
+    issue,
     reissue: vi.fn(),
   } as unknown as SessionService;
+
+  const grants = {
+    grantsFor: vi
+      .fn<GrantsReader['grantsFor']>()
+      .mockResolvedValue({ systemRoleKeys: [], permissions: [] }),
+  } satisfies GrantsReader;
 
   const sut = new Login({
     userRepository: users,
     passwordHasher: hasher,
     sessionService: sessions,
+    grants,
   });
 
-  return { sut, users, hasher, sessions };
+  return { sut, users, hasher, sessions, grants, issue };
 }
 
 describe('Login', () => {
@@ -111,6 +120,24 @@ describe('Login', () => {
       expect(result.user.email).toBe('jane@example.com');
       expect(result.user.status).toBe('active');
       expect(result.tokens).toEqual(FAKE_TOKENS);
+    });
+
+    it('resolves the user grants and issues a session carrying them', async () => {
+      const user = makeActiveUser();
+      ctx.users.findByEmail.mockResolvedValue(user);
+      ctx.hasher.verify.mockResolvedValue(true);
+      ctx.grants.grantsFor.mockResolvedValue({
+        systemRoleKeys: ['super-admin'],
+        permissions: ['users.read'],
+      });
+
+      await ctx.sut.execute({ email: 'jane@example.com', password: 'correct' });
+
+      expect(ctx.grants.grantsFor).toHaveBeenCalledWith(user.id);
+      expect(ctx.issue).toHaveBeenCalledWith(user, {
+        systemRoleKeys: ['super-admin'],
+        permissions: ['users.read'],
+      });
     });
 
     it('verifies the supplied password against the stored hash', async () => {

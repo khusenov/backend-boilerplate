@@ -23,6 +23,23 @@ import { Logout } from '@/application/auth/logout';
 import { JoseAccessTokenService } from '@/infrastructure/security/jose-access-token-service';
 import { CryptoOpaqueTokenService } from '@/infrastructure/security/crypto-opaque-token-service';
 import { PrismaRefreshTokenRepository } from '@/infrastructure/persistence/prisma-refresh-token-repository';
+import type { GrantsReader } from '@/application/shared/ports/grants-reader';
+import type { RoleRepository } from '@/domain/authorization/role-repository';
+import type { PermissionRepository } from '@/application/shared/ports/permission-repository';
+import type { UserRoleRepository } from '@/application/shared/ports/user-role-repository';
+import { PrismaGrantsReader } from '@/infrastructure/persistence/prisma-grants-reader';
+import { PrismaRoleRepository } from '@/infrastructure/persistence/prisma-role-repository';
+import { PrismaPermissionRepository } from '@/infrastructure/persistence/prisma-permission-repository';
+import { PrismaUserRoleRepository } from '@/infrastructure/persistence/prisma-user-role-repository';
+import { CreateRole } from '@/application/authorization/create-role';
+import { GetRole } from '@/application/authorization/get-role';
+import { ListRoles } from '@/application/authorization/list-roles';
+import { EditRole } from '@/application/authorization/edit-role';
+import { DeleteRole } from '@/application/authorization/delete-role';
+import { AssignRole } from '@/application/authorization/assign-role';
+import { RevokeRole } from '@/application/authorization/revoke-role';
+import { ListPermissions } from '@/application/authorization/list-permissions';
+import { SyncAuthorization } from '@/application/authorization/sync-authorization';
 
 declare module '@fastify/awilix' {
   interface Cradle {
@@ -36,6 +53,10 @@ declare module '@fastify/awilix' {
     accessTokenService: AccessTokenService;
     opaqueTokenService: OpaqueTokenService;
     refreshTokenRepository: RefreshTokenRepository;
+    grants: GrantsReader;
+    roleRepository: RoleRepository;
+    permissionRepository: PermissionRepository;
+    userRoleRepository: UserRoleRepository;
 
     // use cases
     listUsers: ListUsers;
@@ -47,6 +68,15 @@ declare module '@fastify/awilix' {
     login: Login;
     refreshSession: RefreshSession;
     logout: Logout;
+    createRole: CreateRole;
+    getRole: GetRole;
+    listRoles: ListRoles;
+    editRole: EditRole;
+    deleteRole: DeleteRole;
+    assignRole: AssignRole;
+    revokeRole: RevokeRole;
+    listPermissions: ListPermissions;
+    syncAuthorization: SyncAuthorization;
   }
 }
 
@@ -63,6 +93,10 @@ export function registerDependencies(container: AwilixContainer): void {
     accessTokenService: asClass(JoseAccessTokenService).singleton(),
     opaqueTokenService: asClass(CryptoOpaqueTokenService).singleton(),
     refreshTokenRepository: asClass(PrismaRefreshTokenRepository).singleton(),
+    grants: asClass(PrismaGrantsReader).singleton(),
+    roleRepository: asClass(PrismaRoleRepository).singleton(),
+    permissionRepository: asClass(PrismaPermissionRepository).singleton(),
+    userRoleRepository: asClass(PrismaUserRoleRepository).singleton(),
 
     listUsers: asClass(ListUsers).singleton(),
     getUser: asClass(GetUser).singleton(),
@@ -73,5 +107,14 @@ export function registerDependencies(container: AwilixContainer): void {
     login: asClass(Login).singleton(),
     refreshSession: asClass(RefreshSession).singleton(),
     logout: asClass(Logout).singleton(),
+    createRole: asClass(CreateRole).singleton(),
+    getRole: asClass(GetRole).singleton(),
+    listRoles: asClass(ListRoles).singleton(),
+    editRole: asClass(EditRole).singleton(),
+    deleteRole: asClass(DeleteRole).singleton(),
+    assignRole: asClass(AssignRole).singleton(),
+    revokeRole: asClass(RevokeRole).singleton(),
+    listPermissions: asClass(ListPermissions).singleton(),
+    syncAuthorization: asClass(SyncAuthorization).singleton(),
   });
 }

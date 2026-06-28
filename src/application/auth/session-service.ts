@@ -6,6 +6,7 @@ import type { IdGenerator } from '@/application/shared/ports/id-generator';
 import type { Env } from '@/config/env';
 import type { User } from '@/domain/user/user-entity';
 import { RefreshToken } from '@/domain/auth/refresh-token-entity';
+import type { UserGrants } from '@/application/shared/ports/grants-reader';
 
 interface SessionServiceDeps {
   accessTokenService: AccessTokenService;
@@ -36,18 +37,20 @@ export class SessionService {
     this.env = env;
   }
 
-  issue(user: User): Promise<AuthTokensDto> {
-    return this.mint(user, this.ids.generate());
+  issue(user: User, grants: UserGrants): Promise<AuthTokensDto> {
+    return this.mint(user, this.ids.generate(), grants);
   }
 
-  reissue(user: User, familyId: string): Promise<AuthTokensDto> {
-    return this.mint(user, familyId);
+  reissue(user: User, familyId: string, grants: UserGrants): Promise<AuthTokensDto> {
+    return this.mint(user, familyId, grants);
   }
 
-  private async mint(user: User, familyId: string): Promise<AuthTokensDto> {
+  private async mint(user: User, familyId: string, grants: UserGrants): Promise<AuthTokensDto> {
     const accessToken = await this.accessTokens.sign({
       sub: user.id,
       email: user.email.toString(),
+      systemRoleKeys: grants.systemRoleKeys,
+      permissions: grants.permissions,
     });
 
     const rawRefresh = this.opaque.generate();

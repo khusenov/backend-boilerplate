@@ -23,6 +23,7 @@ model User {
   updatedAt     DateTime       @map("updated_at")
   deletedAt     DateTime?      @map("deleted_at")
   refreshTokens RefreshToken[]
+  roles         UserRole[]
 
   @@index([deletedAt])
   @@map("users")
@@ -44,4 +45,60 @@ model RefreshToken {
   @@index([userId])
   @@index([familyId])
   @@map("refresh_tokens")
+}
+
+model Role {
+  id          String    @id @db.Char(36)
+  key         String?   @unique @db.VarChar(64)
+  name        String    @db.VarChar(100)
+  description String?   @db.VarChar(255)
+  isSystem    Boolean   @default(false) @map("is_system")
+  createdAt   DateTime  @map("created_at")
+  updatedAt   DateTime  @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  permissions RolePermission[]
+  users       UserRole[]
+
+  @@index([deletedAt])
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @db.Char(36)
+  key         String   @unique @db.VarChar(64)
+  name        String   @db.VarChar(100)
+  description String?  @db.VarChar(255)
+  category    String?  @db.VarChar(64)
+  createdAt   DateTime @map("created_at")
+  updatedAt   DateTime @map("updated_at")
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id") @db.Char(36)
+  permissionId String @map("permission_id") @db.Char(36)
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId    String   @map("user_id") @db.Char(36)
+  roleId    String   @map("role_id") @db.Char(36)
+  createdAt DateTime @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
 }

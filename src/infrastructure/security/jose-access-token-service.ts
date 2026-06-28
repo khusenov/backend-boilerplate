@@ -24,7 +24,11 @@ export class JoseAccessTokenService implements AccessTokenService {
   }
 
   async sign(payload: AccessTokenPayload): Promise<string> {
-    return new SignJWT({ email: payload.email })
+    return new SignJWT({
+      email: payload.email,
+      systemRoleKeys: payload.systemRoleKeys,
+      permissions: payload.permissions,
+    })
       .setProtectedHeader({ alg: 'HS256' })
       .setSubject(payload.sub)
       .setIssuedAt()
@@ -40,7 +44,12 @@ export class JoseAccessTokenService implements AccessTokenService {
         issuer: this.issuer,
         audience: this.audience,
       });
-      return { sub: payload.sub!, email: payload.email as string };
+      return {
+        sub: payload.sub!,
+        email: payload.email as string,
+        systemRoleKeys: (payload.systemRoleKeys as string[] | undefined) ?? [],
+        permissions: (payload.permissions as string[] | undefined) ?? [],
+      };
     } catch (err) {
       throw new UnauthorizedError('Invalid or expired access token', {
         code: 'INVALID_ACCESS_TOKEN',

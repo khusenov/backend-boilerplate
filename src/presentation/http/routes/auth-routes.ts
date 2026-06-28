@@ -11,6 +11,13 @@ const loginBody = z.object({
   password: z.string().min(1),
 });
 
+const registerBody = z.object({
+  firstName: z.string().min(1).max(100),
+  lastName: z.string().min(1).max(100),
+  email: z.email(),
+  password: z.string().min(8).max(128),
+});
+
 const refreshBody = z
   .object({
     refreshToken: z.string().min(1).optional(),
@@ -21,6 +28,12 @@ const refreshBody = z
 export const authRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
   app.addHook('onRoute', (route) => {
     route.schema = { ...route.schema, tags: ['Auth'] };
+  });
+
+  app.post('/register', { schema: { body: registerBody } }, async (request, reply) => {
+    const { createUser } = request.diScope.cradle;
+    const user = await createUser.execute(request.body);
+    return reply.status(201).send(user);
   });
 
   app.post('/login', { schema: { body: loginBody } }, async (request, reply) => {

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { SUPERADMIN_ROLE_KEY } from '@/domain/authorization/permission-catalogue';
 
 export interface SeededUser {
   id: string;
@@ -7,6 +8,58 @@ export interface SeededUser {
 }
 
 let counter = 0;
+
+export async function makeSuperadmin(app: FastifyInstance, userId: string): Promise<void> {
+  const { prisma, idGenerator } = app.diContainer.cradle;
+  const now = new Date();
+  const role = await prisma.role.upsert({
+    where: { key: SUPERADMIN_ROLE_KEY },
+    create: {
+      id: idGenerator.generate(),
+      key: SUPERADMIN_ROLE_KEY,
+      name: 'Super Admin',
+      isSystem: true,
+      createdAt: now,
+      updatedAt: now,
+    },
+    update: {},
+  });
+  await prisma.userRole.upsert({
+    where: { userId_roleId: { userId, roleId: role.id } },
+    create: { userId, roleId: role.id, createdAt: now },
+    update: {},
+  });
+}
+
+export async function seedRoleWithPermissions(
+  app: FastifyInstance,
+  userId: string,
+  permissionKeys: string[],
+): Promise<string> {
+  const { prisma, idGenerator } = app.diContainer.cradle;
+  const now = new Date();
+  const role = await prisma.role.create({
+    data: {
+      id: idGenerator.generate(),
+      name: `role-${++counter}`,
+      isSystem: false,
+      createdAt: now,
+      updatedAt: now,
+    },
+  });
+  for (const key of permissionKeys) {
+    const permission = await prisma.permission.upsert({
+      where: { key },
+      create: { id: idGenerator.generate(), key, name: key, createdAt: now, updatedAt: now },
+      update: {},
+    });
+    await prisma.rolePermission.create({
+      data: { roleId: role.id, permissionId: permission.id },
+    });
+  }
+  await prisma.userRole.create({ data: { userId, roleId: role.id, createdAt: now } });
+  return role.id;
+}
 
 export async function seedUser(
   app: FastifyInstance,

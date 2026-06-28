@@ -5,6 +5,7 @@ import type { PasswordHasher } from '@/application/shared/ports/password-hasher'
 import { Email } from '@/domain/user/email-vo';
 import { InvalidCredentialsError } from '@/domain/auth/auth-errors';
 import { toUserDto } from '@/application/user/user-dto';
+import type { GrantsReader } from '@/application/shared/ports/grants-reader';
 
 export interface LoginInput {
   email: string;
@@ -17,17 +18,20 @@ interface LoginDeps {
   userRepository: UserRepository;
   passwordHasher: PasswordHasher;
   sessionService: SessionService;
+  grants: GrantsReader;
 }
 
 export class Login {
   private readonly users: UserRepository;
   private readonly hasher: PasswordHasher;
   private readonly sessions: SessionService;
+  private readonly grants: GrantsReader;
 
-  constructor({ userRepository, passwordHasher, sessionService }: LoginDeps) {
+  constructor({ userRepository, passwordHasher, sessionService, grants }: LoginDeps) {
     this.users = userRepository;
     this.hasher = passwordHasher;
     this.sessions = sessionService;
+    this.grants = grants;
   }
 
   async execute(input: LoginInput): Promise<LoginOutput> {
@@ -41,7 +45,8 @@ export class Login {
 
     if (!user.isActive) throw new InvalidCredentialsError();
 
-    const tokens = await this.sessions.issue(user);
+    const grants = await this.grants.grantsFor(user.id);
+    const tokens = await this.sessions.issue(user, grants);
     return { user: toUserDto(user), tokens };
   }
 }

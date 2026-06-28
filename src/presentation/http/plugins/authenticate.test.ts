@@ -10,7 +10,12 @@ import type {
 } from '@/application/shared/ports/access-token-service';
 import { UnauthorizedError } from '@/shared/errors';
 
-const VALID_PAYLOAD: AccessTokenPayload = { sub: 'user-1', email: 'user@example.com' };
+const VALID_PAYLOAD: AccessTokenPayload = {
+  sub: 'user-1',
+  email: 'user@example.com',
+  systemRoleKeys: [],
+  permissions: [],
+};
 
 function makeTokenService() {
   return {

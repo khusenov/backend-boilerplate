@@ -9,10 +9,12 @@ import { Email } from '@/domain/user/email-vo';
 import { User } from '@/domain/user/user-entity';
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { OpaqueTokenService } from '@/application/shared/ports/opaque-token-service';
+import type { GrantsReader, UserGrants } from '@/application/shared/ports/grants-reader';
 
 const RAW_TOKEN = 'raw-refresh-token';
 const TOKEN_HASH = 'hashed-raw-refresh-token';
 const FAMILY_ID = 'family-abc';
+const GRANTS: UserGrants = { systemRoleKeys: [], permissions: ['users.read'] };
 
 const FAKE_TOKENS: AuthTokensDto = {
   accessToken: 'new.access.token',
@@ -94,14 +96,19 @@ function makeRefreshSession() {
     reissue: vi.fn().mockResolvedValue(FAKE_TOKENS),
   };
 
+  const grants = {
+    grantsFor: vi.fn<GrantsReader['grantsFor']>().mockResolvedValue(GRANTS),
+  } satisfies GrantsReader;
+
   const sut = new RefreshSession({
     userRepository: users,
     refreshTokenRepository: refreshTokens,
     opaqueTokenService: opaque,
     sessionService: sessions as unknown as SessionService,
+    grants,
   });
 
-  return { sut, refreshTokens, users, opaque, sessions };
+  return { sut, refreshTokens, users, opaque, sessions, grants };
 }
 
 describe('RefreshSession', () => {
@@ -203,8 +210,18 @@ describe('RefreshSession', () => {
       const result = await ctx.sut.execute({ refreshToken: RAW_TOKEN });
 
       expect(ctx.sessions.reissue).toHaveBeenCalledOnce();
-      expect(ctx.sessions.reissue).toHaveBeenCalledWith(user, FAMILY_ID);
+      expect(ctx.sessions.reissue).toHaveBeenCalledWith(user, FAMILY_ID, GRANTS);
       expect(result).toEqual(FAKE_TOKENS);
+    });
+
+    it('re-resolves the user grants on every refresh rather than reusing old claims', async () => {
+      ctx.refreshTokens.findByTokenHash.mockResolvedValue(makeActiveToken());
+      const user = makeActiveUser();
+      ctx.users.findById.mockResolvedValue(user);
+
+      await ctx.sut.execute({ refreshToken: RAW_TOKEN });
+
+      expect(ctx.grants.grantsFor).toHaveBeenCalledWith(user.id);
     });
   });
 });

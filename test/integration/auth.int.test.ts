@@ -96,6 +96,83 @@ describe('/auth (integration)', () => {
     });
   });
 
+  describe('POST /auth/register', () => {
+    it('is public, creates a user with no roles, and returns 201', async () => {
+      const res = await h.app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: {
+          firstName: 'Self',
+          lastName: 'Service',
+          email: 'signup@finflow.test',
+          password: 'password123',
+        },
+      });
+
+      expect(res.statusCode).toBe(201);
+      const body = res.json<{ id: string; email: string }>();
+      expect(body).toMatchObject({ email: 'signup@finflow.test' });
+      expect(body).not.toHaveProperty('passwordHash');
+
+      const roleCount = await h.prisma.userRole.count({ where: { userId: body.id } });
+      expect(roleCount).toBe(0);
+
+      const loginRes = await h.app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        payload: { email: 'signup@finflow.test', password: 'password123' },
+      });
+      expect(loginRes.statusCode).toBe(200);
+      const { accessToken } = loginRes.json<{ accessToken: string }>();
+      const list = await h.app.inject({
+        method: 'GET',
+        url: '/users',
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+      expect(list.statusCode).toBe(403);
+    });
+
+    it('does not auto-login (no refresh cookie set)', async () => {
+      const res = await h.app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: {
+          firstName: 'No',
+          lastName: 'Login',
+          email: 'nologin@finflow.test',
+          password: 'password123',
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      expect(res.cookies.find((c) => c.name === 'refreshToken')).toBeUndefined();
+    });
+
+    it('rejects a duplicate email (409)', async () => {
+      await seedUser(h.app, { email: 'taken@finflow.test' });
+
+      const res = await h.app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: {
+          firstName: 'A',
+          lastName: 'B',
+          email: 'taken@finflow.test',
+          password: 'password123',
+        },
+      });
+      expect(res.statusCode).toBe(409);
+    });
+
+    it('rejects invalid input (400)', async () => {
+      const res = await h.app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: { firstName: '', lastName: 'B', email: 'not-an-email', password: 'short' },
+      });
+      expect(res.statusCode).toBe(400);
+    });
+  });
+
   describe('POST /auth/refresh', () => {
     it('rotates the refresh token and issues a fresh access token (200)', async () => {
       const session = await login(h.app, await seedUser(h.app));

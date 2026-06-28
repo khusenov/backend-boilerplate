@@ -5,6 +5,7 @@ import type { IdGenerator } from '@/application/shared/ports/id-generator';
 import type { OpaqueTokenService } from '@/application/shared/ports/opaque-token-service';
 import type { RefreshTokenRepository } from '@/domain/auth/refresh-token-repository';
 import type { Env } from '@/config/env';
+import type { UserGrants } from '@/application/shared/ports/grants-reader';
 import { Email } from '@/domain/user/email-vo';
 import { User } from '@/domain/user/user-entity';
 
@@ -15,6 +16,10 @@ const FAMILY_ID = 'family-id-abc';
 const TOKEN_ID = 'token-id-xyz';
 const NEW_FAMILY_ID = 'new-family-id';
 const TTL_SECONDS = 60 * 60 * 24 * 14;
+const GRANTS: UserGrants = {
+  systemRoleKeys: ['super-admin'],
+  permissions: ['users.read', 'users.create'],
+};
 
 function makeUser(): User {
   return User.create({
@@ -76,38 +81,40 @@ describe('SessionService', () => {
     });
 
     it('returns the signed access token and raw refresh token', async () => {
-      const result = await ctx.sut.issue(makeUser());
+      const result = await ctx.sut.issue(makeUser(), GRANTS);
 
       expect(result.accessToken).toBe(ACCESS_TOKEN);
       expect(result.refreshToken).toBe(RAW_REFRESH);
     });
 
-    it('signs the access token with the user id and email as payload', async () => {
+    it('signs the access token with the user id, email, and grants as payload', async () => {
       const user = makeUser();
-      await ctx.sut.issue(user);
+      await ctx.sut.issue(user, GRANTS);
 
       expect(ctx.accessTokenService.sign).toHaveBeenCalledOnce();
       expect(ctx.accessTokenService.sign).toHaveBeenCalledWith({
         sub: user.id,
         email: user.email.toString(),
+        systemRoleKeys: GRANTS.systemRoleKeys,
+        permissions: GRANTS.permissions,
       });
     });
 
     it('hashes the raw refresh token before storing', async () => {
-      await ctx.sut.issue(makeUser());
+      await ctx.sut.issue(makeUser(), GRANTS);
 
       expect(ctx.opaqueTokenService.hash).toHaveBeenCalledOnce();
       expect(ctx.opaqueTokenService.hash).toHaveBeenCalledWith(RAW_REFRESH);
     });
 
     it('persists the refresh token entity in the repository', async () => {
-      await ctx.sut.issue(makeUser());
+      await ctx.sut.issue(makeUser(), GRANTS);
 
       expect(ctx.refreshTokenRepository.create).toHaveBeenCalledOnce();
     });
 
     it('uses a freshly generated family id', async () => {
-      await ctx.sut.issue(makeUser());
+      await ctx.sut.issue(makeUser(), GRANTS);
 
       const [storedToken] = ctx.refreshTokenRepository.create.mock.calls[0]!;
       expect(storedToken.familyId).toBe(NEW_FAMILY_ID);
@@ -115,7 +122,7 @@ describe('SessionService', () => {
 
     it('sets the token expiry to approximately now + TTL', async () => {
       const before = Date.now();
-      await ctx.sut.issue(makeUser());
+      await ctx.sut.issue(makeUser(), GRANTS);
       const after = Date.now();
 
       const [storedToken] = ctx.refreshTokenRepository.create.mock.calls[0]!;
@@ -132,38 +139,40 @@ describe('SessionService', () => {
     });
 
     it('returns the signed access token and raw refresh token', async () => {
-      const result = await ctx.sut.reissue(makeUser(), FAMILY_ID);
+      const result = await ctx.sut.reissue(makeUser(), FAMILY_ID, GRANTS);
 
       expect(result.accessToken).toBe(ACCESS_TOKEN);
       expect(result.refreshToken).toBe(RAW_REFRESH);
     });
 
-    it('signs the access token with the user id and email as payload', async () => {
+    it('signs the access token with the user id, email, and grants as payload', async () => {
       const user = makeUser();
-      await ctx.sut.reissue(user, FAMILY_ID);
+      await ctx.sut.reissue(user, FAMILY_ID, GRANTS);
 
       expect(ctx.accessTokenService.sign).toHaveBeenCalledOnce();
       expect(ctx.accessTokenService.sign).toHaveBeenCalledWith({
         sub: user.id,
         email: user.email.toString(),
+        systemRoleKeys: GRANTS.systemRoleKeys,
+        permissions: GRANTS.permissions,
       });
     });
 
     it('preserves the existing family id rather than generating a new one', async () => {
-      await ctx.sut.reissue(makeUser(), FAMILY_ID);
+      await ctx.sut.reissue(makeUser(), FAMILY_ID, GRANTS);
 
       const [storedToken] = ctx.refreshTokenRepository.create.mock.calls[0]!;
       expect(storedToken.familyId).toBe(FAMILY_ID);
     });
 
     it('calls idGenerator only once (for the token entity id, not a new family)', async () => {
-      await ctx.sut.reissue(makeUser(), FAMILY_ID);
+      await ctx.sut.reissue(makeUser(), FAMILY_ID, GRANTS);
 
       expect(ctx.idGenerator.generate).toHaveBeenCalledOnce();
     });
 
     it('persists the refresh token entity in the repository', async () => {
-      await ctx.sut.reissue(makeUser(), FAMILY_ID);
+      await ctx.sut.reissue(makeUser(), FAMILY_ID, GRANTS);
 
       expect(ctx.refreshTokenRepository.create).toHaveBeenCalledOnce();
     });

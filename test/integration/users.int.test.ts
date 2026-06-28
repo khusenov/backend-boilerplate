@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createHarness, resetDb, type TestHarness } from './support/harness';
-import { authHeader, seedUser, type SeededUser } from './support/factories';
+import {
+  authHeader,
+  makeSuperadmin,
+  seedRoleWithPermissions,
+  seedUser,
+  type SeededUser,
+} from './support/factories';
 
 describe('/users (integration)', () => {
   let h: TestHarness;
@@ -16,11 +22,9 @@ describe('/users (integration)', () => {
     await h.app.close();
   });
 
-  // Every /users route is guarded by the `authenticate` hook, so each test runs
-  // as a freshly seeded, logged-in "actor". The actor is itself a persisted user,
-  // which the read assertions below account for.
   beforeEach(async () => {
     actor = await seedUser(h.app);
+    await makeSuperadmin(h.app, actor.id);
     auth = await authHeader(h.app, actor);
   });
 
@@ -336,6 +340,72 @@ describe('/users (integration)', () => {
     it('rejects an unauthenticated request (401)', async () => {
       const res = await h.app.inject({ method: 'DELETE', url: `/users/${randomUUID()}` });
       expect(res.statusCode).toBe(401);
+    });
+  });
+
+  describe('authorization', () => {
+    it('forbids a role-less user from listing users (403)', async () => {
+      const pleb = await seedUser(h.app);
+      const plebAuth = await authHeader(h.app, pleb);
+
+      const res = await h.app.inject({ method: 'GET', url: '/users', headers: plebAuth });
+      expect(res.statusCode).toBe(403);
+      expect(res.json<{ error: { code: string } }>().error.code).toBe('FORBIDDEN');
+    });
+
+    it('allows a user holding users.read to list (200) but not to create (403)', async () => {
+      const reader = await seedUser(h.app);
+      await seedRoleWithPermissions(h.app, reader.id, ['users.read']);
+      const readerAuth = await authHeader(h.app, reader);
+
+      const list = await h.app.inject({ method: 'GET', url: '/users', headers: readerAuth });
+      expect(list.statusCode).toBe(200);
+
+      const create = await h.app.inject({
+        method: 'POST',
+        url: '/users',
+        headers: readerAuth,
+        payload: {
+          firstName: 'A',
+          lastName: 'B',
+          email: 'new@finflow.test',
+          password: 'password123',
+        },
+      });
+      expect(create.statusCode).toBe(403);
+    });
+
+    it('lets a user read and edit their own record without any permission (200)', async () => {
+      const self = await seedUser(h.app);
+      const selfAuth = await authHeader(h.app, self);
+
+      const get = await h.app.inject({
+        method: 'GET',
+        url: `/users/${self.id}`,
+        headers: selfAuth,
+      });
+      expect(get.statusCode).toBe(200);
+
+      const patch = await h.app.inject({
+        method: 'PATCH',
+        url: `/users/${self.id}`,
+        headers: selfAuth,
+        payload: { firstName: 'Renamed' },
+      });
+      expect(patch.statusCode).toBe(200);
+    });
+
+    it('forbids reading another user without permission (403)', async () => {
+      const self = await seedUser(h.app);
+      const other = await seedUser(h.app);
+      const selfAuth = await authHeader(h.app, self);
+
+      const res = await h.app.inject({
+        method: 'GET',
+        url: `/users/${other.id}`,
+        headers: selfAuth,
+      });
+      expect(res.statusCode).toBe(403);
     });
   });
 });

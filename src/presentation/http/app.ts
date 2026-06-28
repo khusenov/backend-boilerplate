@@ -16,6 +16,8 @@ import { env } from '@/config/env';
 import { fastifyCookie } from '@fastify/cookie';
 import { authPlugin } from '@/presentation/http/plugins/authenticate';
 import { authRoutes } from '@/presentation/http/routes/auth-routes';
+import { roleRoutes } from '@/presentation/http/routes/role-routes';
+import { permissionRoutes } from '@/presentation/http/routes/permission-routes';
 
 export interface BuildAppOptions {
   logLevel: string;
@@ -66,6 +68,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
 
   await app.register(authRoutes, { prefix: '/auth' });
   await app.register(userRoutes, { prefix: '/users' });
+  await app.register(roleRoutes, { prefix: '/roles' });
+  await app.register(permissionRoutes, { prefix: '/permissions' });
 
   return app;
 }
