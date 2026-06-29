@@ -18,10 +18,14 @@ import { authPlugin } from '@/presentation/http/plugins/authenticate';
 import { authRoutes } from '@/presentation/http/routes/auth-routes';
 import { roleRoutes } from '@/presentation/http/routes/role-routes';
 import { permissionRoutes } from '@/presentation/http/routes/permission-routes';
+import { fastifyHelmet } from '@fastify/helmet';
+import { fastifyRateLimit } from '@fastify/rate-limit';
+import { helmetOptions, rateLimitOptions } from '@/presentation/http/security';
 
 export interface BuildAppOptions {
   logLevel: string;
   disableRequestLogging?: boolean;
+  rateLimit?: boolean;
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
@@ -35,6 +39,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   app.setSerializerCompiler(serializerCompiler);
 
   await app.register(fastifySensible);
+  await app.register(fastifyHelmet, helmetOptions(env.isProduction));
   await app.register(fastifyAwilixPlugin, {
     disposeOnClose: true,
     disposeOnResponse: true,
@@ -64,7 +69,16 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     await app.register(fastifySwaggerUi, { routePrefix: '/docs' });
   }
 
-  app.get('/health', { schema: { tags: ['Health'] } }, () => ({ status: 'ok' }));
+  if (opts.rateLimit ?? true) {
+    await app.register(
+      fastifyRateLimit,
+      rateLimitOptions(env.RATE_LIMIT_MAX, env.RATE_LIMIT_WINDOW),
+    );
+  }
+
+  app.get('/health', { schema: { tags: ['Health'] }, config: { rateLimit: false } }, () => ({
+    status: 'ok',
+  }));
 
   await app.register(authRoutes, { prefix: '/auth' });
   await app.register(userRoutes, { prefix: '/users' });

@@ -8,7 +8,7 @@ export interface TestHarness {
 }
 
 export async function createHarness(): Promise<TestHarness> {
-  const app = await buildApp({ logLevel: 'silent', disableRequestLogging: true });
+  const app = await buildApp({ logLevel: 'silent', disableRequestLogging: true, rateLimit: false });
   await app.ready();
 
   const prisma = app.diContainer.cradle.prisma;

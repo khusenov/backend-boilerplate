@@ -19,6 +19,9 @@ export const env = cleanEnv(process.env, {
   WEB_ORIGIN: str({ devDefault: 'http://127.0.0.1:3000' }),
   COOKIE_SECURE: bool({ default: true, devDefault: false }),
   BOOTSTRAP_ADMIN_EMAIL: email({ default: '' }),
+  RATE_LIMIT_MAX: num({ default: 100 }),
+  RATE_LIMIT_WINDOW: str({ default: '1 minute' }),
+  RATE_LIMIT_AUTH_MAX: num({ default: 5 }),
 });
 
 export type Env = typeof env;

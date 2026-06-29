@@ -5,6 +5,7 @@ import {
   clearRefreshCookie,
   readRefreshCookie,
 } from '@/presentation/http/cookies';
+import { env } from '@/config/env';
 
 const loginBody = z.object({
   email: z.email(),
@@ -30,25 +31,39 @@ export const authRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
     route.schema = { ...route.schema, tags: ['Auth'] };
   });
 
-  app.post('/register', { schema: { body: registerBody } }, async (request, reply) => {
-    const { createUser } = request.diScope.cradle;
-    const user = await createUser.execute(request.body);
-    return reply.status(201).send(user);
-  });
+  app.post(
+    '/register',
+    {
+      config: { rateLimit: { max: env.RATE_LIMIT_AUTH_MAX, timeWindow: env.RATE_LIMIT_WINDOW } },
+      schema: { body: registerBody },
+    },
+    async (request, reply) => {
+      const { createUser } = request.diScope.cradle;
+      const user = await createUser.execute(request.body);
+      return reply.status(201).send(user);
+    },
+  );
 
-  app.post('/login', { schema: { body: loginBody } }, async (request, reply) => {
-    const { login, env } = request.diScope.cradle;
-    const result = await login.execute(request.body);
+  app.post(
+    '/login',
+    {
+      config: { rateLimit: { max: env.RATE_LIMIT_AUTH_MAX, timeWindow: env.RATE_LIMIT_WINDOW } },
+      schema: { body: loginBody },
+    },
+    async (request, reply) => {
+      const { login, env } = request.diScope.cradle;
+      const result = await login.execute(request.body);
 
-    const body: Record<string, unknown> = {
-      user: result.user,
-      accessToken: result.tokens.accessToken,
-    };
+      const body: Record<string, unknown> = {
+        user: result.user,
+        accessToken: result.tokens.accessToken,
+      };
 
-    setRefreshCookie(reply, result.tokens.refreshToken, env);
+      setRefreshCookie(reply, result.tokens.refreshToken, env);
 
-    return reply.status(200).send(body);
-  });
+      return reply.status(200).send(body);
+    },
+  );
 
   app.post('/refresh', { schema: { body: refreshBody } }, async (request, reply) => {
     const { refreshSession, env } = request.diScope.cradle;
