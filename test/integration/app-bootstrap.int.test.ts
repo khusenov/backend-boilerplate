@@ -14,18 +14,15 @@ describe('app bootstrap (integration)', () => {
     await app.close();
   });
 
-  it('serves GET /health', async () => {
-    const res = await app.inject({ method: 'GET', url: '/health' });
+  it('serves GET /health/live', async () => {
+    const res = await app.inject({ method: 'GET', url: '/health/live' });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ status: 'ok' });
   });
 
-  it('round-trips the database on POST /auth/login (unknown user)', async () => {
-    const res = await app.inject({
-      method: 'POST',
-      url: '/auth/login',
-      payload: { email: 'nobody@finflow.test', password: 'whatever-123' },
-    });
-    expect(res.statusCode).toBe(401);
+  it('serves GET /health/ready', async () => {
+    const res = await app.inject({ method: 'GET', url: '/health/ready' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ status: 'ready' });
   });
 });

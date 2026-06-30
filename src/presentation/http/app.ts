@@ -21,6 +21,7 @@ import { permissionRoutes } from '@/presentation/http/routes/permission-routes';
 import { fastifyHelmet } from '@fastify/helmet';
 import { fastifyRateLimit } from '@fastify/rate-limit';
 import { helmetOptions, rateLimitOptions } from '@/presentation/http/security';
+import { healthRoutes } from '@/presentation/http/routes/health-routes';
 
 export interface BuildAppOptions {
   logLevel: string;
@@ -76,10 +77,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     );
   }
 
-  app.get('/health', { schema: { tags: ['Health'] }, config: { rateLimit: false } }, () => ({
-    status: 'ok',
-  }));
-
+  await app.register(healthRoutes, { prefix: '/health' });
   await app.register(authRoutes, { prefix: '/auth' });
   await app.register(userRoutes, { prefix: '/users' });
   await app.register(roleRoutes, { prefix: '/roles' });

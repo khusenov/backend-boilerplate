@@ -24,10 +24,12 @@ import { JoseAccessTokenService } from '@/infrastructure/security/jose-access-to
 import { CryptoOpaqueTokenService } from '@/infrastructure/security/crypto-opaque-token-service';
 import { PrismaRefreshTokenRepository } from '@/infrastructure/persistence/prisma-refresh-token-repository';
 import type { GrantsReader } from '@/application/shared/ports/grants-reader';
+import type { HealthCheck } from '@/application/shared/ports/health-check';
 import type { RoleRepository } from '@/domain/authorization/role-repository';
 import type { PermissionRepository } from '@/application/shared/ports/permission-repository';
 import type { UserRoleRepository } from '@/application/shared/ports/user-role-repository';
 import { PrismaGrantsReader } from '@/infrastructure/persistence/prisma-grants-reader';
+import { PrismaHealthCheck } from '@/infrastructure/persistence/prisma-health-check';
 import { PrismaRoleRepository } from '@/infrastructure/persistence/prisma-role-repository';
 import { PrismaPermissionRepository } from '@/infrastructure/persistence/prisma-permission-repository';
 import { PrismaUserRoleRepository } from '@/infrastructure/persistence/prisma-user-role-repository';
@@ -54,6 +56,7 @@ declare module '@fastify/awilix' {
     opaqueTokenService: OpaqueTokenService;
     refreshTokenRepository: RefreshTokenRepository;
     grants: GrantsReader;
+    healthCheck: HealthCheck;
     roleRepository: RoleRepository;
     permissionRepository: PermissionRepository;
     userRoleRepository: UserRoleRepository;
@@ -94,6 +97,7 @@ export function registerDependencies(container: AwilixContainer): void {
     opaqueTokenService: asClass(CryptoOpaqueTokenService).singleton(),
     refreshTokenRepository: asClass(PrismaRefreshTokenRepository).singleton(),
     grants: asClass(PrismaGrantsReader).singleton(),
+    healthCheck: asClass(PrismaHealthCheck).singleton(),
     roleRepository: asClass(PrismaRoleRepository).singleton(),
     permissionRepository: asClass(PrismaPermissionRepository).singleton(),
     userRoleRepository: asClass(PrismaUserRoleRepository).singleton(),
