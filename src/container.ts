@@ -42,10 +42,15 @@ import { AssignRole } from '@/application/authorization/assign-role';
 import { RevokeRole } from '@/application/authorization/revoke-role';
 import { ListPermissions } from '@/application/authorization/list-permissions';
 import { SyncAuthorization } from '@/application/authorization/sync-authorization';
+import type { FastifyBaseLogger } from 'fastify';
+import type { Logger } from '@/application/shared/ports/logger';
+import { PinoLogger } from '@/infrastructure/logging/pino-logger';
+import { RequestContextProvider } from '@/infrastructure/logging/request-context-provider';
 
 declare module '@fastify/awilix' {
   interface Cradle {
     env: Env;
+    logger: Logger;
     prisma: PrismaClient;
 
     // ports
@@ -83,9 +88,13 @@ declare module '@fastify/awilix' {
   }
 }
 
-export function registerDependencies(container: AwilixContainer): void {
+export function registerDependencies(
+  container: AwilixContainer,
+  baseLogger: FastifyBaseLogger,
+): void {
   container.register({
     env: asValue(env),
+    logger: asValue(new PinoLogger(baseLogger, new RequestContextProvider())),
     prisma: asFunction(createPrismaClient)
       .singleton()
       .disposer((client) => client.$disconnect()),

@@ -22,6 +22,11 @@ import { fastifyHelmet } from '@fastify/helmet';
 import { fastifyRateLimit } from '@fastify/rate-limit';
 import { helmetOptions, rateLimitOptions } from '@/presentation/http/security';
 import { healthRoutes } from '@/presentation/http/routes/health-routes';
+import {
+  CORRELATION_ID_HEADER,
+  correlationIdPlugin,
+} from '@/presentation/http/plugins/correlation-id';
+import { randomUUID } from 'node:crypto';
 
 export interface BuildAppOptions {
   logLevel: string;
@@ -32,6 +37,8 @@ export interface BuildAppOptions {
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
   const app = fastify({
     logger: { level: opts.logLevel },
+    requestIdHeader: CORRELATION_ID_HEADER,
+    genReqId: () => randomUUID(),
     forceCloseConnections: true,
     disableRequestLogging: opts.disableRequestLogging ?? false,
   });
@@ -47,11 +54,12 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     strictBooleanEnforced: true,
     injectionMode: 'PROXY',
   });
+  await app.register(correlationIdPlugin);
   await app.register(fastifyCors, { origin: env.WEB_ORIGIN, credentials: true });
   await app.register(fastifyCookie, env.COOKIE_SECRET ? { secret: env.COOKIE_SECRET } : {});
   await app.register(authPlugin);
 
-  registerDependencies(diContainer);
+  registerDependencies(diContainer, app.log);
   registerErrorHandler(app);
 
   if (!env.isProduction) {
