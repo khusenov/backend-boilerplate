@@ -1,17 +1,17 @@
 import { toDomain, toPersistence } from './prisma-user-mapper';
 import { mapPrismaError } from './prisma-error';
-import type { PrismaClient } from '@/generated/prisma/client';
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { PageQuery, PageSlice } from '@/shared/pagination';
 import type { User } from '@/domain/user/user-entity';
 import type { Email } from '@/domain/user/email-vo';
+import type { PrismaTransactionalClient } from './prisma-transactional-client';
 
 interface PrismaUserRepositoryDeps {
-  prisma: PrismaClient;
+  prisma: PrismaTransactionalClient;
 }
 
 export class PrismaUserRepository implements UserRepository {
-  private readonly prisma: PrismaClient;
+  private readonly prisma: PrismaTransactionalClient;
 
   constructor({ prisma }: PrismaUserRepositoryDeps) {
     this.prisma = prisma;

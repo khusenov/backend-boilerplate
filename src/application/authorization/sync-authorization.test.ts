@@ -10,6 +10,10 @@ import type { UserRepository } from '@/domain/user/user-repository';
 import type { UserRoleRepository } from '@/application/shared/ports/user-role-repository';
 import type { IdGenerator } from '@/application/shared/ports/id-generator';
 import type { Env } from '@/config/env';
+import type {
+  TransactionalRepositories,
+  UnitOfWork,
+} from '@/application/shared/ports/unit-of-work';
 
 const SUPERADMIN_ID = 'superadmin-id';
 
@@ -61,16 +65,24 @@ function makeSync(envOverrides: Partial<Env> = {}) {
 
   const env = { BOOTSTRAP_ADMIN_EMAIL: '', ...envOverrides } as Env;
 
-  const sut = new SyncAuthorization({
+  const txRepos = {
     permissionRepository: permissions,
     roleRepository: roles,
     userRepository: users,
     userRoleRepository: userRoles,
-    idGenerator: ids,
-    env,
-  });
+  } satisfies TransactionalRepositories;
 
-  return { sut, permissions, roles, users, userRoles, ids };
+  const unitOfWork: UnitOfWork = {
+    run: vi
+      .fn()
+      .mockImplementation((work: (repos: TransactionalRepositories) => Promise<unknown>) =>
+        work(txRepos),
+      ),
+  };
+
+  const sut = new SyncAuthorization({ unitOfWork, idGenerator: ids, env });
+
+  return { sut, permissions, roles, users, userRoles, ids, unitOfWork };
 }
 
 describe('SyncAuthorization', () => {
@@ -188,6 +200,15 @@ describe('SyncAuthorization', () => {
 
       expect(ctx.userRoles.assign).not.toHaveBeenCalled();
       expect(result.bootstrapPromoted).toBe(false);
+    });
+
+    it('wraps all operations in a single transaction', async () => {
+      const ctx = makeSync();
+
+      await ctx.sut.execute();
+
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(ctx.unitOfWork.run).toHaveBeenCalledOnce();
     });
   });
 });

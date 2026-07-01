@@ -1,16 +1,16 @@
 import { mapPrismaError } from './prisma-error';
-import type { PrismaClient } from '@/generated/prisma/client';
+import type { PrismaTransactionalClient } from './prisma-transactional-client';
 import type {
   PermissionRecord,
   PermissionRepository,
 } from '@/application/shared/ports/permission-repository';
 
 interface PrismaPermissionRepositoryDeps {
-  prisma: PrismaClient;
+  prisma: PrismaTransactionalClient;
 }
 
 export class PrismaPermissionRepository implements PermissionRepository {
-  private readonly prisma: PrismaClient;
+  private readonly prisma: PrismaTransactionalClient;
 
   constructor({ prisma }: PrismaPermissionRepositoryDeps) {
     this.prisma = prisma;

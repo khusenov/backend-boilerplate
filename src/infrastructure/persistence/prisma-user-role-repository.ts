@@ -1,13 +1,13 @@
 import { mapPrismaError } from './prisma-error';
-import type { PrismaClient } from '@/generated/prisma/client';
+import type { PrismaTransactionalClient } from './prisma-transactional-client';
 import type { UserRoleRepository } from '@/application/shared/ports/user-role-repository';
 
 interface PrismaUserRoleRepositoryDeps {
-  prisma: PrismaClient;
+  prisma: PrismaTransactionalClient;
 }
 
 export class PrismaUserRoleRepository implements UserRoleRepository {
-  private readonly prisma: PrismaClient;
+  private readonly prisma: PrismaTransactionalClient;
 
   constructor({ prisma }: PrismaUserRoleRepositoryDeps) {
     this.prisma = prisma;

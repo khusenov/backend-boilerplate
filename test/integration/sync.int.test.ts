@@ -23,10 +23,7 @@ describe('SyncAuthorization (integration)', () => {
   function makeSync(bootstrapEmail = ''): SyncAuthorization {
     const c = h.app.diContainer.cradle;
     return new SyncAuthorization({
-      permissionRepository: c.permissionRepository,
-      roleRepository: c.roleRepository,
-      userRepository: c.userRepository,
-      userRoleRepository: c.userRoleRepository,
+      unitOfWork: c.unitOfWork,
       idGenerator: c.idGenerator,
       env: { BOOTSTRAP_ADMIN_EMAIL: bootstrapEmail } as Env,
     });

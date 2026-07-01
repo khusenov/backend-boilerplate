@@ -1,20 +1,20 @@
 import { toDomain } from './prisma-role-mapper';
 import { mapPrismaError } from './prisma-error';
-import type { PrismaClient } from '@/generated/prisma/client';
 import type { RoleRepository } from '@/domain/authorization/role-repository';
 import type { Role } from '@/domain/authorization/role-entity';
 import type { PageQuery, PageSlice } from '@/shared/pagination';
+import type { PrismaTransactionalClient } from './prisma-transactional-client';
 
 const ROLE_INCLUDE = {
   permissions: { select: { permission: { select: { key: true } } } },
 } as const;
 
 interface PrismaRoleRepositoryDeps {
-  prisma: PrismaClient;
+  prisma: PrismaTransactionalClient;
 }
 
 export class PrismaRoleRepository implements RoleRepository {
-  private readonly prisma: PrismaClient;
+  private readonly prisma: PrismaTransactionalClient;
 
   constructor({ prisma }: PrismaRoleRepositoryDeps) {
     this.prisma = prisma;

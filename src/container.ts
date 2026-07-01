@@ -46,6 +46,8 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Logger } from '@/application/shared/ports/logger';
 import { PinoLogger } from '@/infrastructure/logging/pino-logger';
 import { RequestContextProvider } from '@/infrastructure/logging/request-context-provider';
+import type { UnitOfWork } from '@/application/shared/ports/unit-of-work';
+import { PrismaUnitOfWork } from '@/infrastructure/persistence/prisma-unit-of-work';
 
 declare module '@fastify/awilix' {
   interface Cradle {
@@ -65,6 +67,7 @@ declare module '@fastify/awilix' {
     roleRepository: RoleRepository;
     permissionRepository: PermissionRepository;
     userRoleRepository: UserRoleRepository;
+    unitOfWork: UnitOfWork;
 
     // use cases
     listUsers: ListUsers;
@@ -110,6 +113,7 @@ export function registerDependencies(
     roleRepository: asClass(PrismaRoleRepository).singleton(),
     permissionRepository: asClass(PrismaPermissionRepository).singleton(),
     userRoleRepository: asClass(PrismaUserRoleRepository).singleton(),
+    unitOfWork: asClass(PrismaUnitOfWork).singleton(),
 
     listUsers: asClass(ListUsers).singleton(),
     getUser: asClass(GetUser).singleton(),
