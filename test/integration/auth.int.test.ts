@@ -35,6 +35,20 @@ describe('/auth (integration)', () => {
       const body = res.json<{ user: { id: string; email: string }; accessToken: string }>();
       expect(body.user).toMatchObject({ id: user.id, email: 'ada@finflow.test' });
       expect(body.user).not.toHaveProperty('passwordHash');
+      // The nested user carries exactly the public contract — `userResponse` strips
+      // everything else at the serialization boundary, not just via the DTO mapper.
+      expect(Object.keys(body.user).sort()).toEqual(
+        [
+          'createdAt',
+          'email',
+          'firstName',
+          'fullName',
+          'id',
+          'lastName',
+          'status',
+          'updatedAt',
+        ].sort(),
+      );
       expect(typeof body.accessToken).toBe('string');
       expect(body.accessToken.length).toBeGreaterThan(0);
 

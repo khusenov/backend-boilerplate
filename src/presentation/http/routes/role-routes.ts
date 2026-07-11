@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import type { FastifyPluginCallbackZod } from 'fastify-type-provider-zod';
 import { requirePermission } from '@/presentation/http/guards/authorize';
+import { errorResponse } from '../schemas/error-schema';
+import { paginatedRoles, roleResponse } from '../schemas/role-response-schema';
 
 const listRolesQuery = z.object({
   page: z.coerce.number().int().min(1).optional(),
@@ -35,7 +37,10 @@ export const roleRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
 
   app.get(
     '/',
-    { preHandler: requirePermission('roles.read'), schema: { querystring: listRolesQuery } },
+    {
+      preHandler: requirePermission('roles.read'),
+      schema: { querystring: listRolesQuery, response: { 200: paginatedRoles } },
+    },
     async (request, reply) => {
       const { listRoles } = request.diScope.cradle;
       const page = await listRoles.execute(request.query);
@@ -45,7 +50,10 @@ export const roleRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
 
   app.get(
     '/:id',
-    { preHandler: requirePermission('roles.read'), schema: { params: roleParams } },
+    {
+      preHandler: requirePermission('roles.read'),
+      schema: { params: roleParams, response: { 200: roleResponse, 404: errorResponse } },
+    },
     async (request, reply) => {
       const { getRole } = request.diScope.cradle;
       const role = await getRole.execute({ id: request.params.id });
@@ -55,7 +63,10 @@ export const roleRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
 
   app.post(
     '/',
-    { preHandler: requirePermission('roles.create'), schema: { body: createRoleBody } },
+    {
+      preHandler: requirePermission('roles.create'),
+      schema: { body: createRoleBody, response: { 201: roleResponse, 409: errorResponse } },
+    },
     async (request, reply) => {
       const { createRole } = request.diScope.cradle;
       const role = await createRole.execute(request.body);
@@ -67,7 +78,11 @@ export const roleRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
     '/:id',
     {
       preHandler: requirePermission('roles.update'),
-      schema: { params: roleParams, body: editRoleBody },
+      schema: {
+        params: roleParams,
+        body: editRoleBody,
+        response: { 200: roleResponse, 404: errorResponse },
+      },
     },
     async (request, reply) => {
       const { editRole } = request.diScope.cradle;

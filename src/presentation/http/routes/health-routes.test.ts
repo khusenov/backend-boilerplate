@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fastify, { type FastifyInstance } from 'fastify';
+import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { diContainer, fastifyAwilixPlugin } from '@fastify/awilix';
 import { asValue } from 'awilix';
 import { healthRoutes } from './health-routes';
@@ -15,6 +16,11 @@ type HealthCheckMock = ReturnType<typeof makeHealthCheck>;
 
 async function buildApp(healthCheck: HealthCheck): Promise<FastifyInstance> {
   const app = fastify({ logger: false });
+  // The health routes now declare Zod `response` schemas, so the test app must
+  // build routes through the same Zod serializer the real app uses (app.ts);
+  // without it, Fastify hands the raw Zod schema to fast-json-stringify and fails.
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
 
   await app.register(fastifyAwilixPlugin, {
     disposeOnClose: true,

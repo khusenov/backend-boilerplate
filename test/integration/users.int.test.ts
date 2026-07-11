@@ -192,6 +192,40 @@ describe('/users (integration)', () => {
       const res = await h.app.inject({ method: 'GET', url: `/users/${randomUUID()}` });
       expect(res.statusCode).toBe(401);
     });
+
+    it('returns only the public user contract (no internal fields)', async () => {
+      const created = await h.app.inject({
+        method: 'POST',
+        url: '/users',
+        headers: auth,
+        payload: {
+          firstName: 'Grace',
+          lastName: 'Hopper',
+          email: 'grace@finflow.test',
+          password: 'password123',
+        },
+      });
+      const { id } = created.json<{ id: string }>();
+
+      const res = await h.app.inject({ method: 'GET', url: `/users/${id}`, headers: auth });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json<Record<string, unknown>>();
+      expect(Object.keys(body).sort()).toEqual(
+        [
+          'createdAt',
+          'email',
+          'firstName',
+          'fullName',
+          'id',
+          'lastName',
+          'status',
+          'updatedAt',
+        ].sort(),
+      );
+      expect(body).not.toHaveProperty('passwordHash');
+      expect(typeof body.createdAt).toBe('string'); // Date serialized to ISO-8601 on the wire
+    });
   });
 
   describe('PATCH /users/:id', () => {

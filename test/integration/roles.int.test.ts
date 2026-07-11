@@ -40,6 +40,15 @@ describe('/roles & /permissions (integration)', () => {
       expect(groups.map((g) => g.category)).toContain('users');
       const allKeys = groups.flatMap((g) => g.permissions.map((p) => p.key));
       expect(allKeys).toContain('roles.assign');
+
+      // Every group/item carries exactly its contract keys — the response schema
+      // strips anything the catalogue might carry internally.
+      for (const g of groups) {
+        expect(Object.keys(g).sort()).toEqual(['category', 'permissions']);
+        for (const p of g.permissions) {
+          expect(Object.keys(p).sort()).toEqual(['key', 'name']);
+        }
+      }
     });
 
     it('rejects an unauthenticated request (401)', async () => {
@@ -67,6 +76,30 @@ describe('/roles & /permissions (integration)', () => {
 
       const inDb = await h.prisma.role.findUnique({ where: { id: body.id } });
       expect(inDb?.name).toBe('Support');
+    });
+
+    it('returns exactly the public role contract (no internal fields)', async () => {
+      const created = await createRole({
+        name: 'Contract',
+        description: 'x',
+        permissions: ['users.read'],
+      });
+      expect(created.statusCode).toBe(201);
+      const body = created.json<Record<string, unknown>>();
+      expect(Object.keys(body).sort()).toEqual(
+        [
+          'createdAt',
+          'description',
+          'id',
+          'isSystem',
+          'key',
+          'name',
+          'permissions',
+          'updatedAt',
+        ].sort(),
+      );
+      // `deletedAt` (soft-delete) and other entity internals are not in the contract.
+      expect(body).not.toHaveProperty('deletedAt');
     });
 
     it('rejects a duplicate active name (409)', async () => {

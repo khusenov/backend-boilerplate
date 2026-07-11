@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import type { FastifyPluginCallbackZod } from 'fastify-type-provider-zod';
 import { requirePermission, requireSelfOrPermission } from '@/presentation/http/guards/authorize';
+import { errorResponse } from '../schemas/error-schema';
+import { paginatedUsers, userResponse } from '../schemas/user-response-schema';
 
 const listUsersQuery = z.object({
   page: z.coerce.number().int().min(1).optional(),
@@ -53,7 +55,10 @@ export const userRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
     '/',
     {
       preHandler: requirePermission('users.read'),
-      schema: { querystring: listUsersQuery },
+      schema: {
+        querystring: listUsersQuery,
+        response: { 200: paginatedUsers },
+      },
     },
     async (request, reply) => {
       const { listUsers } = request.diScope.cradle;
@@ -66,7 +71,7 @@ export const userRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
     '/:id',
     {
       preHandler: requireSelfOrPermission((r) => (r.params as { id: string }).id, 'users.read'),
-      schema: { params: getUserParams },
+      schema: { params: getUserParams, response: { 200: userResponse } },
     },
     async (request, reply) => {
       const { getUser } = request.diScope.cradle;
@@ -79,7 +84,10 @@ export const userRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
     '/',
     {
       preHandler: requirePermission('users.create'),
-      schema: { body: createUserBody },
+      schema: {
+        body: createUserBody,
+        response: { 201: userResponse, 409: errorResponse },
+      },
     },
     async (request, reply) => {
       const { createUser } = request.diScope.cradle;
@@ -92,7 +100,11 @@ export const userRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
     '/:id',
     {
       preHandler: requireSelfOrPermission((r) => (r.params as { id: string }).id, 'users.update'),
-      schema: { params: editUserParams, body: editUserBody },
+      schema: {
+        params: editUserParams,
+        body: editUserBody,
+        response: { 200: userResponse, 404: errorResponse },
+      },
     },
     async (request, reply) => {
       const { editUser } = request.diScope.cradle;
