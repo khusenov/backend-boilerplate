@@ -7,6 +7,8 @@ import { User } from '@/domain/user/user-entity';
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { PasswordHasher } from '@/application/shared/ports/password-hasher';
 import type { IdGenerator } from '@/application/shared/ports/id-generator';
+import type { DomainEventDispatcher } from '@/application/shared/ports/domain-event-dispatcher';
+import { UserCreatedEvent } from '@/domain/user/events/user-created-event';
 
 function makeExistingUser(): User {
   return User.create({
@@ -19,6 +21,10 @@ function makeExistingUser(): User {
 }
 
 function makeCreateUser() {
+  const dispatcher = {
+    dispatch: vi.fn<DomainEventDispatcher['dispatch']>().mockResolvedValue(undefined),
+  } satisfies DomainEventDispatcher;
+
   const users = {
     findByEmail: vi.fn<UserRepository['findByEmail']>(),
     findById: vi.fn<UserRepository['findById']>(),
@@ -35,9 +41,14 @@ function makeCreateUser() {
     generate: vi.fn<IdGenerator['generate']>().mockReturnValue('new-user-id'),
   } satisfies IdGenerator;
 
-  const sut = new CreateUser({ userRepository: users, passwordHasher: hasher, idGenerator: ids });
+  const sut = new CreateUser({
+    userRepository: users,
+    passwordHasher: hasher,
+    idGenerator: ids,
+    domainEventDispatcher: dispatcher,
+  });
 
-  return { sut, users, hasher, ids };
+  return { sut, users, hasher, ids, dispatcher };
 }
 
 describe('CreateUser', () => {
@@ -130,6 +141,55 @@ describe('CreateUser', () => {
       expect(result.fullName).toBe('Jane Doe');
       expect(result.email).toBe('jane@example.com');
       expect(result.status).toBe('active');
+    });
+
+    it('dispatches a UserCreatedEvent after a successful create', async () => {
+      ctx.users.findByEmail.mockResolvedValue(null);
+
+      await ctx.sut.execute({
+        firstName: 'Jane',
+        lastName: 'Doe',
+        email: 'jane@example.com',
+        password: 'pw',
+      });
+
+      expect(ctx.dispatcher.dispatch).toHaveBeenCalledOnce();
+      const [events] = ctx.dispatcher.dispatch.mock.calls[0]!;
+      expect(events).toHaveLength(1);
+      expect(events[0]).toBeInstanceOf(UserCreatedEvent);
+      const event = events[0] as UserCreatedEvent;
+      expect(event.aggregateId).toBe('new-user-id');
+      expect(event.email).toBe('jane@example.com');
+    });
+
+    it('persists before it dispatches (save precedes dispatch)', async () => {
+      ctx.users.findByEmail.mockResolvedValue(null);
+
+      await ctx.sut.execute({
+        firstName: 'Jane',
+        lastName: 'Doe',
+        email: 'jane@example.com',
+        password: 'pw',
+      });
+
+      const saveOrder = ctx.users.save.mock.invocationCallOrder[0]!;
+      const dispatchOrder = ctx.dispatcher.dispatch.mock.invocationCallOrder[0]!;
+      expect(saveOrder).toBeLessThan(dispatchOrder);
+    });
+
+    it('does not dispatch when the email is already taken', async () => {
+      ctx.users.findByEmail.mockResolvedValue(makeExistingUser());
+
+      await expect(
+        ctx.sut.execute({
+          firstName: 'Jane',
+          lastName: 'Doe',
+          email: 'jane@example.com',
+          password: 'pw',
+        }),
+      ).rejects.toThrow(EmailAlreadyTakenError);
+
+      expect(ctx.dispatcher.dispatch).not.toHaveBeenCalled();
     });
   });
 });

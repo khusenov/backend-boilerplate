@@ -48,6 +48,11 @@ import { PinoLogger } from '@/infrastructure/logging/pino-logger';
 import { RequestContextProvider } from '@/infrastructure/logging/request-context-provider';
 import type { UnitOfWork } from '@/application/shared/ports/unit-of-work';
 import { PrismaUnitOfWork } from '@/infrastructure/persistence/prisma-unit-of-work';
+import type { DomainEventDispatcher } from '@/application/shared/ports/domain-event-dispatcher';
+import type { DomainEventHandler } from '@/application/shared/ports/domain-event-handler';
+import { InProcessDomainEventDispatcher } from '@/infrastructure/events/in-process-domain-event-dispatcher';
+import type { Cradle } from '@fastify/awilix';
+import { UserCreatedLogHandler } from '@/application/user/events/user-created-log-handler';
 
 declare module '@fastify/awilix' {
   interface Cradle {
@@ -68,6 +73,8 @@ declare module '@fastify/awilix' {
     permissionRepository: PermissionRepository;
     userRoleRepository: UserRoleRepository;
     unitOfWork: UnitOfWork;
+    domainEventDispatcher: DomainEventDispatcher;
+    userCreatedLogHandler: DomainEventHandler;
 
     // use cases
     listUsers: ListUsers;
@@ -89,6 +96,13 @@ declare module '@fastify/awilix' {
     listPermissions: ListPermissions;
     syncAuthorization: SyncAuthorization;
   }
+}
+
+function createDomainEventDispatcher({
+  logger,
+  userCreatedLogHandler,
+}: Pick<Cradle, 'logger' | 'userCreatedLogHandler'>): DomainEventDispatcher {
+  return new InProcessDomainEventDispatcher({ handlers: [userCreatedLogHandler], logger });
 }
 
 export function registerDependencies(
@@ -114,6 +128,8 @@ export function registerDependencies(
     permissionRepository: asClass(PrismaPermissionRepository).singleton(),
     userRoleRepository: asClass(PrismaUserRoleRepository).singleton(),
     unitOfWork: asClass(PrismaUnitOfWork).singleton(),
+    userCreatedLogHandler: asClass(UserCreatedLogHandler).singleton(),
+    domainEventDispatcher: asFunction(createDomainEventDispatcher).singleton(),
 
     listUsers: asClass(ListUsers).singleton(),
     getUser: asClass(GetUser).singleton(),

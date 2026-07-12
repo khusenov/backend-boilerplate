@@ -1,6 +1,7 @@
 import { User, UserStatus } from './user-entity';
 import { Email } from './email-vo';
 import { UserInvalidNameError, UserDeletedError } from './user-errors';
+import { UserCreatedEvent } from '@/domain/user/events/user-created-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 function makeUser(overrides: Partial<Parameters<typeof User.create>[0]> = {}): User {
@@ -44,6 +45,44 @@ describe('User', () => {
 
     it.each(['', '   '])('throws when lastName is %j', (lastName) => {
       expect(() => makeUser({ lastName })).toThrow(UserInvalidNameError);
+    });
+  });
+
+  describe('domain events', () => {
+    it('records exactly one UserCreatedEvent on create', () => {
+      const user = makeUser({ id: 'user-42', email: Email.create('ada@example.com') });
+
+      const [event, ...rest] = user.pullDomainEvents();
+
+      expect(rest).toHaveLength(0);
+      expect(event).toBeInstanceOf(UserCreatedEvent);
+      const created = event as UserCreatedEvent;
+      expect(created.aggregateId).toBe('user-42');
+      expect(created.eventName).toBe(UserCreatedEvent.EVENT_NAME);
+      expect(created.email).toBe('ada@example.com');
+    });
+
+    it('clears the buffer after pullDomainEvents (pull semantics)', () => {
+      const user = makeUser();
+
+      expect(user.pullDomainEvents()).toHaveLength(1);
+      expect(user.pullDomainEvents()).toEqual([]);
+    });
+
+    it('records no events when hydrating from persistence', () => {
+      const user = User.hydrate({
+        id: 'user-2',
+        firstName: 'Grace',
+        lastName: 'Hopper',
+        email: Email.create('grace@example.com'),
+        passwordHash: 'stored-hash',
+        status: UserStatus.Inactive,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        deletedAt: null,
+      });
+
+      expect(user.pullDomainEvents()).toEqual([]);
     });
   });
 

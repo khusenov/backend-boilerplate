@@ -1,6 +1,7 @@
 import { Entity, type EntityProps } from '@/domain/shared/entity';
 import type { Email } from './email-vo';
 import { UserInvalidNameError, UserDeletedError } from './user-errors';
+import { UserCreatedEvent } from '@/domain/user/events/user-created-event';
 
 export const UserStatus = {
   Active: 'active',
@@ -69,7 +70,7 @@ export class User extends Entity<UserProps> {
     const firstName = this.normalizeName(params.firstName, 'firstName');
     const lastName = this.normalizeName(params.lastName, 'lastName');
 
-    return new User({
+    const user = new User({
       ...params,
       firstName,
       lastName,
@@ -78,6 +79,9 @@ export class User extends Entity<UserProps> {
       updatedAt: now,
       deletedAt: null,
     });
+
+    user.recordEvent(new UserCreatedEvent(user.id, user.email.toString()));
+    return user;
   }
 
   static hydrate(props: UserProps): User {

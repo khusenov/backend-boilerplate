@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHarness, resetDb, type TestHarness } from './support/harness';
 import {
   authHeader,
@@ -8,6 +8,7 @@ import {
   seedUser,
   type SeededUser,
 } from './support/factories';
+import { UserCreatedEvent } from '@/domain/user/events/user-created-event';
 
 describe('/users (integration)', () => {
   let h: TestHarness;
@@ -53,6 +54,34 @@ describe('/users (integration)', () => {
 
       const inDb = await h.prisma.user.findUnique({ where: { email: 'john@finflow.test' } });
       expect(inDb).not.toBeNull();
+    });
+
+    it('fires the UserCreatedEvent handler end-to-end', async () => {
+      const handlerSpy = vi.spyOn(h.app.diContainer.cradle.userCreatedLogHandler, 'handle');
+
+      try {
+        const res = await h.app.inject({
+          method: 'POST',
+          url: '/users',
+          headers: auth,
+          payload: {
+            firstName: 'Eve',
+            lastName: 'Online',
+            email: 'eve@finflow.test',
+            password: 'password123',
+          },
+        });
+
+        expect(res.statusCode).toBe(201);
+        expect(handlerSpy).toHaveBeenCalledOnce();
+        const [event] = handlerSpy.mock.calls[0]!;
+        expect(event).toBeInstanceOf(UserCreatedEvent);
+        const created = event as UserCreatedEvent;
+        expect(created.aggregateId).toBe(res.json<{ id: string }>().id);
+        expect(created.email).toBe('eve@finflow.test');
+      } finally {
+        handlerSpy.mockRestore();
+      }
     });
 
     it('rejects an unauthenticated request (401)', async () => {

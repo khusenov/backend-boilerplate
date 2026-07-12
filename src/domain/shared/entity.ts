@@ -1,3 +1,5 @@
+import type { DomainEvent } from './domain-event';
+
 export interface EntityProps {
   id: string;
   createdAt: Date;
@@ -7,6 +9,8 @@ export interface EntityProps {
 
 export abstract class Entity<T extends EntityProps> {
   protected readonly props: T;
+
+  private readonly _domainEvents: DomainEvent[] = [];
 
   protected constructor(props: T) {
     this.props = props;
@@ -30,6 +34,16 @@ export abstract class Entity<T extends EntityProps> {
 
   get isDeleted(): boolean {
     return this.props.deletedAt !== null;
+  }
+
+  public pullDomainEvents(): DomainEvent[] {
+    const events = [...this._domainEvents];
+    this._domainEvents.length = 0;
+    return events;
+  }
+
+  protected recordEvent(event: DomainEvent): void {
+    this._domainEvents.push(event);
   }
 
   public equals(other?: Entity<T>): boolean {
