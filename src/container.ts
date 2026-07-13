@@ -53,6 +53,12 @@ import type { DomainEventHandler } from '@/application/shared/ports/domain-event
 import { InProcessDomainEventDispatcher } from '@/infrastructure/events/in-process-domain-event-dispatcher';
 import type { Cradle } from '@fastify/awilix';
 import { UserCreatedLogHandler } from '@/application/user/events/user-created-log-handler';
+import type { Redis } from 'ioredis';
+import { createRedisConnection } from '@/infrastructure/jobs/redis-connection';
+import { BullMqJobQueue } from '@/infrastructure/jobs/bullmq-job-queue';
+import { JobWorker } from '@/infrastructure/jobs/job-worker';
+import type { JobQueue } from '@/application/shared/ports/job-queue';
+import { ExampleJobHandler } from '@/application/jobs/example-job-handler';
 
 declare module '@fastify/awilix' {
   interface Cradle {
@@ -75,6 +81,15 @@ declare module '@fastify/awilix' {
     unitOfWork: UnitOfWork;
     domainEventDispatcher: DomainEventDispatcher;
     userCreatedLogHandler: DomainEventHandler;
+
+    // jobs
+    queuePrefix: string;
+    queueConcurrency: number;
+    redisConnection: Redis;
+    workerConnection: Redis;
+    exampleJobHandler: ExampleJobHandler;
+    jobQueue: JobQueue;
+    jobWorker: JobWorker;
 
     // use cases
     listUsers: ListUsers;
@@ -130,6 +145,46 @@ export function registerDependencies(
     unitOfWork: asClass(PrismaUnitOfWork).singleton(),
     userCreatedLogHandler: asClass(UserCreatedLogHandler).singleton(),
     domainEventDispatcher: asFunction(createDomainEventDispatcher).singleton(),
+
+    queuePrefix: asValue(env.QUEUE_PREFIX),
+    queueConcurrency: asValue(env.QUEUE_CONCURRENCY),
+    redisConnection: asFunction(() =>
+      createRedisConnection({ redisUrl: env.REDIS_URL }),
+    ).singleton(),
+    workerConnection: asFunction(() =>
+      createRedisConnection({ redisUrl: env.REDIS_URL }),
+    ).singleton(),
+    exampleJobHandler: asClass(ExampleJobHandler).singleton(),
+    jobQueue: asFunction(
+      ({ redisConnection, queuePrefix }: Pick<Cradle, 'redisConnection' | 'queuePrefix'>) =>
+        new BullMqJobQueue({
+          connection: redisConnection,
+          queuePrefix,
+        }),
+    )
+      .singleton()
+      .disposer((queue) => queue.close()),
+    jobWorker: asFunction(
+      ({
+        workerConnection,
+        exampleJobHandler,
+        logger,
+        queuePrefix,
+        queueConcurrency,
+      }: Pick<
+        Cradle,
+        'workerConnection' | 'exampleJobHandler' | 'logger' | 'queuePrefix' | 'queueConcurrency'
+      >) =>
+        new JobWorker({
+          connection: workerConnection,
+          queuePrefix,
+          concurrency: queueConcurrency,
+          handlers: [exampleJobHandler],
+          logger,
+        }),
+    )
+      .singleton()
+      .disposer((worker) => worker.close()),
 
     listUsers: asClass(ListUsers).singleton(),
     getUser: asClass(GetUser).singleton(),

@@ -7,6 +7,8 @@ async function bootstrap(): Promise<void> {
     disableRequestLogging: env.isDevelopment,
   });
 
+  void app.diContainer.resolve('jobWorker');
+
   const shutdown = async (signal: string, code = 0): Promise<void> => {
     app.log.info({ signal }, 'shutting down');
     setTimeout(() => {

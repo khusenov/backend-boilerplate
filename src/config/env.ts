@@ -22,6 +22,9 @@ export const env = cleanEnv(process.env, {
   RATE_LIMIT_MAX: num({ default: 100 }),
   RATE_LIMIT_WINDOW: str({ default: '1 minute' }),
   RATE_LIMIT_AUTH_MAX: num({ default: 5 }),
+  REDIS_URL: str({ devDefault: 'redis://127.0.0.1:6379' }),
+  QUEUE_PREFIX: str({ default: 'finflow' }),
+  QUEUE_CONCURRENCY: num({ default: 5 }),
 });
 
 export type Env = typeof env;
