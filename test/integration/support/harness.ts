@@ -16,6 +16,7 @@ export async function createHarness(): Promise<TestHarness> {
 }
 
 export async function resetDb(prisma: PrismaClient): Promise<void> {
+  await prisma.outboxMessage.deleteMany();
   await prisma.refreshToken.deleteMany();
   await prisma.userRole.deleteMany();
   await prisma.rolePermission.deleteMany();

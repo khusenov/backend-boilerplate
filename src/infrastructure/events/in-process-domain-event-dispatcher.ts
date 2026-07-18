@@ -1,31 +1,26 @@
-import type { DomainEvent } from '@/domain/shared/domain-event';
 import type { DomainEventDispatcher } from '@/application/shared/ports/domain-event-dispatcher';
 import type { DomainEventHandler } from '@/application/shared/ports/domain-event-handler';
 import type { Logger } from '@/application/shared/ports/logger';
+import type { DomainEvent } from '@/domain/shared/domain-event';
+import type { DomainEventHandlerRegistry } from './domain-event-handler-registry';
 
-interface InProcessDomainEventDispatcherDeps {
-  handlers: readonly DomainEventHandler[];
+export interface InProcessDomainEventDispatcherDeps {
+  domainEventHandlerRegistry: DomainEventHandlerRegistry;
   logger: Logger;
 }
 
 export class InProcessDomainEventDispatcher implements DomainEventDispatcher {
-  private readonly handlers: Map<string, DomainEventHandler[]>;
+  private readonly registry: DomainEventHandlerRegistry;
   private readonly logger: Logger;
 
-  constructor({ handlers, logger }: InProcessDomainEventDispatcherDeps) {
+  constructor({ domainEventHandlerRegistry, logger }: InProcessDomainEventDispatcherDeps) {
+    this.registry = domainEventHandlerRegistry;
     this.logger = logger;
-    this.handlers = new Map();
-    for (const handler of handlers) {
-      const group = this.handlers.get(handler.eventName) ?? [];
-      group.push(handler);
-      this.handlers.set(handler.eventName, group);
-    }
   }
 
   async dispatch(events: readonly DomainEvent[]): Promise<void> {
     for (const event of events) {
-      const handlers = this.handlers.get(event.eventName) ?? [];
-      for (const handler of handlers) {
+      for (const handler of this.registry.handlersFor(event.eventName)) {
         await this.runHandler(handler, event);
       }
     }

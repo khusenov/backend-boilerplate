@@ -1,33 +1,46 @@
-import type { PrismaClient } from '@/generated/prisma/client';
-import type {
-  UnitOfWork,
-  TransactionalRepositories,
-} from '@/application/shared/ports/unit-of-work';
 import { PrismaUserRepository } from './prisma-user-repository';
 import { PrismaRoleRepository } from './prisma-role-repository';
 import { PrismaPermissionRepository } from './prisma-permission-repository';
 import { PrismaUserRoleRepository } from './prisma-user-role-repository';
+import type { PrismaClient } from '@/generated/prisma/client';
+import type {
+  TransactionContext,
+  TransactionalRepositories,
+  UnitOfWork,
+} from '@/application/shared/ports/unit-of-work';
+import type { DomainEvent } from '@/domain/shared/domain-event';
+import type { PrismaOutboxWriter } from './prisma-outbox-writer';
 
-interface PrismaUnitOfWorkDeps {
+export interface PrismaUnitOfWorkDeps {
   prisma: PrismaClient;
+  outboxWriter: PrismaOutboxWriter;
 }
 
 export class PrismaUnitOfWork implements UnitOfWork {
   private readonly prisma: PrismaClient;
+  private readonly outboxWriter: PrismaOutboxWriter;
 
-  constructor({ prisma }: PrismaUnitOfWorkDeps) {
+  constructor({ prisma, outboxWriter }: PrismaUnitOfWorkDeps) {
     this.prisma = prisma;
+    this.outboxWriter = outboxWriter;
   }
 
-  async run<T>(work: (repos: TransactionalRepositories) => Promise<T>): Promise<T> {
+  async run<T>(work: (context: TransactionContext) => Promise<T>): Promise<T> {
     return this.prisma.$transaction(async (tx) => {
+      const staged: DomainEvent[] = [];
       const repos: TransactionalRepositories = {
         userRepository: new PrismaUserRepository({ prisma: tx }),
         roleRepository: new PrismaRoleRepository({ prisma: tx }),
         permissionRepository: new PrismaPermissionRepository({ prisma: tx }),
         userRoleRepository: new PrismaUserRoleRepository({ prisma: tx }),
       };
-      return work(repos);
+      const context: TransactionContext = {
+        ...repos,
+        outbox: { stage: (events) => staged.push(...events) },
+      };
+      const result = await work(context);
+      await this.outboxWriter.write(staged, tx);
+      return result;
     });
   }
 }

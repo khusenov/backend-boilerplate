@@ -102,3 +102,15 @@ model UserRole {
   @@index([roleId])
   @@map("user_roles")
 }
+
+model OutboxMessage {
+  id          String    @id @db.Char(36)
+  aggregateId String    @map("aggregate_id") @db.Char(36)
+  eventName   String    @map("event_name") @db.VarChar(255)
+  payload     String    @db.Text
+  occurredAt  DateTime  @map("occurred_at")
+  publishedAt DateTime? @map("published_at")
+
+  @@index([publishedAt, occurredAt])
+  @@map("outbox_messages")
+}

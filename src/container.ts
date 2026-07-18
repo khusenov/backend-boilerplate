@@ -59,6 +59,14 @@ import { BullMqJobQueue } from '@/infrastructure/jobs/bullmq-job-queue';
 import { JobWorker } from '@/infrastructure/jobs/job-worker';
 import type { JobQueue } from '@/application/shared/ports/job-queue';
 import { ExampleJobHandler } from '@/application/jobs/example-job-handler';
+import { DomainEventSerializer } from '@/infrastructure/events/domain-event-serializer';
+import { domainEventFactories } from '@/infrastructure/events/domain-event-factories';
+import { DomainEventHandlerRegistry } from '@/infrastructure/events/domain-event-handler-registry';
+import { DispatchDomainEventJobHandler } from '@/infrastructure/events/dispatch-domain-event-job-handler';
+import { OutboxRelay } from '@/infrastructure/events/outbox-relay';
+import { PrismaOutboxWriter } from '@/infrastructure/persistence/prisma-outbox-writer';
+import { BullMqJobScheduler } from '@/infrastructure/jobs/bullmq-job-scheduler';
+import type { JobScheduler } from '@/application/shared/ports/job-scheduler';
 
 declare module '@fastify/awilix' {
   interface Cradle {
@@ -81,8 +89,12 @@ declare module '@fastify/awilix' {
     unitOfWork: UnitOfWork;
     domainEventDispatcher: DomainEventDispatcher;
     userCreatedLogHandler: DomainEventHandler;
-
-    // jobs
+    domainEventHandlers: DomainEventHandler[];
+    domainEventHandlerRegistry: DomainEventHandlerRegistry;
+    domainEventSerializer: DomainEventSerializer;
+    outboxWriter: PrismaOutboxWriter;
+    dispatchDomainEventJobHandler: DispatchDomainEventJobHandler;
+    outboxRelay: OutboxRelay;
     queuePrefix: string;
     queueConcurrency: number;
     redisConnection: Redis;
@@ -90,6 +102,7 @@ declare module '@fastify/awilix' {
     exampleJobHandler: ExampleJobHandler;
     jobQueue: JobQueue;
     jobWorker: JobWorker;
+    jobScheduler: JobScheduler;
 
     // use cases
     listUsers: ListUsers;
@@ -114,10 +127,10 @@ declare module '@fastify/awilix' {
 }
 
 function createDomainEventDispatcher({
+  domainEventHandlerRegistry,
   logger,
-  userCreatedLogHandler,
-}: Pick<Cradle, 'logger' | 'userCreatedLogHandler'>): DomainEventDispatcher {
-  return new InProcessDomainEventDispatcher({ handlers: [userCreatedLogHandler], logger });
+}: Pick<Cradle, 'domainEventHandlerRegistry' | 'logger'>): DomainEventDispatcher {
+  return new InProcessDomainEventDispatcher({ domainEventHandlerRegistry, logger });
 }
 
 export function registerDependencies(
@@ -145,7 +158,6 @@ export function registerDependencies(
     unitOfWork: asClass(PrismaUnitOfWork).singleton(),
     userCreatedLogHandler: asClass(UserCreatedLogHandler).singleton(),
     domainEventDispatcher: asFunction(createDomainEventDispatcher).singleton(),
-
     queuePrefix: asValue(env.QUEUE_PREFIX),
     queueConcurrency: asValue(env.QUEUE_CONCURRENCY),
     redisConnection: asFunction(() =>
@@ -168,23 +180,50 @@ export function registerDependencies(
       ({
         workerConnection,
         exampleJobHandler,
+        outboxRelay,
+        dispatchDomainEventJobHandler,
         logger,
         queuePrefix,
         queueConcurrency,
       }: Pick<
         Cradle,
-        'workerConnection' | 'exampleJobHandler' | 'logger' | 'queuePrefix' | 'queueConcurrency'
+        | 'workerConnection'
+        | 'exampleJobHandler'
+        | 'outboxRelay'
+        | 'dispatchDomainEventJobHandler'
+        | 'logger'
+        | 'queuePrefix'
+        | 'queueConcurrency'
       >) =>
         new JobWorker({
           connection: workerConnection,
           queuePrefix,
           concurrency: queueConcurrency,
-          handlers: [exampleJobHandler],
+          handlers: [exampleJobHandler, outboxRelay, dispatchDomainEventJobHandler],
           logger,
         }),
     )
       .singleton()
       .disposer((worker) => worker.close()),
+    domainEventHandlers: asFunction(
+      ({ userCreatedLogHandler }: Pick<Cradle, 'userCreatedLogHandler'>) => [userCreatedLogHandler],
+    ).singleton(),
+    domainEventHandlerRegistry: asFunction(
+      ({ domainEventHandlers }: Pick<Cradle, 'domainEventHandlers'>) =>
+        new DomainEventHandlerRegistry({ handlers: domainEventHandlers }),
+    ).singleton(),
+    domainEventSerializer: asFunction(
+      () => new DomainEventSerializer({ factories: domainEventFactories }),
+    ).singleton(),
+    outboxWriter: asClass(PrismaOutboxWriter).singleton(),
+    dispatchDomainEventJobHandler: asClass(DispatchDomainEventJobHandler).singleton(),
+    outboxRelay: asClass(OutboxRelay).singleton(),
+    jobScheduler: asFunction(
+      ({ redisConnection, queuePrefix }: Pick<Cradle, 'redisConnection' | 'queuePrefix'>) =>
+        new BullMqJobScheduler({ connection: redisConnection, queuePrefix }),
+    )
+      .singleton()
+      .disposer((scheduler) => scheduler.close()),
 
     listUsers: asClass(ListUsers).singleton(),
     getUser: asClass(GetUser).singleton(),

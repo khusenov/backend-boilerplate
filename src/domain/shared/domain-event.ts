@@ -4,7 +4,8 @@ export abstract class DomainEvent {
   protected constructor(
     readonly aggregateId: string,
     readonly eventName: string,
+    occurredAt?: Date,
   ) {
-    this.occurredAt = new Date();
+    this.occurredAt = occurredAt ?? new Date();
   }
 }

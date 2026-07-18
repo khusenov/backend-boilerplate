@@ -1,51 +1,45 @@
-import type { UserRepository } from '@/domain/user/user-repository';
-import type { PasswordHasher } from '@/application/shared/ports/password-hasher';
-import type { IdGenerator } from '@/application/shared/ports/id-generator';
-import type { DomainEventDispatcher } from '@/application/shared/ports/domain-event-dispatcher';
 import { Email } from '@/domain/user/email-vo';
 import { User } from '@/domain/user/user-entity';
 import { EmailAlreadyTakenError } from '@/domain/user/user-errors';
 import { toUserDto, type UserDto } from '@/application/user/user-dto';
+import type { UserRepository } from '@/domain/user/user-repository';
+import type { IdGenerator } from '@/application/shared/ports/id-generator';
+import type { PasswordHasher } from '@/application/shared/ports/password-hasher';
+import type { UnitOfWork } from '@/application/shared/ports/unit-of-work';
 
 export interface CreateUserInput {
+  email: string;
   firstName: string;
   lastName: string;
-  email: string;
   password: string;
 }
 
 export type CreateUserOutput = UserDto;
 
-interface CreateUserDeps {
+export interface CreateUserDeps {
+  unitOfWork: UnitOfWork;
   userRepository: UserRepository;
   passwordHasher: PasswordHasher;
   idGenerator: IdGenerator;
-  domainEventDispatcher: DomainEventDispatcher;
 }
 
 export class CreateUser {
+  private readonly uow: UnitOfWork;
   private readonly users: UserRepository;
   private readonly hasher: PasswordHasher;
   private readonly ids: IdGenerator;
-  private readonly dispatcher: DomainEventDispatcher;
 
-  constructor({
-    userRepository,
-    passwordHasher,
-    idGenerator,
-    domainEventDispatcher,
-  }: CreateUserDeps) {
+  constructor({ unitOfWork, userRepository, passwordHasher, idGenerator }: CreateUserDeps) {
+    this.uow = unitOfWork;
     this.users = userRepository;
     this.hasher = passwordHasher;
     this.ids = idGenerator;
-    this.dispatcher = domainEventDispatcher;
   }
 
   async execute(input: CreateUserInput): Promise<CreateUserOutput> {
     const email = Email.create(input.email);
 
     const existingUser = await this.users.findByEmail(email);
-
     if (existingUser) throw new EmailAlreadyTakenError(email.toString());
 
     const passwordHash = await this.hasher.hash(input.password);
@@ -58,9 +52,10 @@ export class CreateUser {
       passwordHash,
     });
 
-    await this.users.save(newUser);
-
-    await this.dispatcher.dispatch(newUser.pullDomainEvents());
+    await this.uow.run(async ({ userRepository, outbox }) => {
+      await userRepository.save(newUser);
+      outbox.stage(newUser.pullDomainEvents());
+    });
 
     return toUserDto(newUser);
   }

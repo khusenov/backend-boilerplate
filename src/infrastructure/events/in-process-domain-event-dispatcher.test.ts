@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { InProcessDomainEventDispatcher } from './in-process-domain-event-dispatcher';
+import { DomainEventHandlerRegistry } from './domain-event-handler-registry';
 import { DomainEvent } from '@/domain/shared/domain-event';
 import type { DomainEventHandler } from '@/application/shared/ports/domain-event-handler';
 import type { Logger } from '@/application/shared/ports/logger';
@@ -26,13 +27,17 @@ function makeHandler(eventName: string) {
   } satisfies DomainEventHandler;
 }
 
+// The dispatcher now depends on a DomainEventHandlerRegistry rather than a raw
+// handler array; this helper builds the registry so each test reads unchanged.
+function makeDispatcher(handlers: DomainEventHandler[], logger: Logger) {
+  const registry = new DomainEventHandlerRegistry({ handlers });
+  return new InProcessDomainEventDispatcher({ domainEventHandlerRegistry: registry, logger });
+}
+
 describe('InProcessDomainEventDispatcher', () => {
   it('routes an event to the handler whose eventName matches', async () => {
     const handler = makeHandler('user.created');
-    const dispatcher = new InProcessDomainEventDispatcher({
-      handlers: [handler],
-      logger: makeLogger(),
-    });
+    const dispatcher = makeDispatcher([handler], makeLogger());
     const event = new TestEvent('agg-1', 'user.created');
 
     await dispatcher.dispatch([event]);
@@ -43,10 +48,7 @@ describe('InProcessDomainEventDispatcher', () => {
 
   it('does not invoke a handler registered for a different event name', async () => {
     const handler = makeHandler('user.deleted');
-    const dispatcher = new InProcessDomainEventDispatcher({
-      handlers: [handler],
-      logger: makeLogger(),
-    });
+    const dispatcher = makeDispatcher([handler], makeLogger());
 
     await dispatcher.dispatch([new TestEvent('agg-1', 'user.created')]);
 
@@ -69,10 +71,7 @@ describe('InProcessDomainEventDispatcher', () => {
         return Promise.resolve();
       }),
     } satisfies DomainEventHandler;
-    const dispatcher = new InProcessDomainEventDispatcher({
-      handlers: [first, second],
-      logger: makeLogger(),
-    });
+    const dispatcher = makeDispatcher([first, second], makeLogger());
 
     await dispatcher.dispatch([new TestEvent('agg-1', 'user.created')]);
 
@@ -86,10 +85,7 @@ describe('InProcessDomainEventDispatcher', () => {
       handle: vi.fn<DomainEventHandler['handle']>().mockRejectedValue(new Error('boom')),
     } satisfies DomainEventHandler;
     const healthy = makeHandler('user.created');
-    const dispatcher = new InProcessDomainEventDispatcher({
-      handlers: [failing, healthy],
-      logger,
-    });
+    const dispatcher = makeDispatcher([failing, healthy], logger);
 
     await expect(
       dispatcher.dispatch([new TestEvent('agg-1', 'user.created')]),
@@ -106,10 +102,7 @@ describe('InProcessDomainEventDispatcher', () => {
       handle: vi.fn<DomainEventHandler['handle']>().mockRejectedValue(new Error('boom')),
     } satisfies DomainEventHandler;
     const handlerB = makeHandler('b');
-    const dispatcher = new InProcessDomainEventDispatcher({
-      handlers: [failingA, handlerB],
-      logger,
-    });
+    const dispatcher = makeDispatcher([failingA, handlerB], logger);
 
     await dispatcher.dispatch([new TestEvent('agg-1', 'a'), new TestEvent('agg-2', 'b')]);
 
@@ -119,7 +112,7 @@ describe('InProcessDomainEventDispatcher', () => {
 
   it('is a no-op for an event with no registered handler', async () => {
     const logger = makeLogger();
-    const dispatcher = new InProcessDomainEventDispatcher({ handlers: [], logger });
+    const dispatcher = makeDispatcher([], logger);
 
     await expect(
       dispatcher.dispatch([new TestEvent('agg-1', 'user.created')]),

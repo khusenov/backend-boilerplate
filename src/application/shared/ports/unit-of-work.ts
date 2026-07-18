@@ -2,6 +2,7 @@ import type { UserRepository } from '@/domain/user/user-repository';
 import type { RoleRepository } from '@/domain/authorization/role-repository';
 import type { PermissionRepository } from '@/application/shared/ports/permission-repository';
 import type { UserRoleRepository } from '@/application/shared/ports/user-role-repository';
+import type { DomainEvent } from '@/domain/shared/domain-event';
 
 export interface TransactionalRepositories {
   userRepository: UserRepository;
@@ -10,6 +11,14 @@ export interface TransactionalRepositories {
   userRoleRepository: UserRoleRepository;
 }
 
+export interface OutboxStaging {
+  stage(events: readonly DomainEvent[]): void;
+}
+
+export interface TransactionContext extends TransactionalRepositories {
+  readonly outbox: OutboxStaging;
+}
+
 export interface UnitOfWork {
-  run<T>(work: (repos: TransactionalRepositories) => Promise<T>): Promise<T>;
+  run<T>(work: (context: TransactionContext) => Promise<T>): Promise<T>;
 }

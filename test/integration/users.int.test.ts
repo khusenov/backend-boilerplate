@@ -56,7 +56,7 @@ describe('/users (integration)', () => {
       expect(inDb).not.toBeNull();
     });
 
-    it('fires the UserCreatedEvent handler end-to-end', async () => {
+    it('stages a UserCreatedEvent in the outbox rather than dispatching it synchronously', async () => {
       const handlerSpy = vi.spyOn(h.app.diContainer.cradle.userCreatedLogHandler, 'handle');
 
       try {
@@ -73,12 +73,18 @@ describe('/users (integration)', () => {
         });
 
         expect(res.statusCode).toBe(201);
-        expect(handlerSpy).toHaveBeenCalledOnce();
-        const [event] = handlerSpy.mock.calls[0]!;
-        expect(event).toBeInstanceOf(UserCreatedEvent);
-        const created = event as UserCreatedEvent;
-        expect(created.aggregateId).toBe(res.json<{ id: string }>().id);
-        expect(created.email).toBe('eve@finflow.test');
+        const userId = res.json<{ id: string }>().id;
+
+        // Delivery is asynchronous via the outbox relay, so the in-process
+        // handler is not invoked during the request itself.
+        expect(handlerSpy).not.toHaveBeenCalled();
+
+        const rows = await h.prisma.outboxMessage.findMany({ where: { aggregateId: userId } });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+          eventName: UserCreatedEvent.EVENT_NAME,
+          publishedAt: null,
+        });
       } finally {
         handlerSpy.mockRestore();
       }
