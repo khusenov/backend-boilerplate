@@ -1,4 +1,4 @@
-import { asClass, asFunction, asValue, type AwilixContainer } from 'awilix';
+import { asClass, asFunction, asValue, aliasTo, type AwilixContainer } from 'awilix';
 import { env, type Env } from '@/config/env';
 import type { PrismaClient } from '@/generated/prisma/client';
 import { createPrismaClient } from '@/infrastructure/persistence/prisma-client';
@@ -67,6 +67,8 @@ import { OutboxRelay } from '@/infrastructure/events/outbox-relay';
 import { PrismaOutboxWriter } from '@/infrastructure/persistence/prisma-outbox-writer';
 import { BullMqJobScheduler } from '@/infrastructure/jobs/bullmq-job-scheduler';
 import type { JobScheduler } from '@/application/shared/ports/job-scheduler';
+import type { MetricsExposition, MetricsRecorder } from '@/application/shared/ports/metrics';
+import { PrometheusMetricsRecorder } from '@/infrastructure/observability/prometheus-metrics-recorder';
 
 declare module '@fastify/awilix' {
   interface Cradle {
@@ -103,6 +105,8 @@ declare module '@fastify/awilix' {
     jobQueue: JobQueue;
     jobWorker: JobWorker;
     jobScheduler: JobScheduler;
+    metricsRecorder: MetricsRecorder;
+    metricsExposition: MetricsExposition;
 
     // use cases
     listUsers: ListUsers;
@@ -224,6 +228,8 @@ export function registerDependencies(
     )
       .singleton()
       .disposer((scheduler) => scheduler.close()),
+    metricsRecorder: asClass(PrometheusMetricsRecorder).singleton(),
+    metricsExposition: aliasTo('metricsRecorder'),
 
     listUsers: asClass(ListUsers).singleton(),
     getUser: asClass(GetUser).singleton(),

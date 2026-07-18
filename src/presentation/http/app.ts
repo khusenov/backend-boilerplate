@@ -27,6 +27,8 @@ import {
   correlationIdPlugin,
 } from '@/presentation/http/plugins/correlation-id';
 import { randomUUID } from 'node:crypto';
+import { metricsPlugin } from '@/presentation/http/plugins/metrics';
+import { metricsRoutes } from '@/presentation/http/routes/metrics-routes';
 
 export interface BuildAppOptions {
   logLevel: string;
@@ -55,6 +57,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     injectionMode: 'PROXY',
   });
   await app.register(correlationIdPlugin);
+  if (env.METRICS_ENABLED) await app.register(metricsPlugin);
   await app.register(fastifyCors, { origin: env.WEB_ORIGIN, credentials: true });
   await app.register(fastifyCookie, env.COOKIE_SECRET ? { secret: env.COOKIE_SECRET } : {});
   await app.register(authPlugin);
@@ -86,6 +89,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   }
 
   await app.register(healthRoutes, { prefix: '/health' });
+  if (env.METRICS_ENABLED) await app.register(metricsRoutes, { prefix: '/metrics' });
   await app.register(authRoutes, { prefix: '/auth' });
   await app.register(userRoutes, { prefix: '/users' });
   await app.register(roleRoutes, { prefix: '/roles' });

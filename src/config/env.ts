@@ -25,6 +25,7 @@ export const env = cleanEnv(process.env, {
   REDIS_URL: str({ devDefault: 'redis://127.0.0.1:6379' }),
   QUEUE_PREFIX: str({ default: 'finflow' }),
   QUEUE_CONCURRENCY: num({ default: 5 }),
+  METRICS_ENABLED: bool({ default: true }),
 });
 
 export type Env = typeof env;
