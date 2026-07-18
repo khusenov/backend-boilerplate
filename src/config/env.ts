@@ -26,6 +26,7 @@ export const env = cleanEnv(process.env, {
   QUEUE_PREFIX: str({ default: 'finflow' }),
   QUEUE_CONCURRENCY: num({ default: 5 }),
   METRICS_ENABLED: bool({ default: true }),
+  HEALTHCHECK_TIMEOUT_MS: num({ default: 2000 }),
 });
 
 export type Env = typeof env;

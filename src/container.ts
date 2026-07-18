@@ -69,6 +69,8 @@ import { BullMqJobScheduler } from '@/infrastructure/jobs/bullmq-job-scheduler';
 import type { JobScheduler } from '@/application/shared/ports/job-scheduler';
 import type { MetricsExposition, MetricsRecorder } from '@/application/shared/ports/metrics';
 import { PrometheusMetricsRecorder } from '@/infrastructure/observability/prometheus-metrics-recorder';
+import { RedisHealthCheck } from '@/infrastructure/jobs/redis-health-check';
+import { CompositeHealthCheck } from '@/infrastructure/health/composite-health-check';
 
 declare module '@fastify/awilix' {
   interface Cradle {
@@ -85,6 +87,10 @@ declare module '@fastify/awilix' {
     refreshTokenRepository: RefreshTokenRepository;
     grants: GrantsReader;
     healthCheck: HealthCheck;
+    databaseHealthCheck: HealthCheck;
+    redisHealthCheck: HealthCheck;
+    healthCheckRedisConnection: Redis;
+    healthCheckTimeoutMs: number;
     roleRepository: RoleRepository;
     permissionRepository: PermissionRepository;
     userRoleRepository: UserRoleRepository;
@@ -155,7 +161,19 @@ export function registerDependencies(
     opaqueTokenService: asClass(CryptoOpaqueTokenService).singleton(),
     refreshTokenRepository: asClass(PrismaRefreshTokenRepository).singleton(),
     grants: asClass(PrismaGrantsReader).singleton(),
-    healthCheck: asClass(PrismaHealthCheck).singleton(),
+    databaseHealthCheck: asClass(PrismaHealthCheck).singleton(),
+    healthCheckRedisConnection: asFunction(() => createRedisConnection({ redisUrl: env.REDIS_URL }))
+      .singleton()
+      .disposer((connection) => connection.disconnect()),
+    redisHealthCheck: asClass(RedisHealthCheck).singleton(),
+    healthCheck: asFunction(
+      ({
+        databaseHealthCheck,
+        redisHealthCheck,
+      }: Pick<Cradle, 'databaseHealthCheck' | 'redisHealthCheck'>) =>
+        new CompositeHealthCheck([databaseHealthCheck, redisHealthCheck]),
+    ).singleton(),
+    healthCheckTimeoutMs: asValue(env.HEALTHCHECK_TIMEOUT_MS),
     roleRepository: asClass(PrismaRoleRepository).singleton(),
     permissionRepository: asClass(PrismaPermissionRepository).singleton(),
     userRoleRepository: asClass(PrismaUserRoleRepository).singleton(),

@@ -1,17 +1,21 @@
 import { MariaDbContainer, StartedMariaDbContainer } from '@testcontainers/mariadb';
+import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
 import type { TestProject } from 'vitest/node';
 import { execSync } from 'node:child_process';
 
 declare module 'vitest' {
   export interface ProvidedContext {
     databaseUrl: string;
+    redisUrl: string;
   }
 }
 
 let container: StartedMariaDbContainer;
+let redisContainer: StartedRedisContainer;
 
 export async function setup({ provide }: TestProject) {
   container = await new MariaDbContainer('mariadb:11.4').withDatabase('finflow_test').start();
+  redisContainer = await new RedisContainer('redis:7.4-alpine').start();
 
   const username = container.getUsername();
   const password = container.getUserPassword();
@@ -27,8 +31,10 @@ export async function setup({ provide }: TestProject) {
   });
 
   provide('databaseUrl', url);
+  provide('redisUrl', redisContainer.getConnectionUrl());
 }
 
 export async function teardown(): Promise<void> {
   await container?.stop();
+  await redisContainer?.stop();
 }
