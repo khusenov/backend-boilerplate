@@ -1,0 +1,39 @@
+# Dependencies & build output (reinstalled / rebuilt inside the image)
+node_modules
+dist
+coverage
+src/generated/prisma
+
+# Secrets & local env (never bake into an image)
+.env
+.env.*
+!.env.example
+
+# VCS & CI
+.git
+.github
+.gitignore
+
+# Tooling & editor
+.idea
+.claude
+.husky
+.vscode
+*.log
+.DS_Store
+
+# Tests & docs (not needed to build or run the server)
+test
+docs
+
+# Files that do not affect the build
+Dockerfile
+docker-compose.yml
+.dockerignore
+README.md
+CLAUDE.md
+eslint.config.js
+.prettierrc.json
+.prettierignore
+vitest.config.ts
+vitest.integration.config.ts

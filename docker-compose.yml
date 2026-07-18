@@ -1,0 +1,79 @@
+name: finflow
+
+services:
+  mariadb:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: finflow
+      MARIADB_USER: finflow
+      MARIADB_PASSWORD: finflow
+      MARIADB_ROOT_PASSWORD: root
+    ports:
+      - '3306:3306'
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    healthcheck:
+      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  migrate:
+    build:
+      context: .
+      target: build
+    command: ['npm', 'run', 'db:migrate:deploy']
+    environment:
+      DATABASE_URL: mysql://finflow:finflow@mariadb:3306/finflow
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    restart: 'no'
+
+  app:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 15s
+    ports:
+      - '8000:8000'
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: '8000'
+      DATABASE_URL: mysql://finflow:finflow@mariadb:3306/finflow
+      REDIS_URL: redis://redis:6379
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev-only-secret-change-me-min-32-characters}
+      COOKIE_SECRET: ${COOKIE_SECRET:-dev-only-cookie-secret-change-me}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
+      COOKIE_SECURE: 'false'
+      METRICS_ENABLED: 'true'
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  mariadb-data:
+  redis-data:

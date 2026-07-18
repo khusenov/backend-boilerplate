@@ -33,6 +33,7 @@
     "prepare": "husky",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
     "db:sync-auth": "tsx src/scripts/sync-auth.ts",
     "db:studio": "prisma studio"
   },
