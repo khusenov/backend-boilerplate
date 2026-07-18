@@ -38,6 +38,7 @@ services:
     build:
       context: .
       target: build
+    image: finflow-migrate
     command: ['npm', 'run', 'db:migrate:deploy']
     environment:
       DATABASE_URL: mysql://finflow:finflow@mariadb:3306/finflow
@@ -50,6 +51,7 @@ services:
     build:
       context: .
       target: runtime
+    image: finflow-app
     restart: unless-stopped
     init: true
     stop_grace_period: 15s
