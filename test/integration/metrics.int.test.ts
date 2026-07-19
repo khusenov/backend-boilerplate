@@ -1,12 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/presentation/http/app';
+import { createLoggerOptions } from '@/infrastructure/logging/logger-options';
 
 describe('metrics endpoint (integration)', () => {
   let app: FastifyInstance;
 
   beforeAll(async () => {
-    app = await buildApp({ logLevel: 'silent', disableRequestLogging: true, rateLimit: false });
+    app = await buildApp({
+      loggerOptions: createLoggerOptions('silent'),
+      disableRequestLogging: true,
+      rateLimit: false,
+    });
     await app.ready();
   });
 

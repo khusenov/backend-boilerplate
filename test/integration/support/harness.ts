@@ -1,4 +1,5 @@
 import { buildApp } from '@/presentation/http/app';
+import { createLoggerOptions } from '@/infrastructure/logging/logger-options';
 import type { FastifyInstance } from 'fastify';
 import type { PrismaClient } from '@/generated/prisma/client';
 
@@ -8,7 +9,11 @@ export interface TestHarness {
 }
 
 export async function createHarness(): Promise<TestHarness> {
-  const app = await buildApp({ logLevel: 'silent', disableRequestLogging: true, rateLimit: false });
+  const app = await buildApp({
+    loggerOptions: createLoggerOptions('silent'),
+    disableRequestLogging: true,
+    rateLimit: false,
+  });
   await app.ready();
 
   const prisma = app.diContainer.cradle.prisma;

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/presentation/http/app';
+import { createLoggerOptions } from '@/infrastructure/logging/logger-options';
 import { env } from '@/config/env';
 import { RATE_LIMIT_KEY_NAMESPACE } from '@/presentation/http/security';
 
@@ -8,7 +9,11 @@ const AUTH_LIMIT = env.RATE_LIMIT_AUTH_MAX;
 const badCredentials = { email: 'nobody@finflow.dev', password: 'wrong-password' };
 
 async function startRateLimitedApp(): Promise<FastifyInstance> {
-  const app = await buildApp({ logLevel: 'silent', disableRequestLogging: true, rateLimit: true });
+  const app = await buildApp({
+    loggerOptions: createLoggerOptions('silent'),
+    disableRequestLogging: true,
+    rateLimit: true,
+  });
   await app.ready();
   return app;
 }

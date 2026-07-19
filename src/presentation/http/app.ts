@@ -29,16 +29,17 @@ import {
 import { randomUUID } from 'node:crypto';
 import { metricsPlugin } from '@/presentation/http/plugins/metrics';
 import { metricsRoutes } from '@/presentation/http/routes/metrics-routes';
+import type { LoggerOptions } from 'pino';
 
 export interface BuildAppOptions {
-  logLevel: string;
+  loggerOptions: LoggerOptions;
   disableRequestLogging?: boolean;
   rateLimit?: boolean;
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
   const app = fastify({
-    logger: { level: opts.logLevel },
+    logger: opts.loggerOptions,
     requestIdHeader: CORRELATION_ID_HEADER,
     genReqId: () => randomUUID(),
     forceCloseConnections: true,

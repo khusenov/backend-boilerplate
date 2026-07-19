@@ -1,10 +1,11 @@
 import { buildApp } from '@/presentation/http/app';
 import { env } from '@/config/env';
 import { OUTBOX_RELAY_JOB, OUTBOX_RELAY_INTERVAL_MS } from '@/infrastructure/events/outbox-relay';
+import { createLoggerOptions } from '@/infrastructure/logging/logger-options';
 
 async function bootstrap(): Promise<void> {
   const app = await buildApp({
-    logLevel: env.LOG_LEVEL,
+    loggerOptions: createLoggerOptions(env.LOG_LEVEL),
     disableRequestLogging: env.isDevelopment,
   });
 
