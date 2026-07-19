@@ -33,6 +33,10 @@ export const env = cleanEnv(process.env, {
   QUEUE_CONCURRENCY: num({ default: 5 }),
   METRICS_ENABLED: bool({ default: true }),
   HEALTHCHECK_TIMEOUT_MS: num({ default: 2000 }),
+  OTEL_ENABLED: bool({ default: false }),
+  OTEL_SERVICE_NAME: str({ default: 'finflow-api' }),
+  OTEL_SERVICE_VERSION: str({ default: '0.0.0' }),
+  OTEL_EXPORTER_OTLP_ENDPOINT: str({ default: 'http://localhost:4318' }),
 });
 
 export type Env = typeof env;

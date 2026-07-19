@@ -3,6 +3,10 @@ import type { Redis } from 'ioredis';
 import type { JobHandler } from '@/application/shared/ports/job-handler';
 import type { Logger } from '@/application/shared/ports/logger';
 import { DEFAULT_QUEUE_NAME } from '@/infrastructure/jobs/queue-name';
+import {
+  runWithExtractedContext,
+  stripTraceContext,
+} from '@/infrastructure/jobs/job-trace-context';
 
 export interface JobWorkerDeps {
   connection: Redis;
@@ -32,12 +36,14 @@ export class JobWorker {
     });
   }
 
-  private async process(job: Job): Promise<void> {
-    const handler = this.handlers.get(job.name);
-    if (!handler) {
-      throw new Error(`No handler registered for job "${job.name}"`);
-    }
-    await handler.handle(job.data);
+  private process(job: Job): Promise<void> {
+    return runWithExtractedContext(job.data, async () => {
+      const handler = this.handlers.get(job.name);
+      if (!handler) {
+        throw new Error(`No handler registered for job "${job.name}"`);
+      }
+      await handler.handle(stripTraceContext(job.data));
+    });
   }
 
   async close(): Promise<void> {

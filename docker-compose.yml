@@ -47,6 +47,15 @@ services:
         condition: service_healthy
     restart: 'no'
 
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: 'true'
+    ports:
+      - '16686:16686'
+      - '4318:4318'
+
   app:
     build:
       context: .
@@ -68,6 +77,10 @@ services:
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
       COOKIE_SECURE: 'false'
       METRICS_ENABLED: 'true'
+      OTEL_ENABLED: 'true'
+      OTEL_SERVICE_NAME: finflow-api
+      OTEL_SERVICE_VERSION: '1.0.0'
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     depends_on:
       mariadb:
         condition: service_healthy
@@ -75,6 +88,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      jaeger:
+        condition: service_started
 
 volumes:
   mariadb-data:

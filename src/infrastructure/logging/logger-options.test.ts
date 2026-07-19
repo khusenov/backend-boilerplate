@@ -1,6 +1,25 @@
-import { describe, it, expect } from 'vitest';
+import { beforeAll, describe, it, expect } from 'vitest';
+import { context, trace, TraceFlags, type SpanContext } from '@opentelemetry/api';
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import { pino, type DestinationStream } from 'pino';
-import { createLoggerOptions, REDACT_PATHS, REDACT_CENSOR } from './logger-options';
+import {
+  createLoggerOptions,
+  REDACT_PATHS,
+  REDACT_CENSOR,
+  traceCorrelationMixin,
+} from './logger-options';
+
+const VALID_TRACE_ID = '0af7651916cd43dd8448eb211c80319c';
+const VALID_SPAN_ID = 'b7ad6b7169203331';
+
+beforeAll(() => {
+  context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
+});
+
+function withActiveSpan<T>(spanContext: SpanContext, run: () => T): T {
+  const span = trace.wrapSpanContext(spanContext);
+  return context.with(trace.setSpan(context.active(), span), run);
+}
 
 function makeSink(): { lines: string[]; stream: DestinationStream } {
   const lines: string[] = [];
@@ -31,6 +50,32 @@ describe('createLoggerOptions', () => {
     const redact = createLoggerOptions('info').redact as { paths: string[]; censor: string };
     expect(redact.censor).toBe(REDACT_CENSOR);
     expect(redact.paths).toEqual([...REDACT_PATHS]);
+  });
+
+  it('wires the trace-correlation mixin', () => {
+    expect(createLoggerOptions('info').mixin).toBe(traceCorrelationMixin);
+  });
+});
+
+describe('traceCorrelationMixin', () => {
+  it('returns an empty object when there is no active span', () => {
+    expect(traceCorrelationMixin()).toEqual({});
+  });
+
+  it('returns trace_id and span_id matching the active span context', () => {
+    const result = withActiveSpan(
+      { traceId: VALID_TRACE_ID, spanId: VALID_SPAN_ID, traceFlags: TraceFlags.SAMPLED },
+      traceCorrelationMixin,
+    );
+    expect(result).toEqual({ trace_id: VALID_TRACE_ID, span_id: VALID_SPAN_ID });
+  });
+
+  it('returns an empty object for an invalid, all-zero span context', () => {
+    const result = withActiveSpan(
+      { traceId: '0'.repeat(32), spanId: '0'.repeat(16), traceFlags: TraceFlags.NONE },
+      traceCorrelationMixin,
+    );
+    expect(result).toEqual({});
   });
 });
 

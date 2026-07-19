@@ -1,7 +1,9 @@
+import './instrumentation';
 import { buildApp } from '@/presentation/http/app';
 import { env } from '@/config/env';
 import { OUTBOX_RELAY_JOB, OUTBOX_RELAY_INTERVAL_MS } from '@/infrastructure/events/outbox-relay';
 import { createLoggerOptions } from '@/infrastructure/logging/logger-options';
+import { shutdownTracing } from '@/infrastructure/observability/tracing';
 
 async function bootstrap(): Promise<void> {
   const app = await buildApp({
@@ -21,6 +23,9 @@ async function bootstrap(): Promise<void> {
       process.exit(1);
     }, 10_000).unref();
     await app.close();
+    await shutdownTracing().catch((err: unknown) =>
+      app.log.error({ err }, 'tracing shutdown failed'),
+    );
     process.exit(code);
   };
 

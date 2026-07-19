@@ -2,6 +2,7 @@ import type { Redis } from 'ioredis';
 import type { JobOptions, JobQueue } from '@/application/shared/ports/job-queue';
 import { Queue } from 'bullmq';
 import { DEFAULT_QUEUE_NAME } from '@/infrastructure/jobs/queue-name';
+import { injectTraceContext } from '@/infrastructure/jobs/job-trace-context';
 
 const DEFAULT_ATTEMPTS = 3;
 const BACKOFF_DELAY_MS = 1000;
@@ -26,7 +27,7 @@ export class BullMqJobQueue implements JobQueue {
   }
 
   async enqueue<TPayload>(jobName: string, payload: TPayload, options?: JobOptions): Promise<void> {
-    await this.queue.add(jobName, payload, {
+    await this.queue.add(jobName, injectTraceContext(payload), {
       attempts: options?.attempts ?? DEFAULT_ATTEMPTS,
       backoff: { type: 'exponential', delay: BACKOFF_DELAY_MS },
       removeOnComplete: KEEP_COMPLETED,
