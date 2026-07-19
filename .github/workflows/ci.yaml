@@ -36,6 +36,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Validate architecture boundaries
+        run: npm run arch
+
       - name: Build production bundle
         run: npm run build
 

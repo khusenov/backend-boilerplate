@@ -26,5 +26,10 @@ export default tseslint.config(
     },
     ignores: ['dist', 'node_modules', 'coverage', 'src/generated'],
   },
+  {
+    // Plain-JS tooling isn't part of the typed source graph — exempt it from type-aware rules.
+    files: ['**/*.cjs', '**/*.mjs'],
+    ...tseslint.configs.disableTypeChecked,
+  },
   prettier,
 );

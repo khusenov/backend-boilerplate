@@ -1,10 +1,12 @@
-import type { Env } from './env';
-
 export const MIN_SECRET_LENGTH = 32;
 
 const PRODUCTION_SECRET_KEYS = ['COOKIE_SECRET', 'JWT_ACCESS_SECRET'] as const;
 
-type SecretPolicyInput = Pick<Env, 'isProduction' | 'COOKIE_SECRET' | 'JWT_ACCESS_SECRET'>;
+interface SecretPolicyInput {
+  readonly isProduction: boolean;
+  readonly COOKIE_SECRET: string;
+  readonly JWT_ACCESS_SECRET: string;
+}
 
 export function assertProductionSecrets(env: SecretPolicyInput): void {
   if (!env.isProduction) {

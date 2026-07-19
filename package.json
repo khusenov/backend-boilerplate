@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "lint-staged": {
     "*.{ts,js}": [
@@ -28,6 +28,8 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "arch": "depcruise src && depcruise src --output-type json | node scripts/assert-arch-not-vacuous.mjs",
+    "arch:graph": "{ echo '```mermaid'; depcruise src --include-only '^src' --output-type mermaid --collapse '^src/[^/]+'; echo '```'; } > docs/architecture-graph.md",
     "verify:lock": "npm ci --dry-run --ignore-scripts",
     "audit": "npm run verify:lock && npm run format && npm run lint && npm run typecheck && npm run test:coverage && npm run test:integration",
     "prepare": "husky",
@@ -56,6 +58,7 @@
     "@testcontainers/redis": "^12.0.4",
     "@types/node": "^25.9.3",
     "@vitest/coverage-v8": "^4.1.9",
+    "dependency-cruiser": "^18.1.0",
     "eslint": "^10.5.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.6.0",
