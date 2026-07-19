@@ -3,7 +3,11 @@ import fastify, { type FastifyInstance } from 'fastify';
 import { fastifyHelmet } from '@fastify/helmet';
 import { fastifyRateLimit } from '@fastify/rate-limit';
 import { registerErrorHandler } from '@/presentation/http/error-handler';
-import { helmetOptions, rateLimitOptions } from '@/presentation/http/security';
+import {
+  helmetOptions,
+  RATE_LIMIT_KEY_NAMESPACE,
+  rateLimitOptions,
+} from '@/presentation/http/security';
 
 async function buildTestApp(): Promise<FastifyInstance> {
   const app = fastify({ logger: false });
@@ -60,6 +64,14 @@ describe('security middleware', () => {
       const second = await app.inject({ method: 'POST', url: '/auth/login' }); // 2nd > max(1)
       expect(first.statusCode).toBe(200);
       expect(second.statusCode).toBe(429);
+    });
+  });
+
+  describe('rate-limit policy', () => {
+    it('enables fail-open and a namespaced store', () => {
+      const options = rateLimitOptions(2, '1 minute');
+      expect(options.skipOnError).toBe(true);
+      expect(options.nameSpace).toBe(RATE_LIMIT_KEY_NAMESPACE);
     });
   });
 });

@@ -71,6 +71,7 @@ import type { MetricsExposition, MetricsRecorder } from '@/application/shared/po
 import { PrometheusMetricsRecorder } from '@/infrastructure/observability/prometheus-metrics-recorder';
 import { RedisHealthCheck } from '@/infrastructure/jobs/redis-health-check';
 import { CompositeHealthCheck } from '@/infrastructure/health/composite-health-check';
+import { createRateLimitRedis } from '@/infrastructure/security/rate-limit-redis';
 
 declare module '@fastify/awilix' {
   interface Cradle {
@@ -107,6 +108,7 @@ declare module '@fastify/awilix' {
     queueConcurrency: number;
     redisConnection: Redis;
     workerConnection: Redis;
+    rateLimitRedis: Redis;
     exampleJobHandler: ExampleJobHandler;
     jobQueue: JobQueue;
     jobWorker: JobWorker;
@@ -188,6 +190,9 @@ export function registerDependencies(
     workerConnection: asFunction(() =>
       createRedisConnection({ redisUrl: env.REDIS_URL }),
     ).singleton(),
+    rateLimitRedis: asFunction(() => createRateLimitRedis({ redisUrl: env.REDIS_URL }))
+      .singleton()
+      .disposer((connection) => connection.disconnect()),
     exampleJobHandler: asClass(ExampleJobHandler).singleton(),
     jobQueue: asFunction(
       ({ redisConnection, queuePrefix }: Pick<Cradle, 'redisConnection' | 'queuePrefix'>) =>

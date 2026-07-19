@@ -82,10 +82,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   }
 
   if (opts.rateLimit ?? true) {
-    await app.register(
-      fastifyRateLimit,
-      rateLimitOptions(env.RATE_LIMIT_MAX, env.RATE_LIMIT_WINDOW),
-    );
+    await app.register(fastifyRateLimit, {
+      ...rateLimitOptions(env.RATE_LIMIT_MAX, env.RATE_LIMIT_WINDOW),
+      redis: diContainer.cradle.rateLimitRedis,
+    });
   }
 
   await app.register(healthRoutes, { prefix: '/health' });
