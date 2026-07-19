@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { bool, cleanEnv, email, host, num, port, str } from 'envalid';
+import { assertProductionSecrets } from './assert-production-secrets';
 
 export const env = cleanEnv(process.env, {
   NODE_ENV: str({ choices: ['development', 'test', 'production'], default: 'development' }),
@@ -10,12 +11,17 @@ export const env = cleanEnv(process.env, {
     default: 'info',
   }),
   DATABASE_URL: str(),
-  JWT_ACCESS_SECRET: str(),
+  JWT_ACCESS_SECRET: str({
+    desc: 'HMAC signing key for access tokens; required, and >= 32 chars in production',
+  }),
   JWT_ISSUER: str({ default: 'finflow' }),
   JWT_AUDIENCE: str({ default: 'finflow-api' }),
   ACCESS_TOKEN_TTL: num({ default: 900 }), // 15 minutes
   REFRESH_TOKEN_TTL: num({ default: 60 * 60 * 24 * 14 }), // 14 days
-  COOKIE_SECRET: str({ default: '' }),
+  COOKIE_SECRET: str({
+    default: '',
+    desc: 'Signs the refresh cookie; >= 32 chars in production (empty disables signing in dev)',
+  }),
   WEB_ORIGIN: str({ devDefault: 'http://127.0.0.1:3000' }),
   COOKIE_SECURE: bool({ default: true, devDefault: false }),
   BOOTSTRAP_ADMIN_EMAIL: email({ default: '' }),
@@ -30,3 +36,5 @@ export const env = cleanEnv(process.env, {
 });
 
 export type Env = typeof env;
+
+assertProductionSecrets(env);
