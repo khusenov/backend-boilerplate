@@ -11,6 +11,14 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/domain/**', 'src/application/**'],
+      exclude: ['src/application/shared/ports/**'],
+      reporter: ['text', 'text-summary', 'html'],
+      thresholds: {
+        statements: 100,
+        branches: 100,
+        functions: 100,
+        lines: 100,
+      },
     },
   },
 });

@@ -34,6 +34,28 @@ The codebase follows clean architecture. Each layer has a fixed responsibility a
 | Structured logging       | [structured-logging](./features/structured-logging.md)             | Provides a framework-agnostic `Logger` port with a Pino-backed adapter and a per-request correlation id, so inner layers log without depending on a concrete library.                                           |
 | Health checks            | [health-checks](./features/health-checks.md)                       | Exposes separate unauthenticated liveness (`/health/live`) and readiness (`/health/ready`) endpoints so orchestrators and load balancers can decide whether to restart or reroute.                              |
 
+## Test coverage policy
+
+The `domain` and `application` layers are gated at **100%** coverage
+(statements, branches, functions, lines) in `vitest.config.ts`. These layers
+are pure logic with no I/O, so full coverage is both achievable and the most
+valuable place to defend it. The gate is enforced by `npm run test:coverage`,
+which the CI `quality` job already runs — a regression fails the build with no
+workflow changes.
+
+- **Port interfaces** (`src/application/shared/ports/**`) are excluded: they are
+  type-only DIP contracts with no executable code.
+- **Genuinely unreachable defensive lines** must be annotated with
+  `/* v8 ignore next */` rather than lowering the gate — the exception then
+  shows up explicitly in the diff for review.
+- **Adapting this boilerplate to a codebase not yet at 100%:** measure the
+  current numbers with `npm run test:coverage`, set each `thresholds` value to
+  that floor, and optionally add `autoUpdate: true` (rewrites the threshold
+  values in `vitest.config.ts` on disk when coverage rises above them — use
+  locally to ratchet the floor upward, never in CI, where it would mutate then
+  discard) and/or `perFile: true` (forbids any single file from hiding behind
+  the aggregate).
+
 ## Coverage notes
 
 No features were skipped as in-progress — all eight above passed the completeness check and are fully documented. Two follow-ups are worth a reader's awareness:
