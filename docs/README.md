@@ -1,10 +1,10 @@
-# Finflow Backend Documentation
+# Finflow Backend — Documentation
 
-Finflow backend is a clean-architecture TypeScript service — built on Fastify, Awilix, Prisma, and BullMQ — that provides user management, authentication, role-based authorization, domain events, background jobs, structured logging, and health checks.
+Finflow Backend is a TypeScript clean-architecture backend — built on Fastify, Awilix, Prisma, and BullMQ — that implements user management, authentication, and role-based authorization over a domain-event core, with production-grade observability (structured logging, metrics, distributed tracing, health checks) and shared HTTP and background-job infrastructure.
 
 ## API reference
 
-The live, auto-generated OpenAPI/Swagger UI is served at [`/docs`](/docs), registered via `@fastify/swagger` and `@fastify/swagger-ui` in `src/presentation/http/app.ts`. It is available in non-production environments only.
+The full HTTP API is documented as an OpenAPI/Swagger UI served at [`/docs`](/docs), registered via `@fastify/swagger` and `@fastify/swagger-ui` in `src/presentation/http/app.ts`. It is gated to non-production environments only (`if (!env.isProduction)`). Point readers there for endpoint-level request and response detail; the per-feature docs below explain the "why and how".
 
 ## Architecture at a glance
 
@@ -23,42 +23,21 @@ The codebase follows clean architecture. Each layer has a fixed responsibility a
 
 ## Feature documentation
 
-| Feature                  | Doc                                                                | Summary                                                                                                                                                                                                         |
-| ------------------------ | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| User CRUD                | [user-crud](./features/user-crud.md)                               | Owns the user-account lifecycle (list, read, create, edit, delete) over HTTP and is the reference vertical slice — wired through all four layers — that every other feature copies.                             |
-| Authentication           | [authentication](./features/authentication.md)                     | Answers "who is this caller?" by exchanging email and password for a session built on a short-lived access token and a long-lived refresh token.                                                                |
-| Role-based authorization | [role-based-authorization](./features/role-based-authorization.md) | Answers "is this caller allowed to do this?" by modelling access as a fixed in-code permission catalogue bundled into operator-managed roles assigned to users.                                                 |
-| Domain events            | [domain-events](./features/domain-events.md)                       | Lets an aggregate announce a business fact that has already happened, delivered to independent handlers at least once via a transactional outbox relayed on the job queue.                                      |
-| Background jobs          | [background-jobs](./features/background-jobs.md)                   | Moves slow, retryable, or scheduled work off the request path onto a durable Redis-backed BullMQ queue, exposing a generic producer/consumer transport (`JobQueue`, `JobScheduler`, `JobHandler`) behind ports. |
-| HTTP infrastructure      | [http-infrastructure](./features/http-infrastructure.md)           | Assembles the shared Fastify app (`buildApp`) — plugin order, Zod request validation, response shaping, security headers, and the uniform JSON error envelope — that every HTTP feature sits on.                |
-| Structured logging       | [structured-logging](./features/structured-logging.md)             | Provides a framework-agnostic `Logger` port with a Pino-backed adapter and a per-request correlation id, so inner layers log without depending on a concrete library.                                           |
-| Health checks            | [health-checks](./features/health-checks.md)                       | Exposes separate unauthenticated liveness (`/health/live`) and readiness (`/health/ready`) endpoints so orchestrators and load balancers can decide whether to restart or reroute.                              |
+Grouped by theme — the core domain first, then the infrastructure and cross-cutting concerns every feature sits on. Each summary is drawn from that doc's own Purpose.
 
-## Test coverage policy
+| Feature                  | Doc                                                                | Summary                                                                                                                                                                                                                              |
+| ------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| User CRUD                | [user-crud](./features/user-crud.md)                               | Owns the user-account lifecycle — list, read, create, edit, delete over HTTP — as the reference vertical slice wired through every architectural layer that every other feature copies in shape.                                     |
+| Authentication           | [authentication](./features/authentication.md)                     | Answers "who is this caller?" by exchanging a user's email and password for a session split across a short-lived access token and a long-lived refresh token.                                                                        |
+| Role-based authorization | [role-based-authorization](./features/role-based-authorization.md) | Answers "is this caller allowed to do this?" by modelling access as a fixed in-code permission catalogue bundled into operator-managed roles assigned to users.                                                                      |
+| Domain events            | [domain-events](./features/domain-events.md)                       | Lets an aggregate announce a business fact that has already happened, delivered to independent handlers at least once via a transactional outbox relayed on the background-job queue.                                                |
+| HTTP infrastructure      | [http-infrastructure](./features/http-infrastructure.md)           | Assembles the shared Fastify app (`buildApp`) — plugin order, request validation, response shaping, security headers, and the uniform JSON error envelope — that every HTTP feature sits on.                                         |
+| Background jobs          | [background-jobs](./features/background-jobs.md)                   | Moves slow, retryable, or scheduled work off the request path onto a durable Redis-backed BullMQ queue, behind generic producer/consumer ports (`JobQueue`, `JobScheduler`, `JobHandler`).                                           |
+| Structured logging       | [structured-logging](./features/structured-logging.md)             | Provides a framework-agnostic `Logger` port with a Pino-backed adapter, a per-request correlation id, sensitive-field redaction, and trace/span-id injection, so inner layers log without a concrete library.                        |
+| Health checks            | [health-checks](./features/health-checks.md)                       | Exposes separate unauthenticated liveness (`/health/live`) and readiness (`/health/ready`) endpoints so orchestrators and load balancers can decide whether to restart or reroute an instance.                                       |
+| Metrics                  | [metrics](./features/metrics.md)                                   | Publishes request throughput, latency distribution, error rates, and Node/process health in Prometheus text format at `GET /metrics`, behind a port so application code never imports the metrics library.                           |
+| Distributed tracing      | [tracing](./features/tracing.md)                                   | Boots the OpenTelemetry SDK to auto-instrument HTTP and Prisma into spans, export them to an OTLP collector, stamp every log line with the active `trace_id`/`span_id`, and carry the trace across the BullMQ job boundary (opt-in). |
 
-The `domain` and `application` layers are gated at **100%** coverage
-(statements, branches, functions, lines) in `vitest.config.ts`. These layers
-are pure logic with no I/O, so full coverage is both achievable and the most
-valuable place to defend it. The gate is enforced by `npm run test:coverage`,
-which the CI `quality` job already runs — a regression fails the build with no
-workflow changes.
+## Documentation coverage
 
-- **Port interfaces** (`src/application/shared/ports/**`) are excluded: they are
-  type-only DIP contracts with no executable code.
-- **Genuinely unreachable defensive lines** must be annotated with
-  `/* v8 ignore next */` rather than lowering the gate — the exception then
-  shows up explicitly in the diff for review.
-- **Adapting this boilerplate to a codebase not yet at 100%:** measure the
-  current numbers with `npm run test:coverage`, set each `thresholds` value to
-  that floor, and optionally add `autoUpdate: true` (rewrites the threshold
-  values in `vitest.config.ts` on disk when coverage rises above them — use
-  locally to ratchet the floor upward, never in CI, where it would mutate then
-  discard) and/or `perFile: true` (forbids any single file from hiding behind
-  the aggregate).
-
-## Coverage notes
-
-No features were skipped as in-progress — all eight above passed the completeness check and are fully documented. Two follow-ups are worth a reader's awareness:
-
-- **The background-jobs example handler is a template, not live traffic.** `EXAMPLE_JOB` / `ExampleJobHandler` (job name `example.ping`) is a dormant demonstration template kept as a copy-paste starting point for adding new jobs; no production code enqueues it. The real recurring job traffic is the domain-events outbox relay.
-- **Two job-infrastructure classes have no dedicated unit tests yet.** `BullMqJobScheduler` and `createRedisConnection` are exercised only indirectly (through the queue round-trip and outbox integration tests), not by unit tests of their own.
+Every COMPLETE feature in the codebase is documented; no features were skipped as in-progress in the latest run. Each per-feature doc carries a `Verified against` git SHA in its header and is regenerated by the `/document-features` skill when its source drifts.

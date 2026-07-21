@@ -1,113 +1,139 @@
 # HTTP Infrastructure
 
-> **Status:** Complete · **Layers:** presentation, shared, config · **Verified against:** `46c4a07`
+> **Status:** Complete · **Layers:** presentation, shared, config · **Verified against:** `9044a23`
 
 ## Purpose
 
-Every feature that speaks HTTP — user CRUD, authentication, authorization, health checks — sits on
-one shared composition root and one shared set of request/response conventions. This feature is that
-foundation: it assembles the Fastify application (`buildApp`), fixes the order in which cross-cutting
-plugins run, and defines how requests are validated, how successful responses are shaped, and how
-**every** error becomes a uniform JSON envelope with the right HTTP status. Its reason to exist is the
-Dependency Rule: HTTP concerns — status codes, headers, response shapes, security policy — must live
-at the presentation boundary and nowhere else, so the domain and application layers can throw
-meaningful errors and return plain objects without ever importing Fastify or knowing what a `409` is.
+Every feature that speaks HTTP — user CRUD, authentication, authorization, health checks, metrics —
+sits on one shared composition root and one shared set of request/response conventions. This feature
+is that foundation: `buildApp` assembles the Fastify application, fixes the order in which
+cross-cutting plugins run, and defines how requests are validated, how successful responses are
+shaped, and how **every** error becomes a uniform JSON envelope with the right HTTP status. Its reason
+to exist is the Dependency Rule: HTTP concerns — status codes, headers, response shapes, security
+policy — must live at the presentation boundary and nowhere else, so the domain and application layers
+can throw meaningful errors and return plain objects without ever importing Fastify or knowing what a
+`409` is.
 
 ## How it works
 
 `buildApp(opts)` in `src/presentation/http/app.ts` constructs and returns a configured Fastify
-instance (it does **not** call `listen` — `src/main.ts` owns the network lifecycle). Construction has
-two phases: wiring the cross-cutting plugins in a deliberate order, then registering feature routes.
+instance. It does **not** call `listen` — `src/main.ts` owns the network lifecycle and calls
+`buildApp` at bootstrap. Construction has two phases: wiring the cross-cutting plugins in a deliberate
+order, then registering feature routes.
 
-**Instance configuration.** The Fastify factory is given `requestIdHeader: CORRELATION_ID_HEADER`
-(`'x-request-id'`) and `genReqId: () => randomUUID()`, so every request carries an id taken from the
-client's `x-request-id` header or freshly minted. That id becomes the correlation id in logs and the
-`requestId` in every error body. `forceCloseConnections: true` supports clean shutdown; `logger.level`
-and `disableRequestLogging` come from `opts`.
+**Instance configuration.** The Fastify factory is given `logger: opts.loggerOptions` (a Pino
+`LoggerOptions` object built by `main.ts` from `createLoggerOptions(env.LOG_LEVEL)`),
+`requestIdHeader: CORRELATION_ID_HEADER` (`'x-request-id'`) and `genReqId: () => randomUUID()`, so
+every request carries an id taken from the client's `x-request-id` header or freshly minted. That id
+becomes the correlation id in logs and the `requestId` in every error body. `forceCloseConnections:
+true` supports clean shutdown; `disableRequestLogging` defaults to `false` and is set to
+`env.isDevelopment` by `main.ts`.
 
-**Plugin registration order** (each line is a real `app.register` / setter call, in source order):
+**Plugin registration order.** Fastify runs lifecycle **hooks** (request-lifecycle callbacks) in the
+order the plugins that add them were registered, and because these plugins are all registered at the
+root — sharing one Fastify _encapsulation context_ — each plugin's **decorators** (properties or
+methods attached to the Fastify instance or request, **not** the TypeScript `@decorator` class
+syntax) and hooks are visible to everything registered after it. That is what makes registration
+order load-bearing. Each entry below is a real setter or `app.register` call, in source order;
+conditional registrations note their gate:
 
 1. `app.setValidatorCompiler(validatorCompiler)` and `app.setSerializerCompiler(serializerCompiler)`
    from **`fastify-type-provider-zod`** — makes Zod the schema language for both request validation
    and response serialization.
 2. **`@fastify/sensible`** (`fastifySensible`) — HTTP utility decorators.
 3. **`@fastify/helmet`** (`fastifyHelmet`) with `helmetOptions(env.isProduction)` — security headers.
-4. **`@fastify/awilix`** (`fastifyAwilixPlugin`) — creates a per-request DI scope
-   (`disposeOnResponse: true`, `injectionMode: 'PROXY'`); must precede anything that resolves from
-   `request.diScope.cradle`.
+4. **`@fastify/awilix`** (`fastifyAwilixPlugin`) with `disposeOnClose: true`, `disposeOnResponse:
+true`, `strictBooleanEnforced: true`, `injectionMode: 'PROXY'` — creates a per-request DI scope
+   and disposes it on response; must precede anything that resolves from `request.diScope.cradle`
+   (the **cradle** is Awilix's resolved-dependency proxy).
 5. `correlationIdPlugin` — stamps the correlation id into request context and echoes the
    `x-request-id` response header. Documented by [Structured Logging](./structured-logging.md).
-6. **`@fastify/cors`** (`fastifyCors`) with `{ origin: env.WEB_ORIGIN, credentials: true }`.
-7. **`@fastify/cookie`** (`fastifyCookie`), signed when `COOKIE_SECRET` is set.
-8. `authPlugin` — decorates the instance with `authenticate`. Documented by
+6. `metricsPlugin` — **only when `env.METRICS_ENABLED`** — an `onResponse` hook that records per-request
+   HTTP metrics. Documented by [Metrics](./metrics.md).
+7. **`@fastify/cors`** (`fastifyCors`) — Cross-Origin Resource Sharing (CORS) — with `{ origin: env.WEB_ORIGIN, credentials: true }`.
+8. **`@fastify/cookie`** (`fastifyCookie`), passed `{ secret: env.COOKIE_SECRET }` when
+   `COOKIE_SECRET` is set (enabling signed cookies) and `{}` otherwise.
+9. `authPlugin` — decorates the instance with `authenticate`. Documented by
    [Authentication](./authentication.md).
-9. `registerDependencies(diContainer, app.log)` — Awilix wiring (the composition root).
-10. `registerErrorHandler(app)` — installs the app-wide error handler **and** the not-found handler.
+10. `registerDependencies(diContainer, app.log)` — Awilix wiring (the composition root, `src/container.ts`).
+11. `registerErrorHandler(app)` — installs the app-wide error handler **and** the not-found handler.
     Registered before routes so it catches everything they throw.
-11. **`@fastify/swagger`** + **`@fastify/swagger-ui`** at `/docs` — **non-production only**
-    (`if (!env.isProduction)`).
-12. **`@fastify/rate-limit`** (`fastifyRateLimit`) with `rateLimitOptions(env.RATE_LIMIT_MAX,
-env.RATE_LIMIT_WINDOW)` — gated on `opts.rateLimit ?? true` so tests can disable it.
-13. Feature routes, each under a prefix: `healthRoutes` (`/health`), `authRoutes` (`/auth`),
-    `userRoutes` (`/users`), `roleRoutes` (`/roles`), `permissionRoutes` (`/permissions`).
+12. **`@fastify/swagger`** + **`@fastify/swagger-ui`** at `/docs` — **only when `!env.isProduction`** —
+    with the Zod `jsonSchemaTransform` so route schemas become OpenAPI, plus a `bearerAuth` JWT
+    security scheme.
+13. **`@fastify/rate-limit`** (`fastifyRateLimit`) with `rateLimitOptions(env.RATE_LIMIT_MAX,
+env.RATE_LIMIT_WINDOW)` and `redis: diContainer.cradle.rateLimitRedis` — **only when
+    `opts.rateLimit ?? true`**, so tests can disable it. The `redis` handle makes the limiter's
+    counters live in Redis (see Design decisions).
+14. Feature routes, each under a prefix: `healthRoutes` (`/health`), `metricsRoutes` (`/metrics`,
+    **only when `env.METRICS_ENABLED`**), `authRoutes` (`/auth`), `userRoutes` (`/users`),
+    `roleRoutes` (`/roles`), `permissionRoutes` (`/permissions`).
 
-**A request's happy path.** Fastify assigns `request.id` → `onRequest` hooks run (correlation id set,
-security headers applied, and for protected route groups the `authenticate` decorator verifies the
-bearer token) → the Zod **validator compiler** checks `querystring`/`params`/`body` against the
-route's schema → the handler resolves its use case from `request.diScope.cradle` and calls
-`execute()` → `reply.send(payload)` runs the payload through the Zod **serializer compiler**, which
-validates it against the route's declared `response` schema and strips any field the schema does not
-declare.
+**A request's happy path.** Fastify assigns `request.id` → `onRequest` hooks run (correlation id set
+and `x-request-id` header echoed; for protected route groups the `authenticate` decorator verifies the
+bearer token) → the Zod **validator compiler** checks `querystring` / `params` / `body` against the
+route's schema → the handler resolves its use case from `request.diScope.cradle` and calls `execute()`
+→ `reply.send(payload)` runs the payload through the Zod **serializer compiler**, which validates it
+against the route's declared `response` schema and strips any field the schema does not declare → the
+`onResponse` hook (when metrics are enabled) records the method, route, status, and duration.
 
 **The failure paths that matter**, all funnelled through `registerErrorHandler`'s single
-`setErrorHandler` (see `src/presentation/http/error-handler.ts`):
+`setErrorHandler` (`src/presentation/http/error-handler.ts`):
 
 - A thrown **`AppError`** (from any inner layer) → its `kind` is mapped through `KIND_TO_STATUS` to an
   HTTP status; the body is `{ error: { ...error.toJSON(), requestId } }`. Operational errors log at
   `info`, non-operational at `error`.
-- A **Fastify schema-validation** failure (`error.validation` present) → `400` with code
-  `VALIDATION`.
+- A **Fastify schema-validation** failure (`error.validation` present) → `400` with code `VALIDATION`
+  and the validator's message.
 - Any other error carrying a **4xx `statusCode`** → that status, code `error.code ?? 'BAD_REQUEST'`.
-  This is how the rate limiter's `429` surfaces (its `errorResponseBuilder` sets `statusCode = 429`,
+  This is how the rate limiter's `429` surfaces (its `errorResponseBuilder` sets `statusCode` and
   `code = 'RATE_LIMITED'`).
 - Anything else → `500` with code `INTERNAL` and the generic message `Internal Server Error`, so
   internal failure detail never leaks to the client.
 
-An unmatched route is caught by `setNotFoundHandler` → `404` with code `ROUTE_NOT_FOUND`.
+An unmatched route is caught by `setNotFoundHandler` → `404` with code `ROUTE_NOT_FOUND` and the
+message `Route <METHOD> <URL> not found`.
 
 ## Architecture
 
 This feature is not port/adapter-shaped like the others; it is the **presentation composition root**
 plus the framework-free **shared** vocabulary (`src/shared/errors`, `src/shared/pagination`) that both
 the boundary and the inner layers speak. The direction of dependency is what matters: inner layers
-throw semantic `AppError`s and return plain DTOs/`Page` objects with no HTTP knowledge; the
+throw semantic `AppError`s and return plain DTOs / `Page` objects with no HTTP knowledge; the
 presentation layer is the **only** place that translates that vocabulary into HTTP — status codes in
 `error-handler.ts`, wire shapes in the Zod schemas, security policy in `security.ts`. The shared error
 and pagination types carry no framework imports, which is precisely why an application use case may
-construct them without breaching the Dependency Rule.
+construct them without breaching the Dependency Rule. The concrete dependencies the HTTP layer pulls
+from `src/container.ts` both come from the global Awilix cradle, but at different moments:
+`rateLimitRedis` is resolved once at composition time, when `buildApp` registers the rate limiter
+(`app.ts`); `metricsRecorder`, when metrics are on, is read from the cradle **per response** inside
+the `onResponse` metrics hook (`plugins/metrics.ts`), not at composition time.
 
-| Component                            | Layer        | Responsibility                                                                                   | File                                                 |
-| ------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
-| `buildApp`                           | Presentation | Composition root: configures Fastify, registers plugins in order, mounts routes                  | `src/presentation/http/app.ts`                       |
-| `registerErrorHandler`               | Presentation | Single `setErrorHandler` + `setNotFoundHandler`; maps every error to the JSON envelope           | `src/presentation/http/error-handler.ts`             |
-| `KIND_TO_STATUS`                     | Presentation | Maps each `ErrorKind` to its HTTP status code                                                    | `src/presentation/http/error-handler.ts`             |
-| `helmetOptions` / `rateLimitOptions` | Presentation | Security defaults: helmet CSP toggle and the rate-limit envelope                                 | `src/presentation/http/security.ts`                  |
-| `errorResponse`                      | Presentation | Zod response contract for the error envelope                                                     | `src/presentation/http/schemas/error-schema.ts`      |
-| `paginated`                          | Presentation | Zod response-contract factory wrapping a page of items                                           | `src/presentation/http/schemas/pagination-schema.ts` |
-| `timestamp`                          | Presentation | Zod response contract for date fields (`z.date()`)                                               | `src/presentation/http/schemas/timestamp-schema.ts`  |
-| `AppError`                           | Shared       | Abstract base error carrying `kind`, `code`, `details`, `isOperational`, `timestamp`, `toJSON()` | `src/shared/errors/app-error.ts`                     |
-| `ErrorKind`                          | Shared       | The closed set of error kinds (`VALIDATION`…`INTERNAL`)                                          | `src/shared/errors/app-error.ts`                     |
-| `ValidationError` … `InternalError`  | Shared       | Semantic `AppError` subclasses inner layers throw                                                | `src/shared/errors/semantic-errors.ts`               |
-| `normalizePageQuery` / `createPage`  | Shared       | Framework-free pagination: clamp request input, compute page metadata                            | `src/shared/pagination.ts`                           |
-| `Page` / `PageQuery` / `PageSlice`   | Shared       | Pagination types shared by use cases, repositories, and response schemas                         | `src/shared/pagination.ts`                           |
-| cookie helpers                       | Presentation | Read/write the signed refresh-token cookie (see [Authentication](./authentication.md))           | `src/presentation/http/cookies.ts`                   |
-| `correlationIdPlugin`                | Presentation | Per-request correlation id (see [Structured Logging](./structured-logging.md))                   | `src/presentation/http/plugins/correlation-id.ts`    |
-| `authPlugin`                         | Presentation | `authenticate` decorator for bearer auth (see [Authentication](./authentication.md))             | `src/presentation/http/plugins/authenticate.ts`      |
+| Component                                       | Layer        | Responsibility                                                                                              | File                                                           |
+| ----------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `buildApp`                                      | Presentation | Composition root: configures Fastify, registers plugins in order, mounts routes                             | `src/presentation/http/app.ts`                                 |
+| `registerErrorHandler`                          | Presentation | Single `setErrorHandler` + `setNotFoundHandler`; maps every error to the JSON envelope                      | `src/presentation/http/error-handler.ts`                       |
+| `KIND_TO_STATUS`                                | Presentation | Maps each `ErrorKindType` to its HTTP status code                                                           | `src/presentation/http/error-handler.ts`                       |
+| `helmetOptions` / `rateLimitOptions`            | Presentation | Security defaults: helmet Content-Security-Policy (CSP) toggle and the Redis-backed rate-limit envelope     | `src/presentation/http/security.ts`                            |
+| `errorResponse`                                 | Presentation | Zod response contract for the error envelope                                                                | `src/presentation/http/schemas/error-schema.ts`                |
+| `paginated`                                     | Presentation | Zod response-contract factory wrapping a page of items                                                      | `src/presentation/http/schemas/pagination-schema.ts`           |
+| `timestamp`                                     | Presentation | Zod response contract for date fields (`z.date()`)                                                          | `src/presentation/http/schemas/timestamp-schema.ts`            |
+| `correlationIdPlugin`                           | Presentation | Per-request correlation id (see [Structured Logging](./structured-logging.md))                              | `src/presentation/http/plugins/correlation-id.ts`              |
+| `metricsPlugin`                                 | Presentation | `onResponse` hook recording HTTP metrics (see [Metrics](./metrics.md))                                      | `src/presentation/http/plugins/metrics.ts`                     |
+| `authPlugin`                                    | Presentation | `authenticate` decorator for bearer auth (see [Authentication](./authentication.md))                        | `src/presentation/http/plugins/authenticate.ts`                |
+| `requirePermission` / `requireSelfOrPermission` | Presentation | Route guards enforcing permissions (see [Role-Based Authorization](./role-based-authorization.md))          | `src/presentation/http/guards/authorize.ts`                    |
+| cookie helpers                                  | Presentation | Read/write the signed refresh-token cookie (see [Authentication](./authentication.md))                      | `src/presentation/http/cookies.ts`                             |
+| `AppError`                                      | Shared       | Abstract base error carrying `kind`, `code`, `details`, `isOperational`, `timestamp`, `toJSON()`            | `src/shared/errors/app-error.ts`                               |
+| `ErrorKind`                                     | Shared       | The closed set of error kinds (`VALIDATION`…`INTERNAL`)                                                     | `src/shared/errors/app-error.ts`                               |
+| `ValidationError` … `InternalError`             | Shared       | Semantic `AppError` subclasses inner layers throw                                                           | `src/shared/errors/semantic-errors.ts`                         |
+| `normalizePageQuery` / `createPage`             | Shared       | Framework-free pagination: clamp request input, compute page metadata                                       | `src/shared/pagination.ts`                                     |
+| `Page` / `PageQuery` / `PageSlice`              | Shared       | Pagination types shared by use cases, repositories, and response schemas                                    | `src/shared/pagination.ts`                                     |
+| `env` / `assertProductionSecrets`               | Config       | Parse + validate the environment once at boot (`envalid`); refuse to start when a production secret is weak | `src/config/env.ts`, `src/config/assert-production-secrets.ts` |
 
 ## Public surface
 
-Two things clients program against (the wire contracts) and one thing engineers program against (the
-building blocks).
+Two things clients program against (the wire contracts) and three things engineers program against
+(the shared building blocks and the route decorators/guards).
 
 **Error-response envelope.** Every failure — validation, auth, rate limit, unknown crash, unknown
 route — produces exactly this shape, validated by `errorResponse` in `error-schema.ts`:
@@ -123,13 +149,13 @@ route — produces exactly this shape, validated by `errorResponse` in `error-sc
 }
 ```
 
-`code` and `message` and `requestId` are always present; `details` is optional. `requestId` equals the
+`code`, `message`, and `requestId` are always present; `details` is optional. `requestId` equals the
 request's correlation id (`x-request-id`), so a client error report is traceable straight to the log
 lines for that request. The status→code correspondence:
 
 | HTTP status | `code`                          | Source                                                    |
 | ----------- | ------------------------------- | --------------------------------------------------------- |
-| 400         | `VALIDATION`                    | `ValidationError`, or a Fastify schema-validation failure |
+| 400         | `VALIDATION` (or a custom code) | `ValidationError`, or a Fastify schema-validation failure |
 | 401         | `UNAUTHORIZED`                  | `UnauthorizedError`                                       |
 | 403         | `FORBIDDEN`                     | `ForbiddenError`                                          |
 | 404         | `NOT_FOUND` / `ROUTE_NOT_FOUND` | `NotFoundError` / unmatched route                         |
@@ -138,16 +164,16 @@ lines for that request. The status→code correspondence:
 | 4xx         | `error.code ?? 'BAD_REQUEST'`   | any non-`AppError` with a 4xx `statusCode`                |
 | 500         | `INTERNAL`                      | `InternalError` or any unhandled error (generic message)  |
 
-The `code` is a stable machine-readable string; semantic errors accept a **custom** `code`
-(e.g. `new ConflictError('…', { code: 'EMAIL_TAKEN' })`) that overrides the default while the HTTP
-status stays governed by `kind`.
+The HTTP status is governed by the error's `kind`; the `code` defaults to the kind string but a
+semantic error accepts a **custom** `code` (e.g. `new ConflictError('…', { code: 'EMAIL_TAKEN' })`)
+that overrides the default while the status stays fixed.
 
 **Pagination envelope.** List endpoints accept `page` and `pageSize` query parameters and return the
 page envelope defined by `paginated(itemSchema)`:
 
 ```json
 {
-  "items": [/* … */],
+  "items": [],
   "page": 1,
   "pageSize": 10,
   "total": 42,
@@ -156,71 +182,99 @@ page envelope defined by `paginated(itemSchema)`:
 }
 ```
 
-**Building blocks other features call:**
+**Shared building blocks other features call:**
 
 ```ts
 // src/shared/errors  — throw meaning, not HTTP
-new ValidationError(message, { code?, details?, cause? });   // → 400
-new NotFoundError(message, { code?, details?, cause? });     // → 404
-new ConflictError(message, { code?, details?, cause? });     // → 409
-new UnauthorizedError(message?, { code?, details?, cause? }); // → 401
-new ForbiddenError(message?, { code?, details?, cause? });   // → 403
-new InternalError(message?, { code?, details?, cause? });    // → 500, isOperational = false
+new ValidationError(message, { code?, details?, cause? });    // → 400
+new NotFoundError(message, { code?, details?, cause? });      // → 404
+new ConflictError(message, { code?, details?, cause? });      // → 409
+new UnauthorizedError(message?, { code?, details?, cause? }); // → 401, default message 'Unauthorized'
+new ForbiddenError(message?, { code?, details?, cause? });    // → 403, default message 'Forbidden'
+new InternalError(message?, { code?, details?, cause? });     // → 500, isOperational = false
 
 // src/shared/pagination  — framework-free page math
 function normalizePageQuery(input: PageQueryInput): PageQuery; // clamps page ≥ 1, 1 ≤ pageSize ≤ 100
-function createPage<T>(items: T[], total: number, query: PageQuery): Page<T>;
+function createPage<T>(items: T[], total: number, query: PageQuery): Page<T>; // computes hasNext/hasPrev
 
-// src/presentation/http/schemas  — Zod response contracts
-function paginated<Item extends z.ZodType>(item: Item): z.ZodObject; // page envelope
-const timestamp: z.ZodDate;                                          // date field
-const errorResponse: z.ZodObject;                                    // the error envelope
+// src/presentation/http/schemas  — Zod response contracts feature routes $ref
+function paginated<Item extends z.ZodType>(item: Item); // page envelope
+const timestamp;      // z.date() for date fields
+const errorResponse;  // the error envelope
 ```
+
+**Route decorators and guards** the HTTP layer exposes for feature routes to program against (their
+behaviour is documented in depth in the linked feature docs):
+
+```ts
+app.authenticate;                              // FastifyInstance decorator — verifies the bearer token,
+                                               // sets request.user; use as an onRequest/preHandler hook
+request.user?: AccessTokenPayload;             // FastifyRequest decorator populated by authenticate
+
+requirePermission(permission);                 // preHandler guard → 403 unless the caller holds it
+requireSelfOrPermission(getTargetUserId, permission); // preHandler guard — allows self-access or the permission
+```
+
+See [Authentication](./authentication.md) for `authenticate` / `request.user` and
+[Role-Based Authorization](./role-based-authorization.md) for the guards.
 
 ## Configuration
 
 `src/config/env.ts` parses and validates the whole process environment once, via **`envalid`**
-(`cleanEnv`), and exports a typed frozen `env`. This is the app-wide configuration surface; the table
-below is the full set, with the variables this HTTP-infrastructure feature reads directly marked
-**bold**. Feature-specific groups are cross-linked to their owning docs. Defaults are copied verbatim;
-`—` means the variable is **required** (no default, boot fails if unset). `devDefault` values apply
-only outside production.
+(`cleanEnv`), and exports a typed frozen `env`; `assertProductionSecrets(env)` then runs and refuses
+to boot in production if `COOKIE_SECRET` or `JWT_ACCESS_SECRET` is shorter than 32 characters. The
+table below lists the env vars this and its sibling features read through `env.ts`; variables this
+HTTP-infrastructure feature reads directly are **bold**, and feature-specific groups are cross-linked
+to their owning docs. Defaults are copied verbatim; `—` means the variable is **required** (no
+default, boot fails if unset). `devDefault` values apply only outside production. Two OpenTelemetry
+sampler knobs — `OTEL_TRACES_SAMPLER` and `OTEL_TRACES_SAMPLER_ARG` — are read natively by the OTel
+SDK rather than `env.ts`, so they are documented in [Tracing](./tracing.md) rather than here.
 
-| Variable                | Default                                   | Meaning                                                                                                                      |
-| ----------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `NODE_ENV`              | `development`                             | Environment; one of `development`, `test`, `production`. Drives `env.isProduction` / `env.isDevelopment`.                    |
-| `HOST`                  | `0.0.0.0`                                 | Bind address for `app.listen` (used in `main.ts`).                                                                           |
-| `PORT`                  | `8000`                                    | Listen port (used in `main.ts`).                                                                                             |
-| **`LOG_LEVEL`**         | `info`                                    | Fastify/Pino level; one of `fatal`,`error`,`warn`,`info`,`debug`,`trace`. See [Structured Logging](./structured-logging.md). |
-| `DATABASE_URL`          | `—`                                       | Prisma connection string (required).                                                                                         |
-| `JWT_ACCESS_SECRET`     | `—`                                       | Access-token signing secret (required). See [Authentication](./authentication.md).                                           |
-| `JWT_ISSUER`            | `finflow`                                 | JWT `iss` claim. See [Authentication](./authentication.md).                                                                  |
-| `JWT_AUDIENCE`          | `finflow-api`                             | JWT `aud` claim. See [Authentication](./authentication.md).                                                                  |
-| `ACCESS_TOKEN_TTL`      | `900`                                     | Access-token lifetime in seconds (15 min). See [Authentication](./authentication.md).                                        |
-| **`REFRESH_TOKEN_TTL`** | `1209600`                                 | Refresh-token lifetime in seconds (14 days); also the refresh-cookie `Max-Age`.                                              |
-| **`COOKIE_SECRET`**     | `''` (empty)                              | When non-empty, cookies are signed; passed to `@fastify/cookie` in `buildApp`.                                               |
-| **`WEB_ORIGIN`**        | `—` (devDefault `http://127.0.0.1:3000`)  | Allowed CORS origin; passed to `@fastify/cors` with `credentials: true`.                                                     |
-| **`COOKIE_SECURE`**     | `true` (devDefault `false`)               | Sets the `Secure` flag on the refresh cookie.                                                                                |
-| `BOOTSTRAP_ADMIN_EMAIL` | `''` (empty)                              | Email of the admin seeded at bootstrap. See [Role-Based Authorization](./role-based-authorization.md).                       |
-| **`RATE_LIMIT_MAX`**    | `100`                                     | Global rate-limit ceiling per window; passed to `@fastify/rate-limit`.                                                       |
-| **`RATE_LIMIT_WINDOW`** | `1 minute`                                | Global rate-limit window; passed to `@fastify/rate-limit`.                                                                   |
-| `RATE_LIMIT_AUTH_MAX`   | `5`                                       | Stricter per-route ceiling for auth endpoints. See [Authentication](./authentication.md).                                    |
-| `REDIS_URL`             | `—` (devDefault `redis://127.0.0.1:6379`) | Redis connection for BullMQ.                                                                                                 |
-| `QUEUE_PREFIX`          | `finflow`                                 | BullMQ key prefix.                                                                                                           |
-| `QUEUE_CONCURRENCY`     | `5`                                       | BullMQ worker concurrency.                                                                                                   |
+| Variable                      | Default                                   | Meaning                                                                                                                                            |
+| ----------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                    | `development`                             | Environment; one of `development`, `test`, `production`. Drives `env.isProduction`, which gates helmet CSP and Swagger.                            |
+| `HOST`                        | `0.0.0.0`                                 | Bind address for `app.listen` (used in `main.ts`).                                                                                                 |
+| `PORT`                        | `8000`                                    | Listen port (used in `main.ts`).                                                                                                                   |
+| **`LOG_LEVEL`**               | `info`                                    | Pino level (`fatal`…`trace`); `main.ts` turns it into the `loggerOptions` passed to `buildApp`. See [Structured Logging](./structured-logging.md). |
+| `DATABASE_URL`                | `—`                                       | Prisma connection string (required).                                                                                                               |
+| `JWT_ACCESS_SECRET`           | `—`                                       | Access-token signing secret (required; ≥ 32 chars in production). See [Authentication](./authentication.md).                                       |
+| `JWT_ISSUER`                  | `finflow`                                 | JWT `iss` claim. See [Authentication](./authentication.md).                                                                                        |
+| `JWT_AUDIENCE`                | `finflow-api`                             | JWT `aud` claim. See [Authentication](./authentication.md).                                                                                        |
+| `ACCESS_TOKEN_TTL`            | `900`                                     | Access-token lifetime in seconds (15 min). See [Authentication](./authentication.md).                                                              |
+| **`REFRESH_TOKEN_TTL`**       | `1209600`                                 | Refresh-token lifetime in seconds (14 days); also the refresh-cookie `Max-Age`.                                                                    |
+| **`COOKIE_SECRET`**           | `''` (empty)                              | When non-empty, cookies are signed; passed to `@fastify/cookie` in `buildApp` and read by the cookie helpers. ≥ 32 chars in production.            |
+| **`WEB_ORIGIN`**              | `—` (devDefault `http://127.0.0.1:3000`)  | Allowed CORS origin; passed to `@fastify/cors` with `credentials: true`.                                                                           |
+| **`COOKIE_SECURE`**           | `true` (devDefault `false`)               | Sets the `Secure` flag on the refresh cookie.                                                                                                      |
+| `BOOTSTRAP_ADMIN_EMAIL`       | `''` (empty)                              | Email of the admin seeded at bootstrap. See [Role-Based Authorization](./role-based-authorization.md).                                             |
+| **`RATE_LIMIT_MAX`**          | `100`                                     | Global rate-limit ceiling per window; passed to `@fastify/rate-limit`.                                                                             |
+| **`RATE_LIMIT_WINDOW`**       | `1 minute`                                | Global rate-limit window; passed to `@fastify/rate-limit`.                                                                                         |
+| `RATE_LIMIT_AUTH_MAX`         | `5`                                       | Stricter per-route ceiling for auth endpoints. See [Authentication](./authentication.md).                                                          |
+| **`REDIS_URL`**               | `—` (devDefault `redis://127.0.0.1:6379`) | Redis connection; backs the distributed rate-limit store (and BullMQ).                                                                             |
+| `QUEUE_PREFIX`                | `finflow`                                 | BullMQ key prefix. See [Background Jobs](./background-jobs.md).                                                                                    |
+| `QUEUE_CONCURRENCY`           | `5`                                       | BullMQ worker concurrency. See [Background Jobs](./background-jobs.md).                                                                            |
+| **`METRICS_ENABLED`**         | `true`                                    | Gates registration of `metricsPlugin` and the `GET /metrics` route in `buildApp`. See [Metrics](./metrics.md).                                     |
+| `HEALTHCHECK_TIMEOUT_MS`      | `2000`                                    | Per-dependency timeout for health probes. See [Health Checks](./health-checks.md).                                                                 |
+| `OTEL_ENABLED`                | `false`                                   | Toggles OpenTelemetry tracing. See [Tracing](./tracing.md).                                                                                        |
+| `OTEL_SERVICE_NAME`           | `finflow-api`                             | Tracing service name. See [Tracing](./tracing.md).                                                                                                 |
+| `OTEL_SERVICE_VERSION`        | `0.0.0`                                   | Tracing service version. See [Tracing](./tracing.md).                                                                                              |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318`                   | OTLP exporter endpoint. See [Tracing](./tracing.md).                                                                                               |
 
-`buildApp` itself takes three code-level options, not env vars: `logLevel` (string), the optional
-`disableRequestLogging` (default `false`), and the optional `rateLimit` (default `true`, disabled by
-tests). `main.ts` supplies `logLevel: env.LOG_LEVEL` and `disableRequestLogging: env.isDevelopment`.
+`buildApp` also takes three code-level options, not env vars: `loggerOptions` (a Pino `LoggerOptions`),
+the optional `disableRequestLogging` (default `false`), and the optional `rateLimit` (default `true`,
+disabled by tests). `main.ts` supplies `loggerOptions: createLoggerOptions(env.LOG_LEVEL)` and
+`disableRequestLogging: env.isDevelopment`.
 
 **Security defaults** derive from the environment rather than dedicated flags:
 
-- `helmetOptions(env.isProduction)` returns `{}` in production (helmet's full defaults, **CSP on**)
-  and `{ contentSecurityPolicy: false }` elsewhere — CSP is deliberately relaxed outside production so
-  the Swagger UI at `/docs` loads.
-- `rateLimitOptions` wires the limiter to emit a `FastifyError` with `code: 'RATE_LIMITED'` and the
-  window's `statusCode`, so a throttled request flows through the same error envelope as everything
-  else.
+- `helmetOptions(env.isProduction)` returns `{}` in production (helmet's full defaults, **CSP on**) and
+  `{ contentSecurityPolicy: false }` elsewhere — CSP is deliberately relaxed outside production so the
+  Swagger UI at `/docs` loads.
+- `rateLimitOptions(max, timeWindow)` sets `skipOnError: true` (fail-open — allow the request when
+  Redis is unreachable), a `nameSpace` of
+  `RATE_LIMIT_KEY_NAMESPACE` (`'finflow-rate-limit-'`) for its Redis keys, and an `errorResponseBuilder`
+  that emits a `FastifyError` with `code: 'RATE_LIMITED'` and the window's `statusCode`, so a throttled
+  request flows through the same error envelope as everything else. Swagger has no dedicated variable —
+  it is gated purely on `!env.isProduction`.
 
 ## Usage & extension
 
@@ -231,7 +285,7 @@ No `try/catch`, no status code, no `reply` in the use case:
 import { ConflictError } from '@/shared/errors';
 
 // inside a use case (application layer)
-if (await this.users.existsByEmail(email)) {
+if (await this.users.findByEmail(email)) {
   throw new ConflictError('Email already registered', {
     code: 'EMAIL_TAKEN',
     details: { email },
@@ -242,8 +296,8 @@ if (await this.users.existsByEmail(email)) {
 //              "details": { "email": "…" }, "requestId": "…" } }
 ```
 
-**Add a brand-new error kind** (only when none of the six existing kinds fits — usually one of them
-does). Three edits keep the mapping total and type-safe:
+**Add a brand-new error kind** (only when none of the six existing kinds fits — usually one does).
+Three edits keep the mapping total and type-safe:
 
 1. Add the kind to `ErrorKind` in `src/shared/errors/app-error.ts`:
    ```ts
@@ -274,8 +328,8 @@ does). Three edits keep the mapping total and type-safe:
    ```
 
 **Declare a response contract on a route** so the wire shape is enforced and internal fields are
-stripped. Compose `paginated`, `timestamp`, and `errorResponse` (this is exactly what
-`src/presentation/http/schemas/user-response-schema.ts` and `user-routes.ts` do):
+stripped. Compose `paginated`, `timestamp`, and `errorResponse` (this mirrors what the user routes do
+— see `user-response-schema.ts`):
 
 ```ts
 import { z } from 'zod';
@@ -322,6 +376,20 @@ async execute(input: ListUsersInput): Promise<ListUsersOutput> {
 }
 ```
 
+**Protect a route** by wiring the decorator and a guard as hooks (see the linked docs for depth):
+
+```ts
+app.get(
+  '/',
+  {
+    onRequest: [app.authenticate], // 401 if the bearer token is missing/invalid
+    preHandler: [requirePermission('users.read')], // 403 if the caller lacks the permission
+    schema: { response: { 200: paginatedUsers, 401: errorResponse, 403: errorResponse } },
+  },
+  handler,
+);
+```
+
 ## Design decisions & trade-offs
 
 - **One centralized error handler over per-route `try/catch`.** A single `setErrorHandler` owns the
@@ -332,32 +400,43 @@ async execute(input: ListUsersInput): Promise<ListUsersOutput> {
   `error-handler.ts`, not the throw site.
 - **A semantic `AppError` hierarchy in `src/shared`, framework-free.** Inner layers throw meaning
   (`NotFoundError`, `ConflictError`) carrying a `kind`, a machine `code`, and optional `details`;
-  `kind` decides the status, `code`/`message`/`details` fill the body. Because these types import no
-  framework, an application use case constructs them without violating the Dependency Rule, and the
+  `kind` decides the status, `code` / `message` / `details` fill the body. Because these types import
+  no framework, an application use case constructs them without violating the Dependency Rule, and the
   presentation layer is the sole place they turn into HTTP.
 - **`isOperational` splits expected failures from bugs.** Semantic errors are operational (logged at
   `info`); only `InternalError` is non-operational (logged at `error`), and any unknown throw is
   treated as a bug and answered with a generic `500` message. This keeps log severity meaningful and
   guarantees internal detail is never serialized to a client.
 - **Zod serializer compilers to enforce response contracts.** Declaring a `response` schema makes the
-  outgoing JSON validated and **whitelisted** to exactly the declared fields, turning
-  "don't forget to omit the password hash" from a discipline into a guarantee (proved by
-  `pagination-schema.test.ts`, which asserts unknown item fields are stripped). It doubles as the
-  OpenAPI source of truth. The trade-off: every response needs a schema, and a too-loose schema
-  weakens the guarantee — the enforcement is only as tight as the contract you write.
+  outgoing JSON validated and **whitelisted** to exactly the declared fields, turning "don't forget to
+  omit the password hash" from a discipline into a guarantee (proved by `pagination-schema.test.ts`,
+  which asserts unknown item fields are stripped). It doubles as the OpenAPI source of truth. The
+  trade-off: every response needs a schema, and a too-loose schema weakens the guarantee — the
+  enforcement is only as tight as the contract you write.
 - **Shared, framework-free pagination (`normalizePageQuery` / `createPage`).** Request clamping
-  (page ≥ 1, `pageSize` ≤ 100) and metadata math (`hasNext`/`hasPrev`) live once in `src/shared`, used
-  by both use cases and the `paginated()` response schema, so every list endpoint paginates
+  (page ≥ 1, `pageSize` ≤ 100) and metadata math (`hasNext` / `hasPrev`) live once in `src/shared`,
+  used by both use cases and the `paginated()` response schema, so every list endpoint paginates
   identically and a hostile `pageSize=100000` is bounded server-side.
+- **Redis-backed, distributed rate limiting.** `@fastify/rate-limit` is given a dedicated Redis handle
+  (`diContainer.cradle.rateLimitRedis`, a singleton `ioredis` connection with tight `connectTimeout` /
+  `commandTimeout` and `enableOfflineQueue: false`) so the counter is shared across every process/replica
+  rather than living in each instance's memory — a per-process store would let N replicas each grant the
+  full quota, silently multiplying the real limit by N. The keys are namespaced with `finflow-rate-limit-`,
+  and `skipOnError: true` makes the limiter **fail open**: if Redis is unreachable the request is allowed
+  rather than blocked, trading strict enforcement for availability so a Redis blip cannot take the API down.
 - **Secure-by-default middleware, environment-aware.** helmet, a `WEB_ORIGIN`-pinned CORS allowlist
-  with `credentials: true` (required for the refresh cookie), and a global rate limit are all on
-  unless explicitly relaxed. Two relaxations are deliberate and code-visible: CSP is disabled outside
+  with `credentials: true` (required for the refresh cookie), and a global rate limit are all on unless
+  explicitly relaxed. Two relaxations are deliberate and code-visible: CSP is disabled outside
   production so Swagger UI works, and Swagger itself is registered only when `!env.isProduction`.
+- **Refresh cookie: `HttpOnly`, `SameSite=Strict`, `Path=/auth`, signed when a secret is set.** The
+  refresh token is confined to the `/auth` path and unreadable by JavaScript; when `COOKIE_SECRET` is
+  present it is HMAC-signed and `readRefreshCookie` rejects a tampered value. `COOKIE_SECURE` gates the
+  `Secure` flag so local HTTP dev still works while production forces HTTPS-only.
 - **Registration order is load-bearing.** Awilix is registered before the auth plugin and routes
   (which resolve from `request.diScope.cradle`); the correlation-id plugin runs early so every
-  downstream log line and error body carries the id; and the error handler is registered before routes
-  so it wraps all of them. Reordering these would silently break DI resolution, correlation, or error
-  coverage.
+  downstream log line and error body carries the id; the metrics plugin sits right after it to observe
+  every response; and the error handler is registered before routes so it wraps all of them. Reordering
+  these would silently break DI resolution, correlation, metrics coverage, or error coverage.
 - **`buildApp` returns the instance without listening.** Networking, signal handling, and worker
   startup live in `main.ts`; `buildApp` only assembles the app and exposes a `rateLimit` toggle. This
   makes the whole HTTP stack injectable in tests (`app.inject(...)`) with no open sockets.
@@ -374,20 +453,21 @@ Unit tests run under Vitest and live beside the code they cover:
   body carries `requestId`.
 - `src/presentation/http/security.test.ts` — registers helmet and rate-limit with the real option
   builders; asserts the `x-content-type-options: nosniff` header, the presence of `x-ratelimit-*`
-  headers, a `429` in the `RATE_LIMITED` envelope once the global limit trips, and that a per-route
-  bucket enforces a stricter limit independently.
+  headers, a `429` in the `RATE_LIMITED` envelope once the global limit trips, that a per-route bucket
+  enforces a stricter limit independently, and that `rateLimitOptions` sets `skipOnError` and the
+  `RATE_LIMIT_KEY_NAMESPACE`.
 - `src/presentation/http/cookies.test.ts` — exercises `setRefreshCookie` / `clearRefreshCookie` /
   `readRefreshCookie` for `HttpOnly`, `SameSite=Strict`, `Path=/auth`, `Max-Age`, the `Secure` flag,
   and signed-vs-unsigned behaviour including rejection of a tampered signature.
 - `src/presentation/http/schemas/pagination-schema.test.ts` — asserts `paginated()` validates a
   well-formed envelope and **strips unknown fields** from items.
 - `src/shared/errors/app-error.test.ts` — covers the `AppError` base: `instanceof Error`, subclass
-  `name`, `kind`/`code`/`message`, `isOperational` default and override, `details`, `timestamp`,
+  `name`, `kind` / `code` / `message`, `isOperational` default and override, `details`, `timestamp`,
   `cause`, and `toJSON()` (including omission of absent `details`).
 - `src/shared/errors/semantic-errors.test.ts` — for each subclass, asserts its `kind`, default and
   custom `code`, default message, and `isOperational` (true for all except `InternalError`).
 - `src/shared/pagination.test.ts` — covers `normalizePageQuery` clamping/truncation/defaults and
-  `createPage`'s `hasNext`/`hasPrev` metadata, including the empty and exactly-one-full-page cases.
+  `createPage`'s `hasNext` / `hasPrev` metadata, including the empty and exactly-one-full-page cases.
 
 Run the whole suite:
 
