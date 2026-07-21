@@ -53,9 +53,9 @@ export class PrismaRefreshTokenRepository implements RefreshTokenRepository {
     });
   }
 
-  async deleteExpired(now: Date): Promise<number> {
+  async deleteExpired(cutoff: Date): Promise<number> {
     const { count } = await this.prisma.refreshToken.deleteMany({
-      where: { expiresAt: { lt: now } },
+      where: { expiresAt: { lt: cutoff } },
     });
     return count;
   }

@@ -31,7 +31,7 @@
     "arch": "depcruise src && depcruise src --output-type json | node scripts/assert-arch-not-vacuous.mjs",
     "arch:graph": "{ echo '```mermaid'; depcruise src --include-only '^src' --output-type mermaid --collapse '^src/[^/]+'; echo '```'; } > docs/architecture-graph.md",
     "verify:lock": "npm ci --dry-run --ignore-scripts",
-    "audit": "npm run verify:lock && npm run format && npm run lint && npm run typecheck && npm run test:coverage && npm run test:integration",
+    "audit": "npm run verify:lock && npm run format && npm run lint && npm run typecheck && npm run test:coverage && npm run arch && npm run test:integration",
     "prepare": "husky",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",

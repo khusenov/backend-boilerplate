@@ -148,13 +148,13 @@ describe('PrismaRefreshTokenRepository', () => {
 
   describe('deleteExpired', () => {
     it('deletes tokens whose expiresAt is before the given date', async () => {
-      const now = new Date('2024-06-01T00:00:00.000Z');
+      const cutoff = new Date('2024-06-01T00:00:00.000Z');
       ctx.tokenDelegate.deleteMany.mockResolvedValue({ count: 3 });
 
-      const count = await ctx.repo.deleteExpired(now);
+      const count = await ctx.repo.deleteExpired(cutoff);
 
       expect(ctx.tokenDelegate.deleteMany).toHaveBeenCalledWith({
-        where: { expiresAt: { lt: now } },
+        where: { expiresAt: { lt: cutoff } },
       });
       expect(count).toBe(3);
     });

@@ -72,6 +72,10 @@ import { PrometheusMetricsRecorder } from '@/infrastructure/observability/promet
 import { RedisHealthCheck } from '@/infrastructure/jobs/redis-health-check';
 import { CompositeHealthCheck } from '@/infrastructure/health/composite-health-check';
 import { createRateLimitRedis } from '@/infrastructure/security/rate-limit-redis';
+import { RefreshTokenRetentionTask } from '@/infrastructure/persistence/refresh-token-retention-task';
+import { OutboxRetentionTask } from '@/infrastructure/persistence/outbox-retention-task';
+import { EnforceDataRetentionJob } from '@/application/retention/enforce-data-retention-job';
+import type { RetentionTask } from '@/application/shared/ports/retention-task';
 
 declare module '@fastify/awilix' {
   interface Cradle {
@@ -113,6 +117,10 @@ declare module '@fastify/awilix' {
     jobQueue: JobQueue;
     jobWorker: JobWorker;
     jobScheduler: JobScheduler;
+    dataRetentionWindowMs: number;
+    refreshTokenRetentionTask: RetentionTask;
+    outboxRetentionTask: RetentionTask;
+    enforceDataRetentionJob: EnforceDataRetentionJob;
     metricsRecorder: MetricsRecorder;
     metricsExposition: MetricsExposition;
 
@@ -209,6 +217,7 @@ export function registerDependencies(
         exampleJobHandler,
         outboxRelay,
         dispatchDomainEventJobHandler,
+        enforceDataRetentionJob,
         logger,
         queuePrefix,
         queueConcurrency,
@@ -218,6 +227,7 @@ export function registerDependencies(
         | 'exampleJobHandler'
         | 'outboxRelay'
         | 'dispatchDomainEventJobHandler'
+        | 'enforceDataRetentionJob'
         | 'logger'
         | 'queuePrefix'
         | 'queueConcurrency'
@@ -226,12 +236,36 @@ export function registerDependencies(
           connection: workerConnection,
           queuePrefix,
           concurrency: queueConcurrency,
-          handlers: [exampleJobHandler, outboxRelay, dispatchDomainEventJobHandler],
+          handlers: [
+            exampleJobHandler,
+            outboxRelay,
+            dispatchDomainEventJobHandler,
+            enforceDataRetentionJob,
+          ],
           logger,
         }),
     )
       .singleton()
       .disposer((worker) => worker.close()),
+    dataRetentionWindowMs: asValue(env.DATA_RETENTION_TTL * 1000),
+    refreshTokenRetentionTask: asClass(RefreshTokenRetentionTask).singleton(),
+    outboxRetentionTask: asClass(OutboxRetentionTask).singleton(),
+    enforceDataRetentionJob: asFunction(
+      ({
+        refreshTokenRetentionTask,
+        outboxRetentionTask,
+        dataRetentionWindowMs,
+        logger,
+      }: Pick<
+        Cradle,
+        'refreshTokenRetentionTask' | 'outboxRetentionTask' | 'dataRetentionWindowMs' | 'logger'
+      >) =>
+        new EnforceDataRetentionJob({
+          retentionTasks: [refreshTokenRetentionTask, outboxRetentionTask],
+          dataRetentionWindowMs,
+          logger,
+        }),
+    ).singleton(),
     domainEventHandlers: asFunction(
       ({ userCreatedLogHandler }: Pick<Cradle, 'userCreatedLogHandler'>) => [userCreatedLogHandler],
     ).singleton(),

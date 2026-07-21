@@ -11,5 +11,5 @@ export interface RefreshTokenRepository {
 
   revokeAllForUser(userId: string, revokedAt: Date): Promise<void>;
 
-  deleteExpired(now: Date): Promise<number>;
+  deleteExpired(cutoff: Date): Promise<number>;
 }
