@@ -47,14 +47,30 @@ services:
         condition: service_healthy
     restart: 'no'
 
-  jaeger:
-    image: jaegertracing/all-in-one:1.60
+  tempo:
+    image: grafana/tempo:2.6.1
+    restart: unless-stopped
+    command: ['-config.file=/etc/tempo.yaml']
+    volumes:
+      - ./docker/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - '3200:3200'
+      - '4318:4318'
+
+  grafana:
+    image: grafana/grafana:11.2.0
     restart: unless-stopped
     environment:
-      COLLECTOR_OTLP_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: 'Admin'
+      GF_AUTH_DISABLE_LOGIN_FORM: 'true'
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
     ports:
-      - '16686:16686'
-      - '4318:4318'
+      - '3000:3000'
+    depends_on:
+      - tempo
 
   app:
     build:
@@ -80,7 +96,7 @@ services:
       OTEL_ENABLED: 'true'
       OTEL_SERVICE_NAME: finflow-api
       OTEL_SERVICE_VERSION: '1.0.0'
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
     depends_on:
       mariadb:
         condition: service_healthy
@@ -88,9 +104,10 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      jaeger:
+      tempo:
         condition: service_started
 
 volumes:
+  tempo-data:
   mariadb-data:
   redis-data:
