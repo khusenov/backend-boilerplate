@@ -11,7 +11,13 @@ export default defineConfig({
     setupFiles: ['test/unit/setup-env.ts'],
     coverage: {
       provider: 'v8',
-      include: ['src/domain/**', 'src/application/**'],
+      include: [
+        'src/domain/**',
+        'src/application/**',
+        'src/presentation/http/guards/**',
+        'src/presentation/http/plugins/**',
+        'src/presentation/http/error-handler.ts',
+      ],
       exclude: ['src/application/shared/ports/**'],
       reporter: ['text', 'text-summary', 'html'],
       thresholds: {
