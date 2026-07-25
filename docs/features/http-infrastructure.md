@@ -1,6 +1,6 @@
 # HTTP Infrastructure
 
-> **Status:** Complete · **Layers:** presentation, shared, config · **Verified against:** `9044a23`
+> **Status:** Complete · **Layers:** presentation, shared, config · **Verified against:** `329a35a`
 
 ## Purpose
 
@@ -21,13 +21,23 @@ instance. It does **not** call `listen` — `src/main.ts` owns the network lifec
 `buildApp` at bootstrap. Construction has two phases: wiring the cross-cutting plugins in a deliberate
 order, then registering feature routes.
 
+**Boot-time configuration guard.** Before `buildApp` ever runs, importing `src/config/env.ts` parses
+the whole process environment once through **`envalid`** (`cleanEnv`) into a typed, frozen `env`, then
+immediately calls `assertProductionSecrets(env)`. That guard is a no-op outside production; in
+production it refuses to boot (throws) if `COOKIE_SECRET` or `JWT_ACCESS_SECRET` is shorter than
+`MIN_SECRET_LENGTH` (32) characters, and — only when `BULL_BOARD_ENABLED` is true — if
+`BULL_BOARD_PASSWORD` is shorter than 16 characters. It collects **all** offending keys and throws a
+single error naming them with a remediation hint (`openssl rand -base64 48`), so a misconfigured
+deploy fails fast and loudly rather than starting with a weak secret.
+
 **Instance configuration.** The Fastify factory is given `logger: opts.loggerOptions` (a Pino
-`LoggerOptions` object built by `main.ts` from `createLoggerOptions(env.LOG_LEVEL)`),
-`requestIdHeader: CORRELATION_ID_HEADER` (`'x-request-id'`) and `genReqId: () => randomUUID()`, so
-every request carries an id taken from the client's `x-request-id` header or freshly minted. That id
-becomes the correlation id in logs and the `requestId` in every error body. `forceCloseConnections:
-true` supports clean shutdown; `disableRequestLogging` defaults to `false` and is set to
-`env.isDevelopment` by `main.ts`.
+`LoggerOptions` object built by `main.ts` from `createLoggerOptions(env.LOG_LEVEL,
+toServiceIdentity(env))`, so every log line carries both the level and the service identity — name,
+environment, version), `requestIdHeader: CORRELATION_ID_HEADER` (`'x-request-id'`) and `genReqId: ()
+=> randomUUID()`, so every request carries an id taken from the client's `x-request-id` header or
+freshly minted. That id becomes the correlation id in logs and the `requestId` in every error body.
+`forceCloseConnections: true` supports clean shutdown; `disableRequestLogging` defaults to `false` and
+is set to `env.isDevelopment` by `main.ts`.
 
 **Plugin registration order.** Fastify runs lifecycle **hooks** (request-lifecycle callbacks) in the
 order the plugins that add them were registered, and because these plugins are all registered at the
@@ -46,11 +56,13 @@ conditional registrations note their gate:
 true`, `strictBooleanEnforced: true`, `injectionMode: 'PROXY'` — creates a per-request DI scope
    and disposes it on response; must precede anything that resolves from `request.diScope.cradle`
    (the **cradle** is Awilix's resolved-dependency proxy).
-5. `correlationIdPlugin` — stamps the correlation id into request context and echoes the
-   `x-request-id` response header. Documented by [Structured Logging](./structured-logging.md).
-6. `metricsPlugin` — **only when `env.METRICS_ENABLED`** — an `onResponse` hook that records per-request
-   HTTP metrics. Documented by [Metrics](./metrics.md).
-7. **`@fastify/cors`** (`fastifyCors`) — Cross-Origin Resource Sharing (CORS) — with `{ origin: env.WEB_ORIGIN, credentials: true }`.
+5. `correlationIdPlugin` — registers `@fastify/request-context` and, on every `onRequest`, stamps the
+   correlation id into the request context and echoes it back as the `x-request-id` response header.
+   Documented by [Structured Logging](./structured-logging.md).
+6. `metricsPlugin` — **only when `env.METRICS_ENABLED`** — an `onResponse` hook that records
+   per-request HTTP metrics. Documented by [Metrics](./metrics.md).
+7. **`@fastify/cors`** (`fastifyCors`) — Cross-Origin Resource Sharing (CORS) — with `{ origin:
+env.WEB_ORIGIN, credentials: true }`.
 8. **`@fastify/cookie`** (`fastifyCookie`), passed `{ secret: env.COOKIE_SECRET }` when
    `COOKIE_SECRET` is set (enabling signed cookies) and `{}` otherwise.
 9. `authPlugin` — decorates the instance with `authenticate`. Documented by
@@ -61,11 +73,15 @@ true`, `strictBooleanEnforced: true`, `injectionMode: 'PROXY'` — creates a per
 12. **`@fastify/swagger`** + **`@fastify/swagger-ui`** at `/docs` — **only when `!env.isProduction`** —
     with the Zod `jsonSchemaTransform` so route schemas become OpenAPI, plus a `bearerAuth` JWT
     security scheme.
-13. **`@fastify/rate-limit`** (`fastifyRateLimit`) with `rateLimitOptions(env.RATE_LIMIT_MAX,
+13. `bullBoardPlugin` — **only when `env.BULL_BOARD_ENABLED`** — mounts the Bull Board queue dashboard
+    at `env.BULL_BOARD_PATH` (default `/admin/queues`) behind HTTP Basic Auth. Its gating and guard are
+    detailed under Design decisions; the queues it inspects are documented by
+    [Background Jobs](./background-jobs.md).
+14. **`@fastify/rate-limit`** (`fastifyRateLimit`) with `rateLimitOptions(env.RATE_LIMIT_MAX,
 env.RATE_LIMIT_WINDOW)` and `redis: diContainer.cradle.rateLimitRedis` — **only when
     `opts.rateLimit ?? true`**, so tests can disable it. The `redis` handle makes the limiter's
     counters live in Redis (see Design decisions).
-14. Feature routes, each under a prefix: `healthRoutes` (`/health`), `metricsRoutes` (`/metrics`,
+15. Feature routes, each under a prefix: `healthRoutes` (`/health`), `metricsRoutes` (`/metrics`,
     **only when `env.METRICS_ENABLED`**), `authRoutes` (`/auth`), `userRoutes` (`/users`),
     `roleRoutes` (`/roles`), `permissionRoutes` (`/permissions`).
 
@@ -75,7 +91,8 @@ bearer token) → the Zod **validator compiler** checks `querystring` / `params`
 route's schema → the handler resolves its use case from `request.diScope.cradle` and calls `execute()`
 → `reply.send(payload)` runs the payload through the Zod **serializer compiler**, which validates it
 against the route's declared `response` schema and strips any field the schema does not declare → the
-`onResponse` hook (when metrics are enabled) records the method, route, status, and duration.
+`onResponse` hook (when metrics are enabled) records the method, matched route template, status, and
+duration.
 
 **The failure paths that matter**, all funnelled through `registerErrorHandler`'s single
 `setErrorHandler` (`src/presentation/http/error-handler.ts`):
@@ -104,31 +121,35 @@ presentation layer is the **only** place that translates that vocabulary into HT
 `error-handler.ts`, wire shapes in the Zod schemas, security policy in `security.ts`. The shared error
 and pagination types carry no framework imports, which is precisely why an application use case may
 construct them without breaching the Dependency Rule. The concrete dependencies the HTTP layer pulls
-from `src/container.ts` both come from the global Awilix cradle, but at different moments:
-`rateLimitRedis` is resolved once at composition time, when `buildApp` registers the rate limiter
-(`app.ts`); `metricsRecorder`, when metrics are on, is read from the cradle **per response** inside
-the `onResponse` metrics hook (`plugins/metrics.ts`), not at composition time.
+from `src/container.ts` come from the global Awilix cradle, but at different moments: `rateLimitRedis`
+and (when enabled) `dashboardQueue` are resolved once at composition time, when `buildApp` registers
+the rate limiter and the Bull Board plugin (`app.ts`); `metricsRecorder`, when metrics are on, is read
+from the cradle **per response** inside the `onResponse` metrics hook (`plugins/metrics.ts`), not at
+composition time.
 
-| Component                                       | Layer        | Responsibility                                                                                              | File                                                           |
-| ----------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `buildApp`                                      | Presentation | Composition root: configures Fastify, registers plugins in order, mounts routes                             | `src/presentation/http/app.ts`                                 |
-| `registerErrorHandler`                          | Presentation | Single `setErrorHandler` + `setNotFoundHandler`; maps every error to the JSON envelope                      | `src/presentation/http/error-handler.ts`                       |
-| `KIND_TO_STATUS`                                | Presentation | Maps each `ErrorKindType` to its HTTP status code                                                           | `src/presentation/http/error-handler.ts`                       |
-| `helmetOptions` / `rateLimitOptions`            | Presentation | Security defaults: helmet Content-Security-Policy (CSP) toggle and the Redis-backed rate-limit envelope     | `src/presentation/http/security.ts`                            |
-| `errorResponse`                                 | Presentation | Zod response contract for the error envelope                                                                | `src/presentation/http/schemas/error-schema.ts`                |
-| `paginated`                                     | Presentation | Zod response-contract factory wrapping a page of items                                                      | `src/presentation/http/schemas/pagination-schema.ts`           |
-| `timestamp`                                     | Presentation | Zod response contract for date fields (`z.date()`)                                                          | `src/presentation/http/schemas/timestamp-schema.ts`            |
-| `correlationIdPlugin`                           | Presentation | Per-request correlation id (see [Structured Logging](./structured-logging.md))                              | `src/presentation/http/plugins/correlation-id.ts`              |
-| `metricsPlugin`                                 | Presentation | `onResponse` hook recording HTTP metrics (see [Metrics](./metrics.md))                                      | `src/presentation/http/plugins/metrics.ts`                     |
-| `authPlugin`                                    | Presentation | `authenticate` decorator for bearer auth (see [Authentication](./authentication.md))                        | `src/presentation/http/plugins/authenticate.ts`                |
-| `requirePermission` / `requireSelfOrPermission` | Presentation | Route guards enforcing permissions (see [Role-Based Authorization](./role-based-authorization.md))          | `src/presentation/http/guards/authorize.ts`                    |
-| cookie helpers                                  | Presentation | Read/write the signed refresh-token cookie (see [Authentication](./authentication.md))                      | `src/presentation/http/cookies.ts`                             |
-| `AppError`                                      | Shared       | Abstract base error carrying `kind`, `code`, `details`, `isOperational`, `timestamp`, `toJSON()`            | `src/shared/errors/app-error.ts`                               |
-| `ErrorKind`                                     | Shared       | The closed set of error kinds (`VALIDATION`…`INTERNAL`)                                                     | `src/shared/errors/app-error.ts`                               |
-| `ValidationError` … `InternalError`             | Shared       | Semantic `AppError` subclasses inner layers throw                                                           | `src/shared/errors/semantic-errors.ts`                         |
-| `normalizePageQuery` / `createPage`             | Shared       | Framework-free pagination: clamp request input, compute page metadata                                       | `src/shared/pagination.ts`                                     |
-| `Page` / `PageQuery` / `PageSlice`              | Shared       | Pagination types shared by use cases, repositories, and response schemas                                    | `src/shared/pagination.ts`                                     |
-| `env` / `assertProductionSecrets`               | Config       | Parse + validate the environment once at boot (`envalid`); refuse to start when a production secret is weak | `src/config/env.ts`, `src/config/assert-production-secrets.ts` |
+| Component                                       | Layer        | Responsibility                                                                                          | File                                                 |
+| ----------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `buildApp`                                      | Presentation | Composition root: configures Fastify, registers plugins in order, mounts routes                         | `src/presentation/http/app.ts`                       |
+| `registerErrorHandler`                          | Presentation | Single `setErrorHandler` + `setNotFoundHandler`; maps every error to the JSON envelope                  | `src/presentation/http/error-handler.ts`             |
+| `KIND_TO_STATUS`                                | Presentation | Maps each `ErrorKindType` to its HTTP status code                                                       | `src/presentation/http/error-handler.ts`             |
+| `helmetOptions` / `rateLimitOptions`            | Presentation | Security defaults: helmet Content-Security-Policy (CSP) toggle and the Redis-backed rate-limit envelope | `src/presentation/http/security.ts`                  |
+| `errorResponse`                                 | Presentation | Zod response contract for the error envelope                                                            | `src/presentation/http/schemas/error-schema.ts`      |
+| `paginated`                                     | Presentation | Zod response-contract factory wrapping a page of items                                                  | `src/presentation/http/schemas/pagination-schema.ts` |
+| `timestamp`                                     | Presentation | Zod response contract for date fields (`z.date()`)                                                      | `src/presentation/http/schemas/timestamp-schema.ts`  |
+| `correlationIdPlugin`                           | Presentation | Per-request correlation id (see [Structured Logging](./structured-logging.md))                          | `src/presentation/http/plugins/correlation-id.ts`    |
+| `metricsPlugin`                                 | Presentation | `onResponse` hook recording HTTP metrics (see [Metrics](./metrics.md))                                  | `src/presentation/http/plugins/metrics.ts`           |
+| `authPlugin`                                    | Presentation | `authenticate` decorator for bearer auth (see [Authentication](./authentication.md))                    | `src/presentation/http/plugins/authenticate.ts`      |
+| `bullBoardPlugin` / `createBasicAuthValidator`  | Presentation | Basic-auth-guarded Bull Board dashboard mount (see [Background Jobs](./background-jobs.md))             | `src/presentation/http/plugins/bull-board.ts`        |
+| `requirePermission` / `requireSelfOrPermission` | Presentation | Route guards enforcing permissions (see [Role-Based Authorization](./role-based-authorization.md))      | `src/presentation/http/guards/authorize.ts`          |
+| cookie helpers                                  | Presentation | Read/write the signed refresh-token cookie (see [Authentication](./authentication.md))                  | `src/presentation/http/cookies.ts`                   |
+| `AppError`                                      | Shared       | Abstract base error carrying `kind`, `code`, `details`, `isOperational`, `timestamp`, `toJSON()`        | `src/shared/errors/app-error.ts`                     |
+| `ErrorKind`                                     | Shared       | The closed set of error kinds (`VALIDATION`…`INTERNAL`)                                                 | `src/shared/errors/app-error.ts`                     |
+| `ValidationError` … `InternalError`             | Shared       | Semantic `AppError` subclasses inner layers throw                                                       | `src/shared/errors/semantic-errors.ts`               |
+| `normalizePageQuery` / `createPage`             | Shared       | Framework-free pagination: clamp request input, compute page metadata                                   | `src/shared/pagination.ts`                           |
+| `Page` / `PageQuery` / `PageSlice`              | Shared       | Pagination types shared by use cases, repositories, and response schemas                                | `src/shared/pagination.ts`                           |
+| `env`                                           | Config       | Parse + validate the whole environment once at boot (`envalid`), exported frozen                        | `src/config/env.ts`                                  |
+| `assertProductionSecrets`                       | Config       | Boot-time guard: refuse to start when a production secret is weak                                       | `src/config/assert-production-secrets.ts`            |
+| `toServiceIdentity`                             | Config       | Derive `{ service, environment, version }` for logs/traces from env                                     | `src/config/service-identity.ts`                     |
 
 ## Public surface
 
@@ -191,7 +212,7 @@ new NotFoundError(message, { code?, details?, cause? });      // → 404
 new ConflictError(message, { code?, details?, cause? });      // → 409
 new UnauthorizedError(message?, { code?, details?, cause? }); // → 401, default message 'Unauthorized'
 new ForbiddenError(message?, { code?, details?, cause? });    // → 403, default message 'Forbidden'
-new InternalError(message?, { code?, details?, cause? });     // → 500, isOperational = false
+new InternalError(message?, { code?, details?, cause? });     // → 500, default message 'Internal error', isOperational = false
 
 // src/shared/pagination  — framework-free page math
 function normalizePageQuery(input: PageQueryInput): PageQuery; // clamps page ≥ 1, 1 ≤ pageSize ≤ 100
@@ -221,48 +242,54 @@ See [Authentication](./authentication.md) for `authenticate` / `request.user` an
 ## Configuration
 
 `src/config/env.ts` parses and validates the whole process environment once, via **`envalid`**
-(`cleanEnv`), and exports a typed frozen `env`; `assertProductionSecrets(env)` then runs and refuses
-to boot in production if `COOKIE_SECRET` or `JWT_ACCESS_SECRET` is shorter than 32 characters. The
-table below lists the env vars this and its sibling features read through `env.ts`; variables this
-HTTP-infrastructure feature reads directly are **bold**, and feature-specific groups are cross-linked
-to their owning docs. Defaults are copied verbatim; `—` means the variable is **required** (no
-default, boot fails if unset). `devDefault` values apply only outside production. Two OpenTelemetry
-sampler knobs — `OTEL_TRACES_SAMPLER` and `OTEL_TRACES_SAMPLER_ARG` — are read natively by the OTel
-SDK rather than `env.ts`, so they are documented in [Tracing](./tracing.md) rather than here.
+(`cleanEnv`), exports a typed frozen `env`, and then runs `assertProductionSecrets(env)` (see How it
+works). The table below lists the env vars this and its sibling features read through `env.ts`;
+variables the HTTP-infrastructure feature reads directly — in `buildApp`, its plugins, `security.ts`,
+`cookies.ts`, or the boot-time guard — are **bold**, and feature-specific groups are cross-linked to
+their owning docs. Defaults are copied verbatim; `—` means the variable is **required** (no default,
+boot fails if unset). `devDefault` values apply only outside production. Two OpenTelemetry sampler
+knobs — `OTEL_TRACES_SAMPLER` and `OTEL_TRACES_SAMPLER_ARG` — are read natively by the OTel SDK
+rather than `env.ts`, so they are documented in [Tracing](./tracing.md) rather than here.
 
-| Variable                      | Default                                   | Meaning                                                                                                                                            |
-| ----------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NODE_ENV`                    | `development`                             | Environment; one of `development`, `test`, `production`. Drives `env.isProduction`, which gates helmet CSP and Swagger.                            |
-| `HOST`                        | `0.0.0.0`                                 | Bind address for `app.listen` (used in `main.ts`).                                                                                                 |
-| `PORT`                        | `8000`                                    | Listen port (used in `main.ts`).                                                                                                                   |
-| **`LOG_LEVEL`**               | `info`                                    | Pino level (`fatal`…`trace`); `main.ts` turns it into the `loggerOptions` passed to `buildApp`. See [Structured Logging](./structured-logging.md). |
-| `DATABASE_URL`                | `—`                                       | Prisma connection string (required).                                                                                                               |
-| `JWT_ACCESS_SECRET`           | `—`                                       | Access-token signing secret (required; ≥ 32 chars in production). See [Authentication](./authentication.md).                                       |
-| `JWT_ISSUER`                  | `finflow`                                 | JWT `iss` claim. See [Authentication](./authentication.md).                                                                                        |
-| `JWT_AUDIENCE`                | `finflow-api`                             | JWT `aud` claim. See [Authentication](./authentication.md).                                                                                        |
-| `ACCESS_TOKEN_TTL`            | `900`                                     | Access-token lifetime in seconds (15 min). See [Authentication](./authentication.md).                                                              |
-| **`REFRESH_TOKEN_TTL`**       | `1209600`                                 | Refresh-token lifetime in seconds (14 days); also the refresh-cookie `Max-Age`.                                                                    |
-| **`COOKIE_SECRET`**           | `''` (empty)                              | When non-empty, cookies are signed; passed to `@fastify/cookie` in `buildApp` and read by the cookie helpers. ≥ 32 chars in production.            |
-| **`WEB_ORIGIN`**              | `—` (devDefault `http://127.0.0.1:3000`)  | Allowed CORS origin; passed to `@fastify/cors` with `credentials: true`.                                                                           |
-| **`COOKIE_SECURE`**           | `true` (devDefault `false`)               | Sets the `Secure` flag on the refresh cookie.                                                                                                      |
-| `BOOTSTRAP_ADMIN_EMAIL`       | `''` (empty)                              | Email of the admin seeded at bootstrap. See [Role-Based Authorization](./role-based-authorization.md).                                             |
-| **`RATE_LIMIT_MAX`**          | `100`                                     | Global rate-limit ceiling per window; passed to `@fastify/rate-limit`.                                                                             |
-| **`RATE_LIMIT_WINDOW`**       | `1 minute`                                | Global rate-limit window; passed to `@fastify/rate-limit`.                                                                                         |
-| `RATE_LIMIT_AUTH_MAX`         | `5`                                       | Stricter per-route ceiling for auth endpoints. See [Authentication](./authentication.md).                                                          |
-| **`REDIS_URL`**               | `—` (devDefault `redis://127.0.0.1:6379`) | Redis connection; backs the distributed rate-limit store (and BullMQ).                                                                             |
-| `QUEUE_PREFIX`                | `finflow`                                 | BullMQ key prefix. See [Background Jobs](./background-jobs.md).                                                                                    |
-| `QUEUE_CONCURRENCY`           | `5`                                       | BullMQ worker concurrency. See [Background Jobs](./background-jobs.md).                                                                            |
-| **`METRICS_ENABLED`**         | `true`                                    | Gates registration of `metricsPlugin` and the `GET /metrics` route in `buildApp`. See [Metrics](./metrics.md).                                     |
-| `HEALTHCHECK_TIMEOUT_MS`      | `2000`                                    | Per-dependency timeout for health probes. See [Health Checks](./health-checks.md).                                                                 |
-| `OTEL_ENABLED`                | `false`                                   | Toggles OpenTelemetry tracing. See [Tracing](./tracing.md).                                                                                        |
-| `OTEL_SERVICE_NAME`           | `finflow-api`                             | Tracing service name. See [Tracing](./tracing.md).                                                                                                 |
-| `OTEL_SERVICE_VERSION`        | `0.0.0`                                   | Tracing service version. See [Tracing](./tracing.md).                                                                                              |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318`                   | OTLP exporter endpoint. See [Tracing](./tracing.md).                                                                                               |
+| Variable                      | Default                                   | Meaning                                                                                                                                                                 |
+| ----------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`NODE_ENV`**                | `development`                             | Environment; one of `development`, `test`, `production`. Drives `env.isProduction`, which gates helmet CSP, Swagger, and the production secret check.                   |
+| `HOST`                        | `0.0.0.0`                                 | Bind address for `app.listen` (used in `main.ts`).                                                                                                                      |
+| `PORT`                        | `8000`                                    | Listen port (used in `main.ts`).                                                                                                                                        |
+| **`LOG_LEVEL`**               | `info`                                    | Pino level (`fatal`…`trace`); `main.ts` turns it into the `loggerOptions` passed to `buildApp`. See [Structured Logging](./structured-logging.md).                      |
+| `DATABASE_URL`                | `—`                                       | Prisma connection string (required).                                                                                                                                    |
+| **`JWT_ACCESS_SECRET`**       | `—`                                       | Access-token signing secret (required; the boot-time guard demands ≥ 32 chars in production). See [Authentication](./authentication.md).                                |
+| `JWT_ISSUER`                  | `finflow`                                 | JWT `iss` claim. See [Authentication](./authentication.md).                                                                                                             |
+| `JWT_AUDIENCE`                | `finflow-api`                             | JWT `aud` claim. See [Authentication](./authentication.md).                                                                                                             |
+| `ACCESS_TOKEN_TTL`            | `900`                                     | Access-token lifetime in seconds (15 min). See [Authentication](./authentication.md).                                                                                   |
+| **`REFRESH_TOKEN_TTL`**       | `1209600`                                 | Refresh-token lifetime in seconds (14 days); also the refresh-cookie `Max-Age`.                                                                                         |
+| **`COOKIE_SECRET`**           | `''` (empty)                              | When non-empty, cookies are signed; passed to `@fastify/cookie` in `buildApp` and read by the cookie helpers. The boot-time guard demands ≥ 32 chars in production.     |
+| **`WEB_ORIGIN`**              | `—` (devDefault `http://127.0.0.1:3000`)  | Allowed CORS origin; passed to `@fastify/cors` with `credentials: true`.                                                                                                |
+| **`COOKIE_SECURE`**           | `true` (devDefault `false`)               | Sets the `Secure` flag on the refresh cookie.                                                                                                                           |
+| `BOOTSTRAP_ADMIN_EMAIL`       | `''` (empty)                              | Email of the admin seeded at bootstrap. See [Role-Based Authorization](./role-based-authorization.md).                                                                  |
+| **`RATE_LIMIT_MAX`**          | `100`                                     | Global rate-limit ceiling per window; passed to `@fastify/rate-limit`.                                                                                                  |
+| **`RATE_LIMIT_WINDOW`**       | `1 minute`                                | Global rate-limit window; passed to `@fastify/rate-limit`.                                                                                                              |
+| `RATE_LIMIT_AUTH_MAX`         | `5`                                       | Stricter per-route ceiling for auth endpoints. See [Authentication](./authentication.md).                                                                               |
+| **`REDIS_URL`**               | `—` (devDefault `redis://127.0.0.1:6379`) | Redis connection; backs the distributed rate-limit store (and BullMQ).                                                                                                  |
+| `QUEUE_PREFIX`                | `finflow`                                 | BullMQ key prefix. See [Background Jobs](./background-jobs.md).                                                                                                         |
+| `QUEUE_CONCURRENCY`           | `5`                                       | BullMQ worker concurrency. See [Background Jobs](./background-jobs.md).                                                                                                 |
+| `DATA_RETENTION_TTL`          | `2592000`                                 | Retention window in seconds (30 days) for the scheduled data-retention job. See [Background Jobs](./background-jobs.md).                                                |
+| **`METRICS_ENABLED`**         | `true`                                    | Gates registration of `metricsPlugin` and the `GET /metrics` route in `buildApp`. See [Metrics](./metrics.md).                                                          |
+| `HEALTHCHECK_TIMEOUT_MS`      | `2000`                                    | Per-dependency timeout for health probes. See [Health Checks](./health-checks.md).                                                                                      |
+| `OTEL_ENABLED`                | `false`                                   | Toggles OpenTelemetry tracing. See [Tracing](./tracing.md).                                                                                                             |
+| `OTEL_SERVICE_NAME`           | `finflow-api`                             | Service name; also the `service` field `toServiceIdentity` stamps onto logs. See [Tracing](./tracing.md).                                                               |
+| `OTEL_SERVICE_VERSION`        | `0.0.0`                                   | Service version; also the `version` field on log/trace identity. See [Tracing](./tracing.md).                                                                           |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318`                   | OTLP exporter endpoint. See [Tracing](./tracing.md).                                                                                                                    |
+| **`BULL_BOARD_ENABLED`**      | `false`                                   | Gates registration of `bullBoardPlugin` in `buildApp`, and whether the boot guard enforces `BULL_BOARD_PASSWORD` strength. See [Background Jobs](./background-jobs.md). |
+| **`BULL_BOARD_PATH`**         | `/admin/queues`                           | Base path the dashboard mounts at.                                                                                                                                      |
+| **`BULL_BOARD_USERNAME`**     | `admin`                                   | Basic-auth username for the dashboard.                                                                                                                                  |
+| **`BULL_BOARD_PASSWORD`**     | `''` (empty)                              | Basic-auth password; empty fails login closed. The boot-time guard demands ≥ 16 chars in production when the dashboard is enabled.                                      |
+| **`BULL_BOARD_READONLY`**     | `true`                                    | Mounts the dashboard in read-only mode (`readOnlyMode`).                                                                                                                |
 
 `buildApp` also takes three code-level options, not env vars: `loggerOptions` (a Pino `LoggerOptions`),
 the optional `disableRequestLogging` (default `false`), and the optional `rateLimit` (default `true`,
-disabled by tests). `main.ts` supplies `loggerOptions: createLoggerOptions(env.LOG_LEVEL)` and
-`disableRequestLogging: env.isDevelopment`.
+disabled by tests). `main.ts` supplies `loggerOptions: createLoggerOptions(env.LOG_LEVEL,
+toServiceIdentity(env))` and `disableRequestLogging: env.isDevelopment`.
 
 **Security defaults** derive from the environment rather than dedicated flags:
 
@@ -270,11 +297,13 @@ disabled by tests). `main.ts` supplies `loggerOptions: createLoggerOptions(env.L
   `{ contentSecurityPolicy: false }` elsewhere — CSP is deliberately relaxed outside production so the
   Swagger UI at `/docs` loads.
 - `rateLimitOptions(max, timeWindow)` sets `skipOnError: true` (fail-open — allow the request when
-  Redis is unreachable), a `nameSpace` of
-  `RATE_LIMIT_KEY_NAMESPACE` (`'finflow-rate-limit-'`) for its Redis keys, and an `errorResponseBuilder`
-  that emits a `FastifyError` with `code: 'RATE_LIMITED'` and the window's `statusCode`, so a throttled
-  request flows through the same error envelope as everything else. Swagger has no dedicated variable —
-  it is gated purely on `!env.isProduction`.
+  Redis is unreachable), a `nameSpace` of `RATE_LIMIT_KEY_NAMESPACE` (`'finflow-rate-limit-'`) for its
+  Redis keys, and an `errorResponseBuilder` that emits a `FastifyError` with `code: 'RATE_LIMITED'` and
+  the window's `statusCode`, so a throttled request flows through the same error envelope as everything
+  else.
+- Swagger has no dedicated variable — it is gated purely on `!env.isProduction`. Bull Board, by
+  contrast, is gated on `BULL_BOARD_ENABLED` and additionally protects itself with Basic Auth and its
+  own strict CSP (see Design decisions).
 
 ## Usage & extension
 
@@ -328,8 +357,7 @@ Three edits keep the mapping total and type-safe:
    ```
 
 **Declare a response contract on a route** so the wire shape is enforced and internal fields are
-stripped. Compose `paginated`, `timestamp`, and `errorResponse` (this mirrors what the user routes do
-— see `user-response-schema.ts`):
+stripped. Compose `paginated`, `timestamp`, and `errorResponse` (this mirrors what the user routes do):
 
 ```ts
 import { z } from 'zod';
@@ -428,6 +456,19 @@ app.get(
   with `credentials: true` (required for the refresh cookie), and a global rate limit are all on unless
   explicitly relaxed. Two relaxations are deliberate and code-visible: CSP is disabled outside
   production so Swagger UI works, and Swagger itself is registered only when `!env.isProduction`.
+- **Boot-time production secret check that fails loud, not silent.** `assertProductionSecrets` runs the
+  moment `env.ts` is imported (before any server is built) and, in production only, refuses to start
+  when `COOKIE_SECRET` or `JWT_ACCESS_SECRET` is under 32 chars — or `BULL_BOARD_PASSWORD` under 16
+  chars when the dashboard is enabled. It reports **every** offending key in one throw with an
+  `openssl rand -base64 48` hint, so a weak deploy is caught at startup rather than discovered after a
+  breach. Outside production it is a no-op, keeping local dev friction-free.
+- **Bull Board is opt-in and self-guarded.** The queue dashboard is registered only when
+  `BULL_BOARD_ENABLED`, sits behind `@fastify/basic-auth` whose validator (`createBasicAuthValidator`)
+  compares credentials in **constant time** (SHA-256 + `timingSafeEqual`) and **fails closed** when
+  either configured credential is empty, stamps its own strict `Content-Security-Policy` on every
+  response via an `onSend` hook, and defaults to `readOnlyMode`. This exposes operational queue
+  visibility without adding an unauthenticated admin surface. Its queues and jobs are documented by
+  [Background Jobs](./background-jobs.md).
 - **Refresh cookie: `HttpOnly`, `SameSite=Strict`, `Path=/auth`, signed when a secret is set.** The
   refresh token is confined to the `/auth` path and unreadable by JavaScript; when `COOKIE_SECRET` is
   present it is HMAC-signed and `readRefreshCookie` rejects a tampered value. `COOKIE_SECURE` gates the
@@ -459,8 +500,22 @@ Unit tests run under Vitest and live beside the code they cover:
 - `src/presentation/http/cookies.test.ts` — exercises `setRefreshCookie` / `clearRefreshCookie` /
   `readRefreshCookie` for `HttpOnly`, `SameSite=Strict`, `Path=/auth`, `Max-Age`, the `Secure` flag,
   and signed-vs-unsigned behaviour including rejection of a tampered signature.
+- `src/presentation/http/plugins/correlation-id.test.ts` — asserts the plugin echoes `request.id` as
+  the `x-request-id` response header, exposes it as `contextData.correlationId` in the request context,
+  and mints a distinct id per request.
+- `src/presentation/http/plugins/metrics.test.ts` — asserts the `onResponse` hook records the matched
+  route template (`/things/:id`), method, status, and a numeric `durationSeconds`, and labels unmatched
+  routes with the bounded `__unmatched__` sentinel instead of the raw URL.
+- `src/presentation/http/plugins/bull-board.test.ts` — covers `createBasicAuthValidator` (rejects
+  unconfigured credentials, rejects mismatches, accepts an exact match) and `bullBoardPlugin` itself:
+  wired through `@fastify/basic-auth` it challenges with `401` and stamps the dashboard's strict CSP
+  header on the response.
 - `src/presentation/http/schemas/pagination-schema.test.ts` — asserts `paginated()` validates a
   well-formed envelope and **strips unknown fields** from items.
+- `src/config/assert-production-secrets.test.ts` — covers the boot-time guard: a no-op outside
+  production; in production it passes when both secrets are ≥ 32 chars (including exactly at the
+  minimum), throws naming `COOKIE_SECRET` / `JWT_ACCESS_SECRET` when either is short or empty, names
+  every weak secret in one error, and includes the `openssl rand` remediation hint.
 - `src/shared/errors/app-error.test.ts` — covers the `AppError` base: `instanceof Error`, subclass
   `name`, `kind` / `code` / `message`, `isOperational` default and override, `details`, `timestamp`,
   `cause`, and `toJSON()` (including omission of absent `details`).
@@ -478,5 +533,5 @@ npm test
 Run only this feature's tests:
 
 ```bash
-npx vitest run src/presentation/http src/shared/errors src/shared/pagination.test.ts
+npx vitest run src/presentation/http src/shared/errors src/shared/pagination.test.ts src/config/assert-production-secrets.test.ts
 ```
