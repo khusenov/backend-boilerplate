@@ -1,4 +1,24 @@
 name: finflow
+x-app-environment: &app-environment
+  NODE_ENV: production
+  HOST: 0.0.0.0
+  PORT: '8000'
+  DATABASE_URL: mysql://finflow:finflow@mariadb:3306/finflow
+  REDIS_URL: redis://redis:6379
+  JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev-only-secret-change-me-min-32-characters}
+  COOKIE_SECRET: ${COOKIE_SECRET:-dev-only-cookie-secret-change-me}
+  WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
+  COOKIE_SECURE: 'false'
+  METRICS_ENABLED: 'true'
+  OTEL_ENABLED: 'true'
+  OTEL_SERVICE_NAME: finflow-api
+  OTEL_SERVICE_VERSION: '1.0.0'
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
+  BULL_BOARD_ENABLED: true
+  BULL_BOARD_PATH: /admin/queues
+  BULL_BOARD_USERNAME: admin
+  BULL_BOARD_PASSWORD: getfux-bywRi4-gevkor
+  BULL_BOARD_READONLY: true
 
 services:
   mariadb:
@@ -117,25 +137,22 @@ services:
     ports:
       - '8000:8000'
     environment:
-      NODE_ENV: production
-      HOST: 0.0.0.0
-      PORT: '8000'
-      DATABASE_URL: mysql://finflow:finflow@mariadb:3306/finflow
-      REDIS_URL: redis://redis:6379
-      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev-only-secret-change-me-min-32-characters}
-      COOKIE_SECRET: ${COOKIE_SECRET:-dev-only-cookie-secret-change-me}
-      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
-      COOKIE_SECURE: 'false'
-      METRICS_ENABLED: 'true'
-      OTEL_ENABLED: 'true'
-      OTEL_SERVICE_NAME: finflow-api
-      OTEL_SERVICE_VERSION: '1.0.0'
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
-      BULL_BOARD_ENABLED: true
-      BULL_BOARD_PATH: /admin/queues
-      BULL_BOARD_USERNAME: admin
-      BULL_BOARD_PASSWORD: getfux-bywRi4-gevkor
-      BULL_BOARD_READONLY: true
+      <<: *app-environment
+
+  worker:
+    build:
+      context: .
+      target: runtime
+    image: finflow-app
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 15s
+    command: ['node', '--import', './dist/instrumentation.js', 'dist/worker.js']
+    environment:
+      <<: *app-environment
+      OTEL_SERVICE_NAME: finflow-worker
+    healthcheck:
+      disable: true
     depends_on:
       mariadb:
         condition: service_healthy

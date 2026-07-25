@@ -1,14 +1,10 @@
 import './instrumentation';
 import { buildApp } from '@/presentation/http/app';
 import { env } from '@/config/env';
-import { OUTBOX_RELAY_JOB, OUTBOX_RELAY_INTERVAL_MS } from '@/infrastructure/events/outbox-relay';
-import {
-  DATA_RETENTION_JOB,
-  DATA_RETENTION_INTERVAL_MS,
-} from '@/application/retention/enforce-data-retention-job';
 import { createLoggerOptions } from '@/infrastructure/logging/logger-options';
-import { shutdownTracing } from '@/infrastructure/observability/tracing';
 import { toServiceIdentity } from '@/config/service-identity';
+import { shutdownTracing } from '@/infrastructure/observability/tracing';
+import { registerGracefulShutdown } from '@/infrastructure/lifecycle/graceful-shutdown';
 
 async function bootstrap(): Promise<void> {
   const app = await buildApp({
@@ -16,35 +12,10 @@ async function bootstrap(): Promise<void> {
     disableRequestLogging: env.isDevelopment,
   });
 
-  void app.diContainer.resolve('jobWorker');
-  const jobScheduler = app.diContainer.resolve('jobScheduler');
-  await jobScheduler.schedule(OUTBOX_RELAY_JOB, {}, { everyMs: OUTBOX_RELAY_INTERVAL_MS });
-  await jobScheduler.schedule(DATA_RETENTION_JOB, {}, { everyMs: DATA_RETENTION_INTERVAL_MS });
-
-  const shutdown = async (signal: string, code = 0): Promise<void> => {
-    app.log.info({ signal }, 'shutting down');
-    setTimeout(() => {
-      app.log.error('forced exit after shutdown timeout');
-      process.exit(1);
-    }, 10_000).unref();
-    await app.close();
-    await shutdownTracing().catch((err: unknown) =>
-      app.log.error({ err }, 'tracing shutdown failed'),
-    );
-    process.exit(code);
-  };
-
-  process.on('SIGINT', () => void shutdown('SIGINT'));
-  process.on('SIGTERM', () => void shutdown('SIGTERM'));
-
-  process.on('unhandledRejection', (error) => {
-    app.log.fatal({ err: error }, 'unhandled rejection');
-    void shutdown('unhandledRejection', 1);
-  });
-
-  process.on('uncaughtException', (error) => {
-    app.log.fatal({ err: error }, 'uncaught exception');
-    void shutdown('uncaughtException', 1);
+  registerGracefulShutdown({
+    logger: app.log,
+    dispose: () => app.close(),
+    flushTelemetry: shutdownTracing,
   });
 
   try {
