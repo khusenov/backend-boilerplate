@@ -1,4 +1,5 @@
 import { ValidationError } from '@/shared/errors';
+import { ValueObject } from '@/domain/shared/value-object';
 
 export class InvalidEmailError extends ValidationError {
   constructor(email: string) {
@@ -6,22 +7,27 @@ export class InvalidEmailError extends ValidationError {
   }
 }
 
-export class Email {
-  private constructor(public readonly value: string) {}
+interface EmailProps {
+  value: string;
+}
+
+export class Email extends ValueObject<EmailProps> {
+  private constructor(props: EmailProps) {
+    super(props);
+  }
 
   static create(raw: string): Email {
     const normalized = raw.trim().toLowerCase();
     const valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
     if (!valid) throw new InvalidEmailError(raw);
-    return new Email(normalized);
+    return new Email({ value: normalized });
   }
 
-  equals(other?: Email): boolean {
-    if (other === null || other === undefined) return false;
-    return this.value === other.value;
+  get value(): string {
+    return this.props.value;
   }
 
-  toString(): string {
-    return this.value;
+  override toString(): string {
+    return this.props.value;
   }
 }
