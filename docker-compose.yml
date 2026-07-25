@@ -97,6 +97,11 @@ services:
       OTEL_SERVICE_NAME: finflow-api
       OTEL_SERVICE_VERSION: '1.0.0'
       OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
+      BULL_BOARD_ENABLED: true
+      BULL_BOARD_PATH: /admin/queues
+      BULL_BOARD_USERNAME: admin
+      BULL_BOARD_PASSWORD: getfux-bywRi4-gevkor
+      BULL_BOARD_READONLY: true
     depends_on:
       mariadb:
         condition: service_healthy

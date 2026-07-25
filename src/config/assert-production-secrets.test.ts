@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { MIN_SECRET_LENGTH, assertProductionSecrets } from './assert-production-secrets';
+import {
+  MIN_SECRET_LENGTH,
+  assertProductionSecrets,
+  type SecretPolicyInput,
+} from './assert-production-secrets';
 
 const strongSecret = 'a'.repeat(MIN_SECRET_LENGTH + 8);
 
-function makeEnv(
-  overrides: Partial<{
-    isProduction: boolean;
-    COOKIE_SECRET: string;
-    JWT_ACCESS_SECRET: string;
-  }> = {},
-) {
+function makeEnv(overrides: Partial<SecretPolicyInput> = {}) {
   return {
     isProduction: true,
     COOKIE_SECRET: strongSecret,
     JWT_ACCESS_SECRET: strongSecret,
+    BULL_BOARD_ENABLED: false,
+    BULL_BOARD_PASSWORD: '',
     ...overrides,
   };
 }

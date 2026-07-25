@@ -76,6 +76,8 @@ import { RefreshTokenRetentionTask } from '@/infrastructure/persistence/refresh-
 import { OutboxRetentionTask } from '@/infrastructure/persistence/outbox-retention-task';
 import { EnforceDataRetentionJob } from '@/application/retention/enforce-data-retention-job';
 import type { RetentionTask } from '@/application/shared/ports/retention-task';
+import type { Queue } from 'bullmq';
+import { createDashboardQueue } from '@/infrastructure/jobs/dashboard-queue';
 
 declare module '@fastify/awilix' {
   interface Cradle {
@@ -117,6 +119,7 @@ declare module '@fastify/awilix' {
     jobQueue: JobQueue;
     jobWorker: JobWorker;
     jobScheduler: JobScheduler;
+    dashboardQueue: Queue;
     dataRetentionWindowMs: number;
     refreshTokenRetentionTask: RetentionTask;
     outboxRetentionTask: RetentionTask;
@@ -285,6 +288,9 @@ export function registerDependencies(
     )
       .singleton()
       .disposer((scheduler) => scheduler.close()),
+    dashboardQueue: asFunction(createDashboardQueue)
+      .singleton()
+      .disposer((queue) => queue.close()),
     metricsRecorder: asClass(PrometheusMetricsRecorder).singleton(),
     metricsExposition: aliasTo('metricsRecorder'),
 

@@ -38,6 +38,11 @@ export const env = cleanEnv(process.env, {
   OTEL_SERVICE_NAME: str({ default: 'finflow-api' }),
   OTEL_SERVICE_VERSION: str({ default: '0.0.0' }),
   OTEL_EXPORTER_OTLP_ENDPOINT: str({ default: 'http://localhost:4318' }),
+  BULL_BOARD_ENABLED: bool({ default: false }),
+  BULL_BOARD_PATH: str({ default: '/admin/queues' }),
+  BULL_BOARD_USERNAME: str({ default: 'admin' }),
+  BULL_BOARD_PASSWORD: str({ default: '' }),
+  BULL_BOARD_READONLY: bool({ default: true }),
 });
 
 export type Env = typeof env;

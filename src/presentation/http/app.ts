@@ -30,6 +30,7 @@ import { randomUUID } from 'node:crypto';
 import { metricsPlugin } from '@/presentation/http/plugins/metrics';
 import { metricsRoutes } from '@/presentation/http/routes/metrics-routes';
 import type { LoggerOptions } from 'pino';
+import { bullBoardPlugin } from '@/presentation/http/plugins/bull-board';
 
 export interface BuildAppOptions {
   loggerOptions: LoggerOptions;
@@ -80,6 +81,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     });
 
     await app.register(fastifySwaggerUi, { routePrefix: '/docs' });
+  }
+
+  if (env.BULL_BOARD_ENABLED) {
+    await app.register(bullBoardPlugin);
   }
 
   if (opts.rateLimit ?? true) {
