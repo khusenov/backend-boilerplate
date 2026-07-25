@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { CookieSerializeOptions } from '@fastify/cookie';
 import type { Env } from '@/config/env';
+import { API_V1_PREFIX } from '@/presentation/http/api-version';
 
 export const REFRESH_COOKIE = 'refreshToken';
 
@@ -9,7 +10,7 @@ function baseOptions(env: Env): CookieSerializeOptions {
     httpOnly: true,
     secure: env.COOKIE_SECURE,
     sameSite: 'strict',
-    path: '/auth',
+    path: `${API_V1_PREFIX}/auth`,
     signed: env.COOKIE_SECRET.length > 0,
   };
 }

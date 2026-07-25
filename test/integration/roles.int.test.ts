@@ -28,12 +28,12 @@ describe('/roles & /permissions (integration)', () => {
   });
 
   async function createRole(payload: Record<string, unknown>) {
-    return h.app.inject({ method: 'POST', url: '/roles', headers: auth, payload });
+    return h.app.inject({ method: 'POST', url: '/v1/roles', headers: auth, payload });
   }
 
   describe('GET /permissions', () => {
     it('returns the catalogue grouped by category (200)', async () => {
-      const res = await h.app.inject({ method: 'GET', url: '/permissions', headers: auth });
+      const res = await h.app.inject({ method: 'GET', url: '/v1/permissions', headers: auth });
 
       expect(res.statusCode).toBe(200);
       const groups = res.json<{ category: string; permissions: { key: string }[] }[]>();
@@ -52,7 +52,7 @@ describe('/roles & /permissions (integration)', () => {
     });
 
     it('rejects an unauthenticated request (401)', async () => {
-      const res = await h.app.inject({ method: 'GET', url: '/permissions' });
+      const res = await h.app.inject({ method: 'GET', url: '/v1/permissions' });
       expect(res.statusCode).toBe(401);
     });
   });
@@ -120,7 +120,7 @@ describe('/roles & /permissions (integration)', () => {
 
       const res = await h.app.inject({
         method: 'POST',
-        url: '/roles',
+        url: '/v1/roles',
         headers: plebAuth,
         payload: { name: 'Nope' },
       });
@@ -133,7 +133,7 @@ describe('/roles & /permissions (integration)', () => {
       await createRole({ name: 'Alpha' });
       await createRole({ name: 'Beta' });
 
-      const res = await h.app.inject({ method: 'GET', url: '/roles', headers: auth });
+      const res = await h.app.inject({ method: 'GET', url: '/v1/roles', headers: auth });
       expect(res.statusCode).toBe(200);
       const body = res.json<{ items: { name: string }[]; total: number }>();
       expect(body.items.map((r) => r.name)).toEqual(
@@ -147,13 +147,13 @@ describe('/roles & /permissions (integration)', () => {
       const created = await createRole({ name: 'Solo', permissions: ['roles.read'] });
       const { id } = created.json<{ id: string }>();
 
-      const ok = await h.app.inject({ method: 'GET', url: `/roles/${id}`, headers: auth });
+      const ok = await h.app.inject({ method: 'GET', url: `/v1/roles/${id}`, headers: auth });
       expect(ok.statusCode).toBe(200);
       expect(ok.json<{ permissions: string[] }>().permissions).toEqual(['roles.read']);
 
       const missing = await h.app.inject({
         method: 'GET',
-        url: `/roles/${randomUUID()}`,
+        url: `/v1/roles/${randomUUID()}`,
         headers: auth,
       });
       expect(missing.statusCode).toBe(404);
@@ -167,7 +167,7 @@ describe('/roles & /permissions (integration)', () => {
 
       const res = await h.app.inject({
         method: 'PATCH',
-        url: `/roles/${id}`,
+        url: `/v1/roles/${id}`,
         headers: auth,
         payload: { name: 'New', permissions: ['users.read', 'users.update'] },
       });
@@ -184,13 +184,13 @@ describe('/roles & /permissions (integration)', () => {
       const created = await createRole({ name: 'Temp' });
       const { id } = created.json<{ id: string }>();
 
-      const del = await h.app.inject({ method: 'DELETE', url: `/roles/${id}`, headers: auth });
+      const del = await h.app.inject({ method: 'DELETE', url: `/v1/roles/${id}`, headers: auth });
       expect(del.statusCode).toBe(204);
 
       const inDb = await h.prisma.role.findUnique({ where: { id } });
       expect(inDb?.deletedAt).not.toBeNull();
 
-      const get = await h.app.inject({ method: 'GET', url: `/roles/${id}`, headers: auth });
+      const get = await h.app.inject({ method: 'GET', url: `/v1/roles/${id}`, headers: auth });
       expect(get.statusCode).toBe(404);
     });
 
@@ -199,7 +199,7 @@ describe('/roles & /permissions (integration)', () => {
 
       const res = await h.app.inject({
         method: 'DELETE',
-        url: `/roles/${superadmin!.id}`,
+        url: `/v1/roles/${superadmin!.id}`,
         headers: auth,
       });
       expect(res.statusCode).toBe(403);
@@ -215,12 +215,12 @@ describe('/roles & /permissions (integration)', () => {
 
       const before = await authHeader(h.app, member);
       expect(
-        (await h.app.inject({ method: 'GET', url: '/users', headers: before })).statusCode,
+        (await h.app.inject({ method: 'GET', url: '/v1/users', headers: before })).statusCode,
       ).toBe(403);
 
       const assign = await h.app.inject({
         method: 'POST',
-        url: `/users/${member.id}/roles`,
+        url: `/v1/users/${member.id}/roles`,
         headers: auth,
         payload: { roleId },
       });
@@ -228,19 +228,19 @@ describe('/roles & /permissions (integration)', () => {
 
       const granted = await authHeader(h.app, member);
       expect(
-        (await h.app.inject({ method: 'GET', url: '/users', headers: granted })).statusCode,
+        (await h.app.inject({ method: 'GET', url: '/v1/users', headers: granted })).statusCode,
       ).toBe(200);
 
       const revoke = await h.app.inject({
         method: 'DELETE',
-        url: `/users/${member.id}/roles/${roleId}`,
+        url: `/v1/users/${member.id}/roles/${roleId}`,
         headers: auth,
       });
       expect(revoke.statusCode).toBe(204);
 
       const revoked = await authHeader(h.app, member);
       expect(
-        (await h.app.inject({ method: 'GET', url: '/users', headers: revoked })).statusCode,
+        (await h.app.inject({ method: 'GET', url: '/v1/users', headers: revoked })).statusCode,
       ).toBe(403);
     });
 
@@ -250,7 +250,7 @@ describe('/roles & /permissions (integration)', () => {
 
       const res = await h.app.inject({
         method: 'POST',
-        url: `/users/${member.id}/roles`,
+        url: `/v1/users/${member.id}/roles`,
         headers: auth,
         payload: { roleId: superadmin!.id },
       });

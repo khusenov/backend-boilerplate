@@ -71,10 +71,10 @@ describe('setRefreshCookie', () => {
       expect(cookie?.sameSite).toBe('Strict');
     });
 
-    it('sets Path=/auth', async () => {
+    it('sets Path=/v1/auth', async () => {
       const res = await app.inject({ method: 'GET', url: '/set' });
       const cookie = res.cookies.find((c) => c.name === REFRESH_COOKIE);
-      expect(cookie?.path).toBe('/auth');
+      expect(cookie?.path).toBe('/v1/auth');
     });
 
     it('sets Max-Age to REFRESH_TOKEN_TTL', async () => {
@@ -158,10 +158,10 @@ describe('clearRefreshCookie', () => {
     expect(cookie?.httpOnly).toBe(true);
   });
 
-  it('retains Path=/auth when clearing', async () => {
+  it('retains Path=/v1/auth when clearing', async () => {
     const res = await app.inject({ method: 'GET', url: '/clear' });
     const cookie = res.cookies.find((c) => c.name === REFRESH_COOKIE);
-    expect(cookie?.path).toBe('/auth');
+    expect(cookie?.path).toBe('/v1/auth');
   });
 });
 

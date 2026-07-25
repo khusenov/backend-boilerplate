@@ -27,7 +27,7 @@ describe('/auth (integration)', () => {
 
       const res = await h.app.inject({
         method: 'POST',
-        url: '/auth/login',
+        url: '/v1/auth/login',
         payload: { email: user.email, password: user.password },
       });
 
@@ -55,7 +55,7 @@ describe('/auth (integration)', () => {
       // httpOnly refresh cookie, scoped to the /auth path so it is only sent to
       // /auth/refresh and /auth/logout.
       const cookie = res.cookies.find((c) => c.name === 'refreshToken');
-      expect(cookie).toMatchObject({ httpOnly: true, path: '/auth' });
+      expect(cookie).toMatchObject({ httpOnly: true, path: '/v1/auth' });
       expect(cookie?.value.length).toBeGreaterThan(0);
 
       // The opaque refresh token is persisted (hashed) and tied to the user.
@@ -69,7 +69,7 @@ describe('/auth (integration)', () => {
 
       const res = await h.app.inject({
         method: 'POST',
-        url: '/auth/login',
+        url: '/v1/auth/login',
         payload: { email: user.email, password: 'definitely-wrong' },
       });
 
@@ -80,7 +80,7 @@ describe('/auth (integration)', () => {
     it('rejects an unknown email (401)', async () => {
       const res = await h.app.inject({
         method: 'POST',
-        url: '/auth/login',
+        url: '/v1/auth/login',
         payload: { email: 'nobody@finflow.test', password: 'whatever-123' },
       });
       expect(res.statusCode).toBe(401);
@@ -94,7 +94,7 @@ describe('/auth (integration)', () => {
 
       const res = await h.app.inject({
         method: 'POST',
-        url: '/auth/login',
+        url: '/v1/auth/login',
         payload: { email: user.email, password: user.password },
       });
       expect(res.statusCode).toBe(401);
@@ -103,7 +103,7 @@ describe('/auth (integration)', () => {
     it('rejects invalid input (400)', async () => {
       const res = await h.app.inject({
         method: 'POST',
-        url: '/auth/login',
+        url: '/v1/auth/login',
         payload: { email: 'not-an-email', password: '' },
       });
       expect(res.statusCode).toBe(400);
@@ -114,7 +114,7 @@ describe('/auth (integration)', () => {
     it('is public, creates a user with no roles, and returns 201', async () => {
       const res = await h.app.inject({
         method: 'POST',
-        url: '/auth/register',
+        url: '/v1/auth/register',
         payload: {
           firstName: 'Self',
           lastName: 'Service',
@@ -133,14 +133,14 @@ describe('/auth (integration)', () => {
 
       const loginRes = await h.app.inject({
         method: 'POST',
-        url: '/auth/login',
+        url: '/v1/auth/login',
         payload: { email: 'signup@finflow.test', password: 'password123' },
       });
       expect(loginRes.statusCode).toBe(200);
       const { accessToken } = loginRes.json<{ accessToken: string }>();
       const list = await h.app.inject({
         method: 'GET',
-        url: '/users',
+        url: '/v1/users',
         headers: { authorization: `Bearer ${accessToken}` },
       });
       expect(list.statusCode).toBe(403);
@@ -149,7 +149,7 @@ describe('/auth (integration)', () => {
     it('does not auto-login (no refresh cookie set)', async () => {
       const res = await h.app.inject({
         method: 'POST',
-        url: '/auth/register',
+        url: '/v1/auth/register',
         payload: {
           firstName: 'No',
           lastName: 'Login',
@@ -166,7 +166,7 @@ describe('/auth (integration)', () => {
 
       const res = await h.app.inject({
         method: 'POST',
-        url: '/auth/register',
+        url: '/v1/auth/register',
         payload: {
           firstName: 'A',
           lastName: 'B',
@@ -180,7 +180,7 @@ describe('/auth (integration)', () => {
     it('rejects invalid input (400)', async () => {
       const res = await h.app.inject({
         method: 'POST',
-        url: '/auth/register',
+        url: '/v1/auth/register',
         payload: { firstName: '', lastName: 'B', email: 'not-an-email', password: 'short' },
       });
       expect(res.statusCode).toBe(400);
@@ -193,7 +193,7 @@ describe('/auth (integration)', () => {
 
       const res = await h.app.inject({
         method: 'POST',
-        url: '/auth/refresh',
+        url: '/v1/auth/refresh',
         cookies: session.refreshCookies,
       });
 
@@ -208,7 +208,7 @@ describe('/auth (integration)', () => {
       // ...and the rotated cookie is itself usable, so the chain continues.
       const next = await h.app.inject({
         method: 'POST',
-        url: '/auth/refresh',
+        url: '/v1/auth/refresh',
         cookies: rotated,
       });
       expect(next.statusCode).toBe(200);
@@ -220,7 +220,7 @@ describe('/auth (integration)', () => {
       // First refresh rotates the original token -> `rotated`.
       const first = await h.app.inject({
         method: 'POST',
-        url: '/auth/refresh',
+        url: '/v1/auth/refresh',
         cookies: session.refreshCookies,
       });
       expect(first.statusCode).toBe(200);
@@ -229,7 +229,7 @@ describe('/auth (integration)', () => {
       // Replaying the now-used original token is treated as theft.
       const reuse = await h.app.inject({
         method: 'POST',
-        url: '/auth/refresh',
+        url: '/v1/auth/refresh',
         cookies: session.refreshCookies,
       });
       expect(reuse.statusCode).toBe(401);
@@ -239,14 +239,14 @@ describe('/auth (integration)', () => {
       // is now dead — the defining property of refresh-token theft detection.
       const afterReuse = await h.app.inject({
         method: 'POST',
-        url: '/auth/refresh',
+        url: '/v1/auth/refresh',
         cookies: rotated,
       });
       expect(afterReuse.statusCode).toBe(401);
     });
 
     it('rejects a refresh with no token at all (401)', async () => {
-      const res = await h.app.inject({ method: 'POST', url: '/auth/refresh' });
+      const res = await h.app.inject({ method: 'POST', url: '/v1/auth/refresh' });
       expect(res.statusCode).toBe(401);
     });
 
@@ -255,7 +255,7 @@ describe('/auth (integration)', () => {
       // any stored hash. Exercises the body-token path as a side effect.
       const res = await h.app.inject({
         method: 'POST',
-        url: '/auth/refresh',
+        url: '/v1/auth/refresh',
         payload: { refreshToken: 'not-a-real-token' },
       });
       expect(res.statusCode).toBe(401);
@@ -269,7 +269,7 @@ describe('/auth (integration)', () => {
 
       const res = await h.app.inject({
         method: 'POST',
-        url: '/auth/logout',
+        url: '/v1/auth/logout',
         cookies: session.refreshCookies,
       });
       expect(res.statusCode).toBe(204);
@@ -281,14 +281,14 @@ describe('/auth (integration)', () => {
       // The revoked token can no longer be refreshed.
       const refresh = await h.app.inject({
         method: 'POST',
-        url: '/auth/refresh',
+        url: '/v1/auth/refresh',
         cookies: session.refreshCookies,
       });
       expect(refresh.statusCode).toBe(401);
     });
 
     it('is a no-op when no token is supplied (204)', async () => {
-      const res = await h.app.inject({ method: 'POST', url: '/auth/logout' });
+      const res = await h.app.inject({ method: 'POST', url: '/v1/auth/logout' });
       expect(res.statusCode).toBe(204);
     });
   });
@@ -300,7 +300,7 @@ describe('/auth (integration)', () => {
 
       const res = await h.app.inject({
         method: 'GET',
-        url: '/auth/me',
+        url: '/v1/auth/me',
         headers: session.authHeader,
       });
 
@@ -311,14 +311,14 @@ describe('/auth (integration)', () => {
     });
 
     it('rejects a request with no token (401)', async () => {
-      const res = await h.app.inject({ method: 'GET', url: '/auth/me' });
+      const res = await h.app.inject({ method: 'GET', url: '/v1/auth/me' });
       expect(res.statusCode).toBe(401);
     });
 
     it('rejects a malformed bearer token (401)', async () => {
       const res = await h.app.inject({
         method: 'GET',
-        url: '/auth/me',
+        url: '/v1/auth/me',
         headers: { authorization: 'Bearer not-a-jwt' },
       });
       expect(res.statusCode).toBe(401);
@@ -335,7 +335,7 @@ describe('/auth (integration)', () => {
 
       const me1 = await h.app.inject({
         method: 'GET',
-        url: '/auth/me',
+        url: '/v1/auth/me',
         headers: session.authHeader,
       });
       expect(me1.statusCode).toBe(200);
@@ -343,7 +343,7 @@ describe('/auth (integration)', () => {
 
       const refreshed = await h.app.inject({
         method: 'POST',
-        url: '/auth/refresh',
+        url: '/v1/auth/refresh',
         cookies: session.refreshCookies,
       });
       expect(refreshed.statusCode).toBe(200);
@@ -352,21 +352,21 @@ describe('/auth (integration)', () => {
 
       const me2 = await h.app.inject({
         method: 'GET',
-        url: '/auth/me',
+        url: '/v1/auth/me',
         headers: { authorization: `Bearer ${newAccessToken}` },
       });
       expect(me2.statusCode).toBe(200);
 
       const out = await h.app.inject({
         method: 'POST',
-        url: '/auth/logout',
+        url: '/v1/auth/logout',
         cookies: rotated,
       });
       expect(out.statusCode).toBe(204);
 
       const refreshAfterLogout = await h.app.inject({
         method: 'POST',
-        url: '/auth/refresh',
+        url: '/v1/auth/refresh',
         cookies: rotated,
       });
       expect(refreshAfterLogout.statusCode).toBe(401);

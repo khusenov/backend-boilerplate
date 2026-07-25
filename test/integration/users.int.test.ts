@@ -37,7 +37,7 @@ describe('/users (integration)', () => {
     it('creates and persists a user (201)', async () => {
       const res = await h.app.inject({
         method: 'POST',
-        url: '/users',
+        url: '/v1/users',
         headers: auth,
         payload: {
           firstName: 'John',
@@ -62,7 +62,7 @@ describe('/users (integration)', () => {
       try {
         const res = await h.app.inject({
           method: 'POST',
-          url: '/users',
+          url: '/v1/users',
           headers: auth,
           payload: {
             firstName: 'Eve',
@@ -93,7 +93,7 @@ describe('/users (integration)', () => {
     it('rejects an unauthenticated request (401)', async () => {
       const res = await h.app.inject({
         method: 'POST',
-        url: '/users',
+        url: '/v1/users',
         payload: {
           firstName: 'John',
           lastName: 'Doe',
@@ -107,7 +107,7 @@ describe('/users (integration)', () => {
     it('rejects a duplicate email (409)', async () => {
       const res = await h.app.inject({
         method: 'POST',
-        url: '/users',
+        url: '/v1/users',
         headers: auth,
         // actor.email is already persisted by the beforeEach hook.
         payload: { firstName: 'A', lastName: 'B', email: actor.email, password: 'password123' },
@@ -118,7 +118,7 @@ describe('/users (integration)', () => {
     it('rejects invalid input (400)', async () => {
       const res = await h.app.inject({
         method: 'POST',
-        url: '/users',
+        url: '/v1/users',
         headers: auth,
         payload: { firstName: '', lastName: 'B', email: 'not-an-email', password: 'x' },
       });
@@ -132,7 +132,7 @@ describe('/users (integration)', () => {
       await seedUser(h.app);
       await seedUser(h.app);
 
-      const res = await h.app.inject({ method: 'GET', url: '/users', headers: auth });
+      const res = await h.app.inject({ method: 'GET', url: '/v1/users', headers: auth });
 
       expect(res.statusCode).toBe(200);
       const body = res.json<{
@@ -164,7 +164,7 @@ describe('/users (integration)', () => {
 
       const first = await h.app.inject({
         method: 'GET',
-        url: '/users?page=1&pageSize=2',
+        url: '/v1/users?page=1&pageSize=2',
         headers: auth,
       });
       expect(first.statusCode).toBe(200);
@@ -179,7 +179,7 @@ describe('/users (integration)', () => {
 
       const last = await h.app.inject({
         method: 'GET',
-        url: '/users?page=3&pageSize=2',
+        url: '/v1/users?page=3&pageSize=2',
         headers: auth,
       });
       const lastBody = last.json<{ items: unknown[]; hasNext: boolean; hasPrev: boolean }>();
@@ -188,7 +188,7 @@ describe('/users (integration)', () => {
     });
 
     it('rejects an unauthenticated request (401)', async () => {
-      const res = await h.app.inject({ method: 'GET', url: '/users' });
+      const res = await h.app.inject({ method: 'GET', url: '/v1/users' });
       expect(res.statusCode).toBe(401);
     });
   });
@@ -199,7 +199,7 @@ describe('/users (integration)', () => {
 
       const res = await h.app.inject({
         method: 'GET',
-        url: `/users/${target.id}`,
+        url: `/v1/users/${target.id}`,
         headers: auth,
       });
 
@@ -212,26 +212,26 @@ describe('/users (integration)', () => {
     it('returns 404 for a well-formed but unknown id', async () => {
       const res = await h.app.inject({
         method: 'GET',
-        url: `/users/${randomUUID()}`,
+        url: `/v1/users/${randomUUID()}`,
         headers: auth,
       });
       expect(res.statusCode).toBe(404);
     });
 
     it('returns 400 for a malformed id', async () => {
-      const res = await h.app.inject({ method: 'GET', url: '/users/not-a-uuid', headers: auth });
+      const res = await h.app.inject({ method: 'GET', url: '/v1/users/not-a-uuid', headers: auth });
       expect(res.statusCode).toBe(400);
     });
 
     it('rejects an unauthenticated request (401)', async () => {
-      const res = await h.app.inject({ method: 'GET', url: `/users/${randomUUID()}` });
+      const res = await h.app.inject({ method: 'GET', url: `/v1/users/${randomUUID()}` });
       expect(res.statusCode).toBe(401);
     });
 
     it('returns only the public user contract (no internal fields)', async () => {
       const created = await h.app.inject({
         method: 'POST',
-        url: '/users',
+        url: '/v1/users',
         headers: auth,
         payload: {
           firstName: 'Grace',
@@ -242,7 +242,7 @@ describe('/users (integration)', () => {
       });
       const { id } = created.json<{ id: string }>();
 
-      const res = await h.app.inject({ method: 'GET', url: `/users/${id}`, headers: auth });
+      const res = await h.app.inject({ method: 'GET', url: `/v1/users/${id}`, headers: auth });
 
       expect(res.statusCode).toBe(200);
       const body = res.json<Record<string, unknown>>();
@@ -269,7 +269,7 @@ describe('/users (integration)', () => {
 
       const res = await h.app.inject({
         method: 'PATCH',
-        url: `/users/${target.id}`,
+        url: `/v1/users/${target.id}`,
         headers: auth,
         payload: { firstName: 'New' },
       });
@@ -287,7 +287,7 @@ describe('/users (integration)', () => {
 
       const res = await h.app.inject({
         method: 'PATCH',
-        url: `/users/${target.id}`,
+        url: `/v1/users/${target.id}`,
         headers: auth,
         payload: { email: 'after@finflow.test' },
       });
@@ -304,7 +304,7 @@ describe('/users (integration)', () => {
 
       const res = await h.app.inject({
         method: 'PATCH',
-        url: `/users/${target.id}`,
+        url: `/v1/users/${target.id}`,
         headers: auth,
         // actor already owns this email.
         payload: { email: actor.email },
@@ -315,7 +315,7 @@ describe('/users (integration)', () => {
     it('returns 404 for a well-formed but unknown id', async () => {
       const res = await h.app.inject({
         method: 'PATCH',
-        url: `/users/${randomUUID()}`,
+        url: `/v1/users/${randomUUID()}`,
         headers: auth,
         payload: { firstName: 'Nope' },
       });
@@ -327,7 +327,7 @@ describe('/users (integration)', () => {
 
       const res = await h.app.inject({
         method: 'PATCH',
-        url: `/users/${target.id}`,
+        url: `/v1/users/${target.id}`,
         headers: auth,
         payload: { email: 'not-an-email' },
       });
@@ -337,7 +337,7 @@ describe('/users (integration)', () => {
     it('rejects an unauthenticated request (401)', async () => {
       const res = await h.app.inject({
         method: 'PATCH',
-        url: `/users/${randomUUID()}`,
+        url: `/v1/users/${randomUUID()}`,
         payload: { firstName: 'X' },
       });
       expect(res.statusCode).toBe(401);
@@ -350,7 +350,7 @@ describe('/users (integration)', () => {
 
       const res = await h.app.inject({
         method: 'DELETE',
-        url: `/users/${target.id}`,
+        url: `/v1/users/${target.id}`,
         headers: auth,
       });
       expect(res.statusCode).toBe(204);
@@ -363,7 +363,7 @@ describe('/users (integration)', () => {
       // Reads no longer surface the user.
       const getRes = await h.app.inject({
         method: 'GET',
-        url: `/users/${target.id}`,
+        url: `/v1/users/${target.id}`,
         headers: auth,
       });
       expect(getRes.statusCode).toBe(404);
@@ -371,9 +371,9 @@ describe('/users (integration)', () => {
 
     it('excludes soft-deleted users from the list', async () => {
       const target = await seedUser(h.app); // actor + target = 2 persisted users
-      await h.app.inject({ method: 'DELETE', url: `/users/${target.id}`, headers: auth });
+      await h.app.inject({ method: 'DELETE', url: `/v1/users/${target.id}`, headers: auth });
 
-      const res = await h.app.inject({ method: 'GET', url: '/users', headers: auth });
+      const res = await h.app.inject({ method: 'GET', url: '/v1/users', headers: auth });
       const body = res.json<{ total: number; items: { id: string }[] }>();
       expect(body.total).toBe(1); // only the actor remains visible
       expect(body.items.map((u) => u.id)).not.toContain(target.id);
@@ -382,7 +382,7 @@ describe('/users (integration)', () => {
     it('returns 404 for a well-formed but unknown id', async () => {
       const res = await h.app.inject({
         method: 'DELETE',
-        url: `/users/${randomUUID()}`,
+        url: `/v1/users/${randomUUID()}`,
         headers: auth,
       });
       expect(res.statusCode).toBe(404);
@@ -393,21 +393,21 @@ describe('/users (integration)', () => {
 
       const first = await h.app.inject({
         method: 'DELETE',
-        url: `/users/${target.id}`,
+        url: `/v1/users/${target.id}`,
         headers: auth,
       });
       expect(first.statusCode).toBe(204);
 
       const second = await h.app.inject({
         method: 'DELETE',
-        url: `/users/${target.id}`,
+        url: `/v1/users/${target.id}`,
         headers: auth,
       });
       expect(second.statusCode).toBe(404);
     });
 
     it('rejects an unauthenticated request (401)', async () => {
-      const res = await h.app.inject({ method: 'DELETE', url: `/users/${randomUUID()}` });
+      const res = await h.app.inject({ method: 'DELETE', url: `/v1/users/${randomUUID()}` });
       expect(res.statusCode).toBe(401);
     });
   });
@@ -417,7 +417,7 @@ describe('/users (integration)', () => {
       const pleb = await seedUser(h.app);
       const plebAuth = await authHeader(h.app, pleb);
 
-      const res = await h.app.inject({ method: 'GET', url: '/users', headers: plebAuth });
+      const res = await h.app.inject({ method: 'GET', url: '/v1/users', headers: plebAuth });
       expect(res.statusCode).toBe(403);
       expect(res.json<{ error: { code: string } }>().error.code).toBe('FORBIDDEN');
     });
@@ -427,12 +427,12 @@ describe('/users (integration)', () => {
       await seedRoleWithPermissions(h.app, reader.id, ['users.read']);
       const readerAuth = await authHeader(h.app, reader);
 
-      const list = await h.app.inject({ method: 'GET', url: '/users', headers: readerAuth });
+      const list = await h.app.inject({ method: 'GET', url: '/v1/users', headers: readerAuth });
       expect(list.statusCode).toBe(200);
 
       const create = await h.app.inject({
         method: 'POST',
-        url: '/users',
+        url: '/v1/users',
         headers: readerAuth,
         payload: {
           firstName: 'A',
@@ -450,14 +450,14 @@ describe('/users (integration)', () => {
 
       const get = await h.app.inject({
         method: 'GET',
-        url: `/users/${self.id}`,
+        url: `/v1/users/${self.id}`,
         headers: selfAuth,
       });
       expect(get.statusCode).toBe(200);
 
       const patch = await h.app.inject({
         method: 'PATCH',
-        url: `/users/${self.id}`,
+        url: `/v1/users/${self.id}`,
         headers: selfAuth,
         payload: { firstName: 'Renamed' },
       });
@@ -471,7 +471,7 @@ describe('/users (integration)', () => {
 
       const res = await h.app.inject({
         method: 'GET',
-        url: `/users/${other.id}`,
+        url: `/v1/users/${other.id}`,
         headers: selfAuth,
       });
       expect(res.statusCode).toBe(403);

@@ -10,14 +10,10 @@ import {
   serializerCompiler,
   validatorCompiler,
 } from 'fastify-type-provider-zod';
-import { userRoutes } from '@/presentation/http/routes/user-routes';
 import { fastifyCors } from '@fastify/cors';
 import { env } from '@/config/env';
 import { fastifyCookie } from '@fastify/cookie';
 import { authPlugin } from '@/presentation/http/plugins/authenticate';
-import { authRoutes } from '@/presentation/http/routes/auth-routes';
-import { roleRoutes } from '@/presentation/http/routes/role-routes';
-import { permissionRoutes } from '@/presentation/http/routes/permission-routes';
 import { fastifyHelmet } from '@fastify/helmet';
 import { fastifyRateLimit } from '@fastify/rate-limit';
 import { helmetOptions, rateLimitOptions } from '@/presentation/http/security';
@@ -31,6 +27,8 @@ import { metricsPlugin } from '@/presentation/http/plugins/metrics';
 import { metricsRoutes } from '@/presentation/http/routes/metrics-routes';
 import type { LoggerOptions } from 'pino';
 import { bullBoardPlugin } from '@/presentation/http/plugins/bull-board';
+import { API_V1_PREFIX } from '@/presentation/http/api-version';
+import { apiV1Routes } from '@/presentation/http/routes/api-v1-routes';
 
 export interface BuildAppOptions {
   loggerOptions: LoggerOptions;
@@ -96,10 +94,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
 
   await app.register(healthRoutes, { prefix: '/health' });
   if (env.METRICS_ENABLED) await app.register(metricsRoutes, { prefix: '/metrics' });
-  await app.register(authRoutes, { prefix: '/auth' });
-  await app.register(userRoutes, { prefix: '/users' });
-  await app.register(roleRoutes, { prefix: '/roles' });
-  await app.register(permissionRoutes, { prefix: '/permissions' });
+  await app.register(apiV1Routes, { prefix: API_V1_PREFIX });
 
   return app;
 }

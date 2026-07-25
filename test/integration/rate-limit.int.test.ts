@@ -38,10 +38,14 @@ describe('distributed rate limiting', () => {
     });
 
     it('trips the auth bucket at the limit and stores the counter in redis', async () => {
-      let last = await app.inject({ method: 'POST', url: '/auth/login', payload: badCredentials });
+      let last = await app.inject({
+        method: 'POST',
+        url: '/v1/auth/login',
+        payload: badCredentials,
+      });
       const statuses = [last.statusCode];
       for (let attempt = 1; attempt <= AUTH_LIMIT; attempt += 1) {
-        last = await app.inject({ method: 'POST', url: '/auth/login', payload: badCredentials });
+        last = await app.inject({ method: 'POST', url: '/v1/auth/login', payload: badCredentials });
         statuses.push(last.statusCode);
       }
 
@@ -69,7 +73,7 @@ describe('distributed rate limiting', () => {
       app.diContainer.cradle.rateLimitRedis.disconnect();
       const response = await app.inject({
         method: 'POST',
-        url: '/auth/login',
+        url: '/v1/auth/login',
         payload: badCredentials,
       });
       expect(response.statusCode).toBe(401);

@@ -91,7 +91,7 @@ export function refreshCookiesFrom(res: {
 export async function login(app: FastifyInstance, user: SeededUser): Promise<AuthSession> {
   const res = await app.inject({
     method: 'POST',
-    url: '/auth/login',
+    url: '/v1/auth/login',
     payload: { email: user.email, password: user.password },
   });
   if (res.statusCode !== 200)
