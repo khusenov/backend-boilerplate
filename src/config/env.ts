@@ -6,6 +6,7 @@ export const env = cleanEnv(process.env, {
   NODE_ENV: str({ choices: ['development', 'test', 'production'], default: 'development' }),
   HOST: host({ default: '0.0.0.0' }),
   PORT: port({ default: 8000 }),
+  WORKER_PORT: port({ default: 8001 }),
   LOG_LEVEL: str({
     choices: ['fatal', 'error', 'warn', 'info', 'debug', 'trace'],
     default: 'info',

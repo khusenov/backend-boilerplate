@@ -92,7 +92,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     });
   }
 
-  await app.register(healthRoutes, { prefix: '/health' });
+  await app.register(healthRoutes, {
+    prefix: '/health',
+    healthCheck: diContainer.cradle.healthCheck,
+  });
   if (env.METRICS_ENABLED) await app.register(metricsRoutes, { prefix: '/metrics' });
   await app.register(apiV1Routes, { prefix: API_V1_PREFIX });
 

@@ -91,7 +91,7 @@ jobs:
 
       - name: Boot the stack and wait for the app to become healthy
         timeout-minutes: 6
-        run: docker compose up --detach --wait --wait-timeout 180 app
+        run: docker compose up --detach --wait --wait-timeout 180 app worker
 
       - name: Assert the published port serves liveness
         run: >
@@ -104,6 +104,18 @@ jobs:
           curl --fail --show-error --silent
           --retry 30 --retry-delay 2 --retry-all-errors
           http://localhost:8000/health/ready
+
+      - name: Assert the worker serves liveness
+        run: >
+          curl --fail --show-error --silent
+          --retry 30 --retry-delay 2 --retry-all-errors
+          http://localhost:8001/health/live
+
+      - name: Assert the worker readiness (its own MariaDB + Redis connectivity)
+        run: >
+          curl --fail --show-error --silent
+          --retry 30 --retry-delay 2 --retry-all-errors
+          http://localhost:8001/health/ready
 
       - name: Dump container logs on failure
         if: failure()
