@@ -9,3 +9,10 @@ datasources:
     isDefault: true
     jsonData:
       httpMethod: GET
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: '-1h'
+        spanEndTimeShift: '1h'
+        filterByTraceID: false
+        customQuery: true
+        query: '{compose_service="app"} | trace_id = `$${__span.traceId}`'

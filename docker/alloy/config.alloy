@@ -1,0 +1,72 @@
+// Discover every container the Docker daemon knows about.
+discovery.docker "finflow" {
+  host = "unix:///var/run/docker.sock"
+}
+
+// Keep only this compose project's containers and shape their labels.
+discovery.relabel "finflow" {
+  targets = discovery.docker.finflow.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = "finflow"
+    action        = "keep"
+  }
+  // Don't ingest the observability tools' own logs (avoids a self-feeding loop).
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "alloy|loki|grafana|tempo"
+    action        = "drop"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "compose_service"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+// Read the stdout/stderr of the discovered containers.
+loki.source.docker "finflow" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.finflow.targets
+  relabel_rules = discovery.relabel.finflow.rules
+  forward_to    = [loki.process.finflow.receiver]
+}
+
+// Parse the app's JSON lines; non-JSON lines (mariadb, redis) pass through untouched.
+loki.process "finflow" {
+  stage.json {
+    expressions = {
+      level    = "level",
+      service  = "service",
+      trace_id = "trace_id",
+    }
+  }
+
+  // Low-cardinality fields become indexed labels.
+  stage.labels {
+    values = {
+      level   = "",
+      service = "",
+    }
+  }
+
+  // High-cardinality trace_id is stored as structured metadata, never a label.
+  stage.structured_metadata {
+    values = {
+      trace_id = "",
+    }
+  }
+
+  forward_to = [loki.write.finflow.receiver]
+}
+
+loki.write "finflow" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

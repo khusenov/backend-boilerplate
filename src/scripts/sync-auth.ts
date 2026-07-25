@@ -3,10 +3,11 @@ import { registerDependencies } from '@/container';
 import { createBaseLogger } from '@/infrastructure/logging/create-base-logger';
 import { env } from '@/config/env';
 import type { SyncAuthorization } from '@/application/authorization/sync-authorization';
+import { toServiceIdentity } from '@/config/service-identity';
 
 async function main(): Promise<void> {
   const container = createContainer({ injectionMode: InjectionMode.PROXY, strict: true });
-  registerDependencies(container, createBaseLogger(env.LOG_LEVEL));
+  registerDependencies(container, createBaseLogger(env.LOG_LEVEL, toServiceIdentity(env)));
 
   try {
     const sync = container.resolve<SyncAuthorization>('syncAuthorization');

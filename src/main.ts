@@ -8,10 +8,11 @@ import {
 } from '@/application/retention/enforce-data-retention-job';
 import { createLoggerOptions } from '@/infrastructure/logging/logger-options';
 import { shutdownTracing } from '@/infrastructure/observability/tracing';
+import { toServiceIdentity } from '@/config/service-identity';
 
 async function bootstrap(): Promise<void> {
   const app = await buildApp({
-    loggerOptions: createLoggerOptions(env.LOG_LEVEL),
+    loggerOptions: createLoggerOptions(env.LOG_LEVEL, toServiceIdentity(env)),
     disableRequestLogging: env.isDevelopment,
   });
 

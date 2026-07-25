@@ -1,5 +1,6 @@
 import type { LoggerOptions } from 'pino';
 import { isSpanContextValid, trace } from '@opentelemetry/api';
+import type { ServiceIdentity } from '../../config/service-identity';
 
 export const REDACT_CENSOR = '[Redacted]';
 
@@ -21,9 +22,23 @@ export const REDACT_PATHS = [
   '*.secret',
 ] as const;
 
-export function createLoggerOptions(level: string): LoggerOptions {
+export function createLoggerOptions(level: string, identity?: ServiceIdentity): LoggerOptions {
   return {
     level,
+    ...(identity
+      ? {
+          base: {
+            service: identity.service,
+            env: identity.environment,
+            version: identity.version,
+          },
+        }
+      : {}),
+    formatters: {
+      level(label) {
+        return { level: label };
+      },
+    },
     mixin: traceCorrelationMixin,
     redact: {
       paths: [...REDACT_PATHS],
