@@ -10,6 +10,12 @@ export const OUTBOX_RELAY_JOB = 'outbox.relay';
 export const OUTBOX_RELAY_INTERVAL_MS = 5_000;
 const RELAY_BATCH_SIZE = 100;
 
+interface PendingOutboxMessage {
+  readonly id: string;
+  readonly eventName: string;
+  readonly payload: string;
+}
+
 export interface OutboxRelayDeps {
   prisma: PrismaClient;
   jobQueue: JobQueue;
@@ -32,35 +38,60 @@ export class OutboxRelay implements JobHandler {
   }
 
   async handle(): Promise<void> {
-    const pending = await this.prisma.outboxMessage.findMany({
+    const pending = await this.findPending();
+
+    const publishedIds: string[] = [];
+    for (const message of pending) {
+      if (await this.tryRelay(message)) {
+        publishedIds.push(message.id);
+      }
+    }
+
+    await this.markPublished(publishedIds);
+  }
+
+  private findPending(): Promise<PendingOutboxMessage[]> {
+    return this.prisma.outboxMessage.findMany({
       where: { publishedAt: null },
       orderBy: { occurredAt: 'asc' },
       take: RELAY_BATCH_SIZE,
     });
+  }
 
-    const publishedIds: string[] = [];
-    for (const message of pending) {
-      try {
-        const payload: DispatchDomainEventPayload = {
-          eventName: message.eventName,
-          payload: message.payload,
-        };
-        await this.jobQueue.enqueue(DISPATCH_DOMAIN_EVENT_JOB, payload);
-        publishedIds.push(message.id);
-      } catch (error) {
-        this.logger.error('Failed to relay outbox message', {
-          outboxMessageId: message.id,
-          eventName: message.eventName,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-
-    if (publishedIds.length > 0) {
-      await this.prisma.outboxMessage.updateMany({
-        where: { id: { in: publishedIds } },
-        data: { publishedAt: this.clock.now() },
+  private async tryRelay(message: PendingOutboxMessage): Promise<boolean> {
+    const payload: DispatchDomainEventPayload = {
+      eventName: message.eventName,
+      payload: message.payload,
+    };
+    try {
+      // Rows are marked published only after a successful enqueue, so a crash in between
+      // replays the batch on the next tick. The row id as deduplication key makes that
+      // replay a no-op instead of a second delivery.
+      await this.jobQueue.enqueue(DISPATCH_DOMAIN_EVENT_JOB, payload, {
+        deduplicationKey: message.id,
       });
+      return true;
+    } catch (error) {
+      this.reportRelayFailure(message, error);
+      return false;
     }
+  }
+
+  private reportRelayFailure(message: PendingOutboxMessage, error: unknown): void {
+    this.logger.error('Failed to relay outbox message', {
+      outboxMessageId: message.id,
+      eventName: message.eventName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  private async markPublished(ids: string[]): Promise<void> {
+    if (ids.length === 0) {
+      return;
+    }
+    await this.prisma.outboxMessage.updateMany({
+      where: { id: { in: ids } },
+      data: { publishedAt: this.clock.now() },
+    });
   }
 }

@@ -55,14 +55,20 @@ nothing in the request path waits on a handler.
 
 **Delivery half — asynchronous, at-least-once, driven by jobs**
 
-4. **Relaying.** At bootstrap, `main.ts` schedules a repeatable `OUTBOX_RELAY_JOB` (`'outbox.relay'`) to
-   run every `OUTBOX_RELAY_INTERVAL_MS` (`5_000` ms) via the `JobScheduler`. Each tick runs
-   `OutboxRelay.handle`, which reads up to `RELAY_BATCH_SIZE` (`100`) unpublished rows
+4. **Relaying.** At bootstrap, `src/start-worker.ts` schedules a repeatable `OUTBOX_RELAY_JOB`
+   (`'outbox.relay'`) to run every `OUTBOX_RELAY_INTERVAL_MS` (`5_000` ms) via the `JobScheduler`. Each
+   tick runs `OutboxRelay.handle`, which reads up to `RELAY_BATCH_SIZE` (`100`) unpublished rows
    (`where: { publishedAt: null }`, oldest first by `occurredAt`), and for each row enqueues a
    `DISPATCH_DOMAIN_EVENT_JOB` (`'domain-event.dispatch'`) carrying `{ eventName, payload }` onto the
-   `JobQueue`. It collects the ids it successfully enqueued and, in one `updateMany`, stamps their
-   `publishedAt`. A row whose enqueue throws is logged and left unpublished, so the next tick retries it —
-   nothing is dropped.
+   `JobQueue` — **passing the outbox row's own id as the job's `deduplicationKey`**, so that a replayed
+   batch is delivered once rather than twice. It collects the ids it successfully enqueued and, in one
+   `updateMany`, stamps their `publishedAt`. A row whose enqueue throws is logged and left unpublished,
+   so the next tick retries it — nothing is dropped.
+
+   Note what `publishedAt` means: **handed to the queue**, not **processed**. The queue's terminal state
+   is the record of processing. The row id doubles as the correlation key — because it becomes part of
+   the BullMQ job id, a dead-lettered job traces back to the exact row that produced it.
+
 5. **Dispatching.** The `JobWorker` picks up each `DISPATCH_DOMAIN_EVENT_JOB` and runs
    `DispatchDomainEventJobHandler.handle`. It rebuilds the concrete event from its stored JSON via
    `DomainEventSerializer.deserialize(eventName, payload)` — which looks the `eventName` up in the
@@ -79,8 +85,9 @@ Failure paths that matter:
   ever written either. An event can never escape for a change that failed to persist.
 - **Relay enqueue failure.** If the queue is unavailable, `OutboxRelay` marks only the rows it actually
   enqueued, so unenqueued rows remain `publishedAt = null` and are retried on the next tick — the retry
-  mechanism that makes delivery **at-least-once** (and so, on a crash-replay, possibly more than once),
-  never at-most-once.
+  mechanism that makes delivery **at-least-once**, never at-most-once. A crash between the enqueue and
+  the `updateMany` still replays the batch, but the row id carried as `deduplicationKey` makes that
+  replay a no-op within the queue's completed-job retention window rather than a second delivery.
 - **Handler failure.** `DispatchDomainEventJobHandler` does **not** swallow handler errors; a throw
   propagates out of the job, so BullMQ retries it on the shared queue's retry policy — `attempts: 3`
   with exponential backoff (first retry after ~1 s). Once those attempts are exhausted the job comes to
@@ -352,11 +359,30 @@ No relay, worker, or dispatch-handler change is needed — they are event-agnost
   (an unscheduled relay leaves events stranded as unpublished rows).
 - **At-least-once delivery, so handlers must be idempotent.** `OutboxRelay` stamps a row's `publishedAt`
   only after its enqueue succeeds, and `DispatchDomainEventJobHandler` lets handler errors propagate so
-  BullMQ retries the job. This guarantees delivery even across crashes, but the same event can be
-  delivered more than once (e.g. the relay enqueues a job then dies before its `updateMany`; or a job is
-  retried after one of several handlers already succeeded). Guaranteeing delivery is worth far more than
-  avoiding a duplicate, so the contract pushes idempotency onto the handler rather than attempting
-  unsupportable exactly-once semantics.
+  BullMQ retries the job. This guarantees delivery even across crashes, but the same event can still be
+  delivered more than once — e.g. a job retried after one of several handlers already succeeded.
+  Guaranteeing delivery is worth far more than avoiding a duplicate, so the contract pushes idempotency
+  onto the handler rather than attempting unsupportable exactly-once semantics.
+
+  The specific race in that list — the relay enqueues a job then dies before its `updateMany` — is now
+  **suppressed**, because the relay passes the outbox row id as the enqueue's `deduplicationKey` and
+  BullMQ treats a repeat `add` under a known job id as a no-op. This does not buy exactly-once, which
+  would need a distributed transaction across Redis and MariaDB; it makes at-least-once _safe_. Two
+  limits keep the handler obligation alive:
+
+  - **The suppression window is bounded by completed-job retention** (1 hour / 1 000 entries). It covers
+    crash-restart replay — seconds — but under a burst of more than 1 000 completed jobs in an hour the
+    oldest ids are evicted and a replay of those rows would be delivered twice. See the retention note in
+    [background-jobs.md](./background-jobs.md) before trimming those settings to reclaim Redis memory.
+  - **A dead-lettered job suppresses its own redelivery.** Retained _failed_ jobs are also known to the
+    queue, so if the relay crashes before `updateMany` and the original job has already dead-lettered,
+    the replay is deduplicated away and the row is then marked published. The event survives only in
+    BullMQ's failed set for 7 days; recovery is to retry the job from Bull Board, not to expect the relay
+    to re-deliver it.
+
+  Closing the gap properly means a durable inbox table keyed on the outbox row id — out of scope here, as
+  it needs a migration and a repository, and idempotent handlers are the cheaper discipline.
+
 - **Two-hop jobs (relay → dispatch) rather than the relay invoking handlers directly.** The relay's only
   job is to move durable rows onto the queue quickly and in batches; the actual handler fan-out happens in
   a separate `DISPATCH_DOMAIN_EVENT_JOB` per event. This gives each event its own retry unit and its own
@@ -415,9 +441,12 @@ relay/dispatch path, a real Redis via Testcontainers) end-to-end.
   the same `eventName`, keys handlers by their own `eventName`, and returns an empty list for an
   unregistered name.
 - **`src/infrastructure/events/outbox-relay.test.ts`** — enqueues a dispatch job per pending row and marks
-  exactly those ids published; never marks anything published when every enqueue fails (nothing is lost);
-  marks only the successfully-enqueued rows when one enqueue fails; and no-ops when there are no pending
-  rows.
+  exactly those ids published; keys each dispatch job on its outbox row id so a replayed batch is
+  delivered once; never marks anything published when every enqueue fails (nothing is lost); marks only
+  the successfully-enqueued rows when one enqueue fails; and no-ops when there are no pending rows.
+  The deduplication _semantics_ those keys rely on are proven separately, against a real Redis, in
+  `test/integration/jobs/job-queue-deduplication.int.test.ts` (see
+  [background-jobs.md](./background-jobs.md)).
 - **`src/infrastructure/events/dispatch-domain-event-job-handler.test.ts`** — deserializes the event and
   invokes every registered handler; **propagates** a handler failure so BullMQ can retry; propagates
   `UnknownDomainEventError` when no factory exists; and no-ops when no handler is registered.

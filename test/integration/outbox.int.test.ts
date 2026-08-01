@@ -115,6 +115,7 @@ describe('outbox (integration)', () => {
       expect(enqueueSpy).toHaveBeenCalledWith(
         DISPATCH_DOMAIN_EVENT_JOB,
         expect.objectContaining({ eventName: UserCreatedEvent.EVENT_NAME }),
+        { deduplicationKey: expect.any(String) as string },
       );
       const [relayed] = await h.prisma.outboxMessage.findMany();
       expect(relayed!.publishedAt).not.toBeNull();

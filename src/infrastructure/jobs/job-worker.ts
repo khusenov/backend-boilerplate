@@ -8,6 +8,8 @@ import {
   stripTraceContext,
 } from '@/infrastructure/jobs/job-trace-context';
 
+const UNIDENTIFIED_JOB_NAME = 'unidentified';
+
 export interface JobWorkerDeps {
   connection: Redis;
   queuePrefix: string;
@@ -31,9 +33,8 @@ export class JobWorker {
       prefix: queuePrefix,
       concurrency,
     });
-    this.worker.on('failed', (job, error) => {
-      this.logger.error('Job failed', { jobName: job?.name, jobId: job?.id, error: error.message });
-    });
+    this.worker.on('failed', (job, error) => this.reportFailure(job, error));
+    this.worker.on('stalled', (jobId) => this.reportStalled(jobId));
   }
 
   private process(job: Job): Promise<void> {
@@ -46,8 +47,34 @@ export class JobWorker {
     });
   }
 
+  private reportFailure(job: Job | undefined, error: Error): void {
+    const details = {
+      jobName: job?.name ?? UNIDENTIFIED_JOB_NAME,
+      jobId: job?.id,
+      error: error.message,
+    };
+
+    if (job !== undefined && !isDeadLettered(job)) {
+      this.logger.warn('Job attempt failed, retry pending', details);
+      return;
+    }
+
+    this.logger.error('Job dead-lettered, no retry remains', details);
+  }
+
+  private reportStalled(jobId: string): void {
+    this.logger.warn('Job stalled, its processing lock expired', { jobId });
+  }
+
   async close(): Promise<void> {
     await this.worker.close();
     await this.connection.quit();
   }
+}
+
+// BullMQ sets finishedOn only when it has decided against a retry. That covers exhausted
+// attempts, UnrecoverableError, job.discard() and a backoff strategy returning -1 alike,
+// where comparing attemptsMade against opts.attempts would catch only the first.
+function isDeadLettered(job: Job): boolean {
+  return job.finishedOn != null;
 }

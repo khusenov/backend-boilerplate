@@ -44,6 +44,12 @@ function markPublishedArg(updateMany: ReturnType<typeof vi.fn>) {
   };
 }
 
+function deduplicationKeys(enqueue: ReturnType<typeof vi.fn>): string[] {
+  return enqueue.mock.calls.map(
+    (call) => (call[2] as { deduplicationKey: string }).deduplicationKey,
+  );
+}
+
 describe('OutboxRelay', () => {
   it('exposes the relay job name', () => {
     const { relay } = makeRelay([]);
@@ -56,10 +62,11 @@ describe('OutboxRelay', () => {
     await relay.handle();
 
     expect(enqueue).toHaveBeenCalledTimes(3);
-    expect(enqueue).toHaveBeenCalledWith(DISPATCH_DOMAIN_EVENT_JOB, {
-      eventName: 'user.created',
-      payload: 'payload-1',
-    });
+    expect(enqueue).toHaveBeenCalledWith(
+      DISPATCH_DOMAIN_EVENT_JOB,
+      { eventName: 'user.created', payload: 'payload-1' },
+      { deduplicationKey: '1' },
+    );
     expect(updateMany).toHaveBeenCalledOnce();
     const marked = markPublishedArg(updateMany);
     expect(marked.where).toEqual({ id: { in: ['1', '2', '3'] } });
@@ -92,6 +99,14 @@ describe('OutboxRelay', () => {
     expect(marked.where).toEqual({ id: { in: ['1', '3'] } }); // row 2 stays unpublished
     expect(marked.data.publishedAt).toEqual(NOW);
     expect(error).toHaveBeenCalledOnce();
+  });
+
+  it('keys each dispatch job on its outbox row id so a replayed batch is delivered once', async () => {
+    const { relay, enqueue } = makeRelay([row('1'), row('2'), row('3')]);
+
+    await relay.handle();
+
+    expect(deduplicationKeys(enqueue)).toEqual(['1', '2', '3']);
   });
 
   it('does nothing when there are no pending rows', async () => {
