@@ -80,6 +80,8 @@ import { EnforceDataRetentionJob } from '@/application/retention/enforce-data-re
 import type { RetentionTask } from '@/application/shared/ports/retention-task';
 import type { Queue } from 'bullmq';
 import { createDashboardQueue } from '@/infrastructure/jobs/dashboard-queue';
+import type { IdempotencyStore } from '@/application/shared/ports/idempotency-store';
+import { RedisIdempotencyStore } from '@/infrastructure/idempotency/redis-idempotency-store';
 
 declare module '@fastify/awilix' {
   interface Cradle {
@@ -129,6 +131,8 @@ declare module '@fastify/awilix' {
     enforceDataRetentionJob: EnforceDataRetentionJob;
     metricsRecorder: MetricsRecorder;
     metricsExposition: MetricsExposition;
+    idempotencyRedis: Redis;
+    idempotencyStore: IdempotencyStore;
 
     // use cases
     listUsers: ListUsers;
@@ -303,6 +307,17 @@ export function registerDependencies(
       .disposer((queue) => queue.close()),
     metricsRecorder: asClass(PrometheusMetricsRecorder).singleton(),
     metricsExposition: aliasTo('metricsRecorder'),
+    idempotencyRedis: asFunction(() => createRedisConnection({ redisUrl: env.REDIS_URL }))
+      .singleton()
+      .disposer((connection) => connection.disconnect()),
+    idempotencyStore: asFunction(
+      ({ idempotencyRedis }: Pick<Cradle, 'idempotencyRedis'>) =>
+        new RedisIdempotencyStore({
+          redis: idempotencyRedis,
+          lockTtlSeconds: env.IDEMPOTENCY_LOCK_TTL,
+          resultTtlSeconds: env.IDEMPOTENCY_RESULT_TTL,
+        }),
+    ).singleton(),
 
     listUsers: asClass(ListUsers).singleton(),
     getUser: asClass(GetUser).singleton(),

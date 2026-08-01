@@ -14,6 +14,7 @@ import { fastifyCors } from '@fastify/cors';
 import { env } from '@/config/env';
 import { fastifyCookie } from '@fastify/cookie';
 import { authPlugin } from '@/presentation/http/plugins/authenticate';
+import { idempotencyPlugin } from '@/presentation/http/plugins/idempotency';
 import { fastifyHelmet } from '@fastify/helmet';
 import { fastifyRateLimit } from '@fastify/rate-limit';
 import { helmetOptions, rateLimitOptions } from '@/presentation/http/security';
@@ -61,6 +62,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   await app.register(fastifyCors, { origin: env.WEB_ORIGIN, credentials: true });
   await app.register(fastifyCookie, env.COOKIE_SECRET ? { secret: env.COOKIE_SECRET } : {});
   await app.register(authPlugin);
+  await app.register(idempotencyPlugin);
 
   registerDependencies(diContainer, app.log);
   registerErrorHandler(app);

@@ -33,6 +33,8 @@ export const env = cleanEnv(process.env, {
   QUEUE_PREFIX: str({ default: 'finflow' }),
   QUEUE_CONCURRENCY: num({ default: 5 }),
   DATA_RETENTION_TTL: num({ default: 60 * 60 * 24 * 30 }), // 30 days
+  IDEMPOTENCY_RESULT_TTL: num({ default: 60 * 60 * 24 }), // completed-response replay window: 24h
+  IDEMPOTENCY_LOCK_TTL: num({ default: 30 }), // in-flight claim guard: 30s
   METRICS_ENABLED: bool({ default: true }),
   HEALTHCHECK_TIMEOUT_MS: num({ default: 2000 }),
   OTEL_ENABLED: bool({ default: false }),

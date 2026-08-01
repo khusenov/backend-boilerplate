@@ -37,8 +37,14 @@ export const authRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
   app.post(
     '/register',
     {
-      config: { rateLimit: { max: env.RATE_LIMIT_AUTH_MAX, timeWindow: env.RATE_LIMIT_WINDOW } },
-      schema: { body: registerBody, response: { 201: userResponse, 409: errorResponse } },
+      config: {
+        idempotency: true,
+        rateLimit: { max: env.RATE_LIMIT_AUTH_MAX, timeWindow: env.RATE_LIMIT_WINDOW },
+      },
+      schema: {
+        body: registerBody,
+        response: { 201: userResponse, 400: errorResponse, 409: errorResponse },
+      },
     },
     async (request, reply) => {
       const { createUser } = request.diScope.cradle;
