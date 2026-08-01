@@ -1,4 +1,5 @@
-import { Entity, type EntityProps } from '@/domain/shared/entity';
+import { AggregateRoot } from '@/domain/shared/aggregate-root';
+import type { EntityProps } from '@/domain/shared/entity';
 import type { Email } from './email-vo';
 import { UserInvalidNameError, UserDeletedError } from './user-errors';
 import { UserCreatedEvent } from '@/domain/user/events/user-created-event';
@@ -26,7 +27,7 @@ interface UserCreateParams {
   passwordHash: string;
 }
 
-export class User extends Entity<UserProps> {
+export class User extends AggregateRoot<UserProps> {
   private constructor(props: UserProps) {
     super(props);
   }
