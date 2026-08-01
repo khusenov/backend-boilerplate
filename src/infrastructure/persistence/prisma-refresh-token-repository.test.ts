@@ -26,13 +26,16 @@ function makePrismaError(code: string): PrismaClientKnownRequestError {
 }
 
 function makeToken(): RefreshToken {
-  return RefreshToken.create({
-    id: 'token-1',
-    userId: 'user-1',
-    familyId: 'family-1',
-    tokenHash: 'hash-abc',
-    expiresAt: new Date('2024-02-15T10:00:00.000Z'),
-  });
+  return RefreshToken.create(
+    {
+      id: 'token-1',
+      userId: 'user-1',
+      familyId: 'family-1',
+      tokenHash: 'hash-abc',
+      expiresAt: new Date('2024-02-15T10:00:00.000Z'),
+    },
+    new Date('2024-01-15T10:00:00.000Z'),
+  );
 }
 
 function makeRepo() {

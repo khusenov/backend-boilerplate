@@ -3,6 +3,7 @@ import { User } from '@/domain/user/user-entity';
 import { EmailAlreadyTakenError } from '@/domain/user/user-errors';
 import { toUserDto, type UserDto } from '@/application/user/user-dto';
 import type { UserRepository } from '@/domain/user/user-repository';
+import type { Clock } from '@/application/shared/ports/clock';
 import type { IdGenerator } from '@/application/shared/ports/id-generator';
 import type { PasswordHasher } from '@/application/shared/ports/password-hasher';
 import type { UnitOfWork } from '@/application/shared/ports/unit-of-work';
@@ -21,6 +22,7 @@ export interface CreateUserDeps {
   userRepository: UserRepository;
   passwordHasher: PasswordHasher;
   idGenerator: IdGenerator;
+  clock: Clock;
 }
 
 export class CreateUser {
@@ -28,12 +30,14 @@ export class CreateUser {
   private readonly users: UserRepository;
   private readonly hasher: PasswordHasher;
   private readonly ids: IdGenerator;
+  private readonly clock: Clock;
 
-  constructor({ unitOfWork, userRepository, passwordHasher, idGenerator }: CreateUserDeps) {
+  constructor({ unitOfWork, userRepository, passwordHasher, idGenerator, clock }: CreateUserDeps) {
     this.uow = unitOfWork;
     this.users = userRepository;
     this.hasher = passwordHasher;
     this.ids = idGenerator;
+    this.clock = clock;
   }
 
   async execute(input: CreateUserInput): Promise<CreateUserOutput> {
@@ -44,13 +48,16 @@ export class CreateUser {
 
     const passwordHash = await this.hasher.hash(input.password);
 
-    const newUser = User.create({
-      id: this.ids.generate(),
-      firstName: input.firstName,
-      lastName: input.lastName,
-      email,
-      passwordHash,
-    });
+    const newUser = User.create(
+      {
+        id: this.ids.generate(),
+        firstName: input.firstName,
+        lastName: input.lastName,
+        email,
+        passwordHash,
+      },
+      this.clock.now(),
+    );
 
     await this.uow.run(async ({ userRepository, outbox }) => {
       await userRepository.save(newUser);

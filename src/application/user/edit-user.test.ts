@@ -5,25 +5,35 @@ import { EmailAlreadyTakenError, UserNotFoundError } from '@/domain/user/user-er
 import { Email } from '@/domain/user/email-vo';
 import { User } from '@/domain/user/user-entity';
 import type { UserRepository } from '@/domain/user/user-repository';
+import type { Clock } from '@/application/shared/ports/clock';
+
+const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
+const NOW = new Date('2026-06-01T12:00:00.000Z');
 
 function makeUser(): User {
-  return User.create({
-    id: 'user-1',
-    firstName: 'Jane',
-    lastName: 'Doe',
-    email: Email.create('jane@example.com'),
-    passwordHash: 'hashed-pw',
-  });
+  return User.create(
+    {
+      id: 'user-1',
+      firstName: 'Jane',
+      lastName: 'Doe',
+      email: Email.create('jane@example.com'),
+      passwordHash: 'hashed-pw',
+    },
+    CREATED_AT,
+  );
 }
 
 function makeOtherUser(): User {
-  return User.create({
-    id: 'user-2',
-    firstName: 'John',
-    lastName: 'Smith',
-    email: Email.create('taken@example.com'),
-    passwordHash: 'hashed-pw',
-  });
+  return User.create(
+    {
+      id: 'user-2',
+      firstName: 'John',
+      lastName: 'Smith',
+      email: Email.create('taken@example.com'),
+      passwordHash: 'hashed-pw',
+    },
+    CREATED_AT,
+  );
 }
 
 function makeEditUser() {
@@ -34,9 +44,11 @@ function makeEditUser() {
     save: vi.fn<UserRepository['save']>().mockResolvedValue(undefined),
   } satisfies UserRepository;
 
-  const sut = new EditUser({ userRepository: users });
+  const clock = { now: vi.fn<Clock['now']>().mockReturnValue(NOW) } satisfies Clock;
 
-  return { sut, users };
+  const sut = new EditUser({ userRepository: users, clock });
+
+  return { sut, users, clock };
 }
 
 describe('EditUser', () => {
@@ -127,6 +139,25 @@ describe('EditUser', () => {
       expect(result.lastName).toBe('Smith');
       expect(result.fullName).toBe('Janet Smith');
       expect(result.email).toBe('jane@example.com');
+    });
+
+    it('stamps two mutations with one shared instant from a single clock reading', async () => {
+      const user = makeUser();
+      ctx.users.findById.mockResolvedValue(user);
+      ctx.users.findByEmail.mockResolvedValue(null);
+
+      await ctx.sut.execute({ id: 'user-1', firstName: 'Janet', email: 'new@example.com' });
+
+      expect(user.updatedAt).toEqual(NOW);
+      expect(ctx.clock.now).toHaveBeenCalledOnce();
+    });
+
+    it('does not read the clock when the user does not exist', async () => {
+      ctx.users.findById.mockResolvedValue(null);
+
+      await expect(ctx.sut.execute({ id: 'user-1' })).rejects.toThrow(UserNotFoundError);
+
+      expect(ctx.clock.now).not.toHaveBeenCalled();
     });
   });
 });

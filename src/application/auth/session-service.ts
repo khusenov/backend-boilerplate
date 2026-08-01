@@ -8,6 +8,8 @@ import type { User } from '@/domain/user/user-entity';
 import { RefreshToken } from '@/domain/auth/refresh-token-entity';
 import type { UserGrants } from '@/application/shared/ports/grants-reader';
 
+const MILLISECONDS_PER_SECOND = 1000;
+
 interface SessionServiceDeps {
   accessTokenService: AccessTokenService;
   opaqueTokenService: OpaqueTokenService;
@@ -37,39 +39,58 @@ export class SessionService {
     this.env = env;
   }
 
-  issue(user: User, grants: UserGrants): Promise<AuthTokensDto> {
-    return this.mint(user, this.ids.generate(), grants);
+  issue(user: User, grants: UserGrants, now: Date): Promise<AuthTokensDto> {
+    return this.mint(user, this.ids.generate(), grants, now);
   }
 
-  reissue(user: User, familyId: string, grants: UserGrants): Promise<AuthTokensDto> {
-    return this.mint(user, familyId, grants);
+  reissue(user: User, familyId: string, grants: UserGrants, now: Date): Promise<AuthTokensDto> {
+    return this.mint(user, familyId, grants, now);
   }
 
-  private async mint(user: User, familyId: string, grants: UserGrants): Promise<AuthTokensDto> {
-    const accessToken = await this.accessTokens.sign({
-      sub: user.id,
-      email: user.email.toString(),
-      systemRoleKeys: grants.systemRoleKeys,
-      permissions: grants.permissions,
-    });
+  private async mint(
+    user: User,
+    familyId: string,
+    grants: UserGrants,
+    now: Date,
+  ): Promise<AuthTokensDto> {
+    const accessToken = await this.accessTokens.sign(
+      {
+        sub: user.id,
+        email: user.email.toString(),
+        systemRoleKeys: grants.systemRoleKeys,
+        permissions: grants.permissions,
+      },
+      now,
+    );
 
     const rawRefresh = this.opaque.generate();
-    const tokenHash = this.opaque.hash(rawRefresh);
-    const expiresAt = new Date(Date.now() + this.env.REFRESH_TOKEN_TTL * 1000);
-
-    const refresh = RefreshToken.create({
-      id: this.ids.generate(),
-      userId: user.id,
-      familyId,
-      tokenHash,
-      expiresAt,
-    });
-
-    await this.refreshTokens.create(refresh);
+    await this.refreshTokens.create(this.buildRefreshToken(user, familyId, rawRefresh, now));
 
     return {
       accessToken,
       refreshToken: rawRefresh,
     };
+  }
+
+  private buildRefreshToken(
+    user: User,
+    familyId: string,
+    rawRefresh: string,
+    now: Date,
+  ): RefreshToken {
+    const expiresAt = new Date(
+      now.getTime() + this.env.REFRESH_TOKEN_TTL * MILLISECONDS_PER_SECOND,
+    );
+
+    return RefreshToken.create(
+      {
+        id: this.ids.generate(),
+        userId: user.id,
+        familyId,
+        tokenHash: this.opaque.hash(rawRefresh),
+        expiresAt,
+      },
+      now,
+    );
   }
 }

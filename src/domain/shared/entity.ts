@@ -54,19 +54,19 @@ export abstract class Entity<T extends EntityProps> {
     return this.id === other.id;
   }
 
-  protected touch(): void {
-    this.props.updatedAt = new Date();
+  protected touch(now: Date): void {
+    this.props.updatedAt = now;
   }
 
-  public softDelete(): void {
+  public softDelete(now: Date): void {
     if (this.isDeleted) return;
-    this.props.deletedAt = new Date();
-    this.touch();
+    this.props.deletedAt = now;
+    this.touch(now);
   }
 
-  public restore(): void {
+  public restore(now: Date): void {
     if (!this.isDeleted) return;
     this.props.deletedAt = null;
-    this.touch();
+    this.touch(now);
   }
 }

@@ -26,7 +26,7 @@ describe('ListRoles', () => {
 
   it('normalises the page query and maps the slice to a DTO page', async () => {
     ctx.roles.list.mockResolvedValue({
-      items: [Role.create({ id: 'role-1', name: 'Editor' })],
+      items: [Role.create({ id: 'role-1', name: 'Editor' }, new Date('2026-01-01T00:00:00.000Z'))],
       total: 1,
     });
 

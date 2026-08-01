@@ -1,3 +1,4 @@
+import type { Clock } from '@/application/shared/ports/clock';
 import type { IdGenerator } from '@/application/shared/ports/id-generator';
 import type {
   UnitOfWork,
@@ -18,22 +19,25 @@ export interface SyncAuthorizationResult {
 interface SyncAuthorizationDeps {
   unitOfWork: UnitOfWork;
   idGenerator: IdGenerator;
+  clock: Clock;
   env: Env;
 }
 
 export class SyncAuthorization {
   private readonly unitOfWork: UnitOfWork;
   private readonly ids: IdGenerator;
+  private readonly clock: Clock;
   private readonly env: Env;
 
-  constructor({ unitOfWork, idGenerator, env }: SyncAuthorizationDeps) {
+  constructor({ unitOfWork, idGenerator, clock, env }: SyncAuthorizationDeps) {
     this.unitOfWork = unitOfWork;
     this.ids = idGenerator;
+    this.clock = clock;
     this.env = env;
   }
 
   async execute(): Promise<SyncAuthorizationResult> {
-    const now = new Date();
+    const now = this.clock.now();
 
     return this.unitOfWork.run(async (repos) => {
       for (const def of ALL_PERMISSIONS) {
@@ -56,11 +60,14 @@ export class SyncAuthorization {
       let superadmin = await repos.roleRepository.findByKey(SUPERADMIN_ROLE_KEY);
       let superadminCreated = false;
       if (!superadmin) {
-        superadmin = Role.createSystem({
-          id: this.ids.generate(),
-          key: SUPERADMIN_ROLE_KEY,
-          name: 'Super Admin',
-        });
+        superadmin = Role.createSystem(
+          {
+            id: this.ids.generate(),
+            key: SUPERADMIN_ROLE_KEY,
+            name: 'Super Admin',
+          },
+          now,
+        );
         await repos.roleRepository.save(superadmin);
         superadminCreated = true;
       }

@@ -26,9 +26,11 @@ nothing in the request path waits on a handler.
 1. **Recording (domain).** When an aggregate performs a meaningful state transition it constructs a
    `DomainEvent` subclass and buffers it internally via the protected `recordEvent(...)` method on the
    base `Entity`. Concretely, `User.create(...)` calls
-   `user.recordEvent(new UserCreatedEvent(user.id, user.email.toString()))`. The event is _only
-   recorded_, not delivered — the entity has no dependency on any dispatcher, queue, or I/O. The buffer
-   is a plain in-memory array (`_domainEvents`) on the entity instance.
+   `user.recordEvent(new UserCreatedEvent(user.id, user.email.toString(), now))`, where `now` is the
+   instant the use case passed into `User.create`. The event is _only recorded_, not delivered — the
+   entity has no dependency on any dispatcher, queue, or I/O. The buffer is a plain in-memory array
+   (`_domainEvents`) on the entity instance. Because the same `now` also stamps `createdAt` and
+   `updatedAt`, a row can never be persisted with a `createdAt` later than the event announcing it.
 2. **Staging (application).** `CreateUser.execute` (the user-creation use case documented in
    [user-crud.md](./user-crud.md)) opens a **unit of work** — a single database transaction that bundles
    the aggregate save and its event staging into one atomic commit — and, inside it, saves the aggregate
@@ -104,28 +106,29 @@ inward — the domain entity depends on nothing, the use case depends on the `Un
 `JobScheduler`, `JobHandler`) documented in [background-jobs.md](./background-jobs.md); this feature does
 not re-implement queueing.
 
-| Component                                     | Layer                   | Responsibility                                                                                                                                                              | File                                                              |
-| --------------------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `DomainEvent`                                 | Domain                  | Abstract base for every event; carries `aggregateId`, `eventName`, and an `occurredAt` timestamp (defaulting to now, but overridable so it survives a serialize round-trip) | `src/domain/shared/domain-event.ts`                               |
-| `Entity` (`recordEvent` / `pullDomainEvents`) | Domain                  | Buffers events an aggregate records, and drains-and-clears them on pull                                                                                                     | `src/domain/shared/entity.ts`                                     |
-| `UserCreatedEvent`                            | Domain                  | Concrete event for user creation; pins routing key `EVENT_NAME = 'user.created'` and carries `email`                                                                        | `src/domain/user/events/user-created-event.ts`                    |
-| `User`                                        | Domain                  | Records `UserCreatedEvent` inside `User.create(...)`                                                                                                                        | `src/domain/user/user-entity.ts`                                  |
-| `DomainEventDispatcher`                       | Application (port)      | Interface for fanning a batch of events out to handlers                                                                                                                     | `src/application/shared/ports/domain-event-dispatcher.ts`         |
-| `DomainEventHandler`                          | Application (port)      | Interface a subscriber implements: an `eventName` to bind to and an async `handle`                                                                                          | `src/application/shared/ports/domain-event-handler.ts`            |
-| `OutboxStaging` (on `TransactionContext`)     | Application (port)      | `stage(events)` — how a use case hands its events to the running transaction for outbox persistence                                                                         | `src/application/shared/ports/unit-of-work.ts`                    |
-| `UserCreatedLogHandler`                       | Application             | Subscribes to `user.created` and logs the creation                                                                                                                          | `src/application/user/events/user-created-log-handler.ts`         |
-| `CreateUser`                                  | Application             | Saves the user and stages its events inside one unit-of-work transaction                                                                                                    | `src/application/user/create-user.ts`                             |
-| `PrismaUnitOfWork`                            | Infrastructure          | Runs the business callback and flushes staged events to the outbox in the same DB transaction                                                                               | `src/infrastructure/persistence/prisma-unit-of-work.ts`           |
-| `PrismaOutboxWriter`                          | Infrastructure          | Serializes staged events and `createMany`s them into `outbox_messages` using the transactional client                                                                       | `src/infrastructure/persistence/prisma-outbox-writer.ts`          |
-| `DomainEventSerializer`                       | Infrastructure          | `serialize` (event → JSON string) and `deserialize` (event name + JSON → concrete event via a factory)                                                                      | `src/infrastructure/events/domain-event-serializer.ts`            |
-| `SerializedDomainEvent`                       | Infrastructure          | Shape of the parsed JSON a factory reads (`aggregateId`, `eventName`, `occurredAt`, plus payload fields)                                                                    | `src/infrastructure/events/serialized-domain-event.ts`            |
-| `domainEventFactories`                        | Infrastructure          | Registry mapping each `eventName` to a factory that reconstructs its concrete event class                                                                                   | `src/infrastructure/events/domain-event-factories.ts`             |
-| `DomainEventHandlerRegistry`                  | Infrastructure          | Indexes handlers into a `Map<eventName, handler[]>` for O(1) lookup at dispatch time                                                                                        | `src/infrastructure/events/domain-event-handler-registry.ts`      |
-| `OutboxRelay`                                 | Infrastructure          | Repeatable job: reads unpublished rows, enqueues a dispatch job per event, marks the enqueued rows published                                                                | `src/infrastructure/events/outbox-relay.ts`                       |
-| `DispatchDomainEventJobHandler`               | Infrastructure          | Per-event job: deserializes the event and fans it out over the handler registry, propagating failures for retry                                                             | `src/infrastructure/events/dispatch-domain-event-job-handler.ts`  |
-| `InProcessDomainEventDispatcher`              | Infrastructure          | `DomainEventDispatcher` adapter: synchronous, error-isolating fan-out over the registry — wired as the port, but not on the async outbox path (see Design decisions)        | `src/infrastructure/events/in-process-domain-event-dispatcher.ts` |
-| `createDomainEventDispatcher`                 | Composition root        | Factory that builds the `InProcessDomainEventDispatcher` from the registry + logger                                                                                         | `src/container.ts`                                                |
-| `OutboxMessage` (`outbox_messages`)           | Infrastructure (schema) | The outbox table: `id`, `aggregate_id`, `event_name`, `payload`, `occurred_at`, `published_at`, indexed on `(published_at, occurred_at)`                                    | `prisma/schema.prisma`                                            |
+| Component                                     | Layer                   | Responsibility                                                                                                                                                                                    | File                                                              |
+| --------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `DomainEvent`                                 | Domain                  | Abstract base for every event; carries `aggregateId`, `eventName`, and an `occurredAt` timestamp supplied by the caller — the application layer reads it from the `Clock` port once per operation | `src/domain/shared/domain-event.ts`                               |
+| `Clock`                                       | Application (port)      | `now(): Date` — the single source of time for the write path; each use case reads it once and threads that instant down                                                                           | `src/application/shared/ports/clock.ts`                           |
+| `Entity` (`recordEvent` / `pullDomainEvents`) | Domain                  | Buffers events an aggregate records, and drains-and-clears them on pull                                                                                                                           | `src/domain/shared/entity.ts`                                     |
+| `UserCreatedEvent`                            | Domain                  | Concrete event for user creation; pins routing key `EVENT_NAME = 'user.created'` and carries `email`                                                                                              | `src/domain/user/events/user-created-event.ts`                    |
+| `User`                                        | Domain                  | Records `UserCreatedEvent` inside `User.create(...)`                                                                                                                                              | `src/domain/user/user-entity.ts`                                  |
+| `DomainEventDispatcher`                       | Application (port)      | Interface for fanning a batch of events out to handlers                                                                                                                                           | `src/application/shared/ports/domain-event-dispatcher.ts`         |
+| `DomainEventHandler`                          | Application (port)      | Interface a subscriber implements: an `eventName` to bind to and an async `handle`                                                                                                                | `src/application/shared/ports/domain-event-handler.ts`            |
+| `OutboxStaging` (on `TransactionContext`)     | Application (port)      | `stage(events)` — how a use case hands its events to the running transaction for outbox persistence                                                                                               | `src/application/shared/ports/unit-of-work.ts`                    |
+| `UserCreatedLogHandler`                       | Application             | Subscribes to `user.created` and logs the creation                                                                                                                                                | `src/application/user/events/user-created-log-handler.ts`         |
+| `CreateUser`                                  | Application             | Saves the user and stages its events inside one unit-of-work transaction                                                                                                                          | `src/application/user/create-user.ts`                             |
+| `PrismaUnitOfWork`                            | Infrastructure          | Runs the business callback and flushes staged events to the outbox in the same DB transaction                                                                                                     | `src/infrastructure/persistence/prisma-unit-of-work.ts`           |
+| `PrismaOutboxWriter`                          | Infrastructure          | Serializes staged events and `createMany`s them into `outbox_messages` using the transactional client                                                                                             | `src/infrastructure/persistence/prisma-outbox-writer.ts`          |
+| `DomainEventSerializer`                       | Infrastructure          | `serialize` (event → JSON string) and `deserialize` (event name + JSON → concrete event via a factory)                                                                                            | `src/infrastructure/events/domain-event-serializer.ts`            |
+| `SerializedDomainEvent`                       | Infrastructure          | Shape of the parsed JSON a factory reads (`aggregateId`, `eventName`, `occurredAt`, plus payload fields)                                                                                          | `src/infrastructure/events/serialized-domain-event.ts`            |
+| `domainEventFactories`                        | Infrastructure          | Registry mapping each `eventName` to a factory that reconstructs its concrete event class                                                                                                         | `src/infrastructure/events/domain-event-factories.ts`             |
+| `DomainEventHandlerRegistry`                  | Infrastructure          | Indexes handlers into a `Map<eventName, handler[]>` for O(1) lookup at dispatch time                                                                                                              | `src/infrastructure/events/domain-event-handler-registry.ts`      |
+| `OutboxRelay`                                 | Infrastructure          | Repeatable job: reads unpublished rows, enqueues a dispatch job per event, marks the enqueued rows published                                                                                      | `src/infrastructure/events/outbox-relay.ts`                       |
+| `DispatchDomainEventJobHandler`               | Infrastructure          | Per-event job: deserializes the event and fans it out over the handler registry, propagating failures for retry                                                                                   | `src/infrastructure/events/dispatch-domain-event-job-handler.ts`  |
+| `InProcessDomainEventDispatcher`              | Infrastructure          | `DomainEventDispatcher` adapter: synchronous, error-isolating fan-out over the registry — wired as the port, but not on the async outbox path (see Design decisions)                              | `src/infrastructure/events/in-process-domain-event-dispatcher.ts` |
+| `createDomainEventDispatcher`                 | Composition root        | Factory that builds the `InProcessDomainEventDispatcher` from the registry + logger                                                                                                               | `src/container.ts`                                                |
+| `OutboxMessage` (`outbox_messages`)           | Infrastructure (schema) | The outbox table: `id`, `aggregate_id`, `event_name`, `payload`, `occurred_at`, `published_at`, indexed on `(published_at, occurred_at)`                                                          | `prisma/schema.prisma`                                            |
 
 ## Public surface
 
@@ -136,29 +139,27 @@ programs against is the following pieces.
 
 ```ts
 export abstract class DomainEvent {
-  readonly occurredAt: Date;
-
   protected constructor(
     readonly aggregateId: string,
     readonly eventName: string,
-    occurredAt?: Date,
-  ) {
-    this.occurredAt = occurredAt ?? new Date();
-  }
+    readonly occurredAt: Date,
+  ) {}
 }
 ```
 
-The optional `occurredAt` parameter is what lets a factory rebuild an event with its **original**
-timestamp after a serialize round-trip, instead of stamping the moment of deserialization. A concrete
-event pins its `eventName` as a `static readonly EVENT_NAME` and adds payload fields, e.g.
-`UserCreatedEvent(aggregateId: string, email: string, occurredAt?: Date)` with
+`occurredAt` is **required**. A factory still supplies the event's **original** timestamp after a
+serialize round-trip — it simply can no longer omit it, which is exactly what stops a deserialized event
+from silently restamping itself with the deserialization time. On the write path the same requirement
+forces the caller to say which instant it means, so the event cannot quietly read a clock of its own. A
+concrete event pins its `eventName` as a `static readonly EVENT_NAME` and adds payload fields, e.g.
+`UserCreatedEvent(aggregateId: string, email: string, occurredAt: Date)` with
 `EVENT_NAME = 'user.created'`.
 
 **2. Recording an event from an entity.** Inside an aggregate method, call the protected base method —
-it only buffers:
+it only buffers. The `now` is the one the method received; entities never read a clock:
 
 ```ts
-this.recordEvent(new UserCreatedEvent(this.id, this.email.toString()));
+this.recordEvent(new UserCreatedEvent(this.id, this.email.toString(), now));
 ```
 
 The base `Entity` exposes `public pullDomainEvents(): DomainEvent[]`, which returns the buffered events
@@ -228,24 +229,27 @@ import { DomainEvent } from '@/domain/shared/domain-event';
 export class UserDeactivatedEvent extends DomainEvent {
   static readonly EVENT_NAME = 'user.deactivated';
 
-  constructor(aggregateId: string, occurredAt?: Date) {
+  constructor(aggregateId: string, occurredAt: Date) {
     super(aggregateId, UserDeactivatedEvent.EVENT_NAME, occurredAt);
   }
 }
 ```
 
-Accept and forward the optional `occurredAt` so the factory in Step 3 can restore the original timestamp.
+Accept and forward `occurredAt` so the factory in Step 3 can restore the original timestamp. It is
+required, not optional — an event that can be built without a timestamp is an event that will silently
+stamp itself from the ambient clock.
 
 **Step 2 — Record it from the aggregate (domain).** In `src/domain/user/user-entity.ts`, record the
-event where the state transition happens (import `UserDeactivatedEvent` at the top):
+event where the state transition happens (import `UserDeactivatedEvent` at the top). The mutator already
+receives `now` from its caller, so the event, `updatedAt`, and the status change all share one instant:
 
 ```ts
-deactivate(): void {
+deactivate(now: Date): void {
   if (this.isDeleted) throw new UserDeletedError(this.id);
   if (!this.isActive) return;
   this.props.status = UserStatus.Inactive;
-  this.touch();
-  this.recordEvent(new UserDeactivatedEvent(this.id));
+  this.touch(now);
+  this.recordEvent(new UserDeactivatedEvent(this.id, now));
 }
 ```
 

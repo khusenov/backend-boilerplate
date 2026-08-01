@@ -40,7 +40,9 @@ The happy paths:
 - **Create** (`CreateUser.execute`) builds an `Email` value object (validating and normalizing the
   address), checks `findByEmail` for a duplicate (throwing `EmailAlreadyTakenError` → `409` if
   found), hashes the plaintext password through the `PasswordHasher` port, and constructs the entity
-  with `User.create(...)`. It then opens a `UnitOfWork` transaction — `this.uow.run(...)` — and,
+  with `User.create(params, this.clock.now())` — a single reading of the `Clock` port that stamps
+  `createdAt`, `updatedAt`, and the recorded event's `occurredAt` with the same instant. It then opens
+  a `UnitOfWork` transaction — `this.uow.run(...)` — and,
   inside it, saves the user through the **transaction-scoped** `userRepository` and stages the
   entity's buffered domain events into the transaction's `outbox`:
 
@@ -62,10 +64,13 @@ The happy paths:
   rows), throwing `UserNotFoundError` → `404` on a miss. Returns `200`.
 - **Edit** (`EditUser.execute`) loads the user (404 on miss). When `email` is present it re-validates
   and, only if the value actually changed, checks uniqueness against another account before calling
-  `changeEmail`; `firstName`/`lastName` are applied through their domain mutators when present.
-  Persists via `save` and returns `200`.
-- **Delete** (`DeleteUser.execute`) loads the user (404 on miss), calls `user.softDelete()` — which
-  also deactivates the account and stamps `deletedAt` — and persists. Returns `204`.
+  `changeEmail(email, now)`; `firstName`/`lastName` are applied through their domain mutators
+  (`changeFirstName(raw, now)` / `changeLastName(raw, now)`) when present. All of them share one `now`
+  hoisted from a single `clock.now()` reading, so a request that changes several fields records one
+  `updatedAt`. Persists via `save` and returns `200`.
+- **Delete** (`DeleteUser.execute`) loads the user (404 on miss), calls
+  `user.softDelete(this.clock.now())` — which also deactivates the account and stamps `deletedAt` with
+  that same instant — and persists. Returns `204`.
 
 The decisive failure paths are `400` for schema / `Email` / name-validation failures, `401` for a
 missing or invalid access token, `403` when the caller lacks the required permission and is not
@@ -90,10 +95,12 @@ stage the event inside the transaction.
 The dependency rule points inward. The domain (`User`, `Email`, the domain errors,
 `UserCreatedEvent`, and the `UserRepository` **interface**) depends on nothing outside `src/domain`.
 The application use-cases depend only on the domain and on **ports** — `UserRepository`,
-`PasswordHasher`, `IdGenerator`, and `UnitOfWork` (whose `TransactionContext` exposes both the
+`PasswordHasher`, `IdGenerator`, `Clock`, and `UnitOfWork` (whose `TransactionContext` exposes both the
 transaction-scoped repositories and the `OutboxStaging` role `CreateUser` stages its event through) —
-never on Prisma or Fastify. Infrastructure supplies the **adapters** (`PrismaUserRepository`,
-`PrismaUnitOfWork`, `Argon2PasswordHasher`, `UuidIdGenerator`) that implement those ports. The
+never on Prisma or Fastify. The domain takes time as a plain `Date` parameter and depends on no clock
+at all. Infrastructure supplies the **adapters** (`PrismaUserRepository`,
+`PrismaUnitOfWork`, `Argon2PasswordHasher`, `UuidIdGenerator`, `SystemClock`) that implement those
+ports. The
 presentation layer adapts HTTP to use-case calls. Concretes are bound to ports in exactly one place —
 the composition root `src/container.ts`.
 
@@ -107,6 +114,7 @@ the composition root `src/container.ts`.
 | `UnitOfWork` / `OutboxStaging`                                                                                 | Application (port) | Transaction boundary `CreateUser` saves within; `outbox.stage(...)` records the `UserCreatedEvent` in that same transaction (adapter: `PrismaUnitOfWork`) | `src/application/shared/ports/unit-of-work.ts`                  |
 | `PasswordHasher`                                                                                               | Application (port) | Hashes the plaintext password before the entity is built (adapter: `Argon2PasswordHasher`)                                                                | `src/application/shared/ports/password-hasher.ts`               |
 | `IdGenerator`                                                                                                  | Application (port) | Generates the new user's id passed to `User.create` (adapter: `UuidIdGenerator`)                                                                          | `src/application/shared/ports/id-generator.ts`                  |
+| `Clock`                                                                                                        | Application (port) | `now(): Date` — read once per operation and threaded into `User.create` and every mutator (adapter: `SystemClock`)                                        | `src/application/shared/ports/clock.ts`                         |
 | `CreateUser`                                                                                                   | Application        | Validate email, dedupe, hash password, create, then save + stage `UserCreatedEvent` in one `UnitOfWork` transaction                                       | `src/application/user/create-user.ts`                           |
 | `ListUsers`                                                                                                    | Application        | Normalize the page query, fetch the slice, map to a `Page<UserDto>`                                                                                       | `src/application/user/list-users.ts`                            |
 | `GetUser`                                                                                                      | Application        | Load by id or throw `UserNotFoundError`                                                                                                                   | `src/application/user/get-user.ts`                              |
@@ -203,8 +211,9 @@ curl -X POST http://localhost:8000/users \
 The pattern is identical for every use case; follow these steps.
 
 1. **Add the behaviour to the domain** if it is a new invariant. `User` already exposes
-   `deactivate()`; a new rule would be a method on `src/domain/user/user-entity.ts` that guards its
-   own invariants and calls `this.touch()` when it mutates state.
+   `deactivate(now)`; a new rule would be a method on `src/domain/user/user-entity.ts` that takes
+   `now: Date` as its last parameter, guards its own invariants, and calls `this.touch(now)` when it
+   mutates state. Entities never read a clock — they receive the instant.
 
 2. **Write the use-case class** in `src/application/user/`. Depend only on ports via constructor DI,
    and expose a single `execute()`:
@@ -212,6 +221,7 @@ The pattern is identical for every use case; follow these steps.
    ```ts
    // src/application/user/deactivate-user.ts
    import type { UserRepository } from '@/domain/user/user-repository';
+   import type { Clock } from '@/application/shared/ports/clock';
    import { UserNotFoundError } from '@/domain/user/user-errors';
    import { toUserDto, type UserDto } from '@/application/user/user-dto';
 
@@ -222,19 +232,22 @@ The pattern is identical for every use case; follow these steps.
 
    interface DeactivateUserDeps {
      userRepository: UserRepository;
+     clock: Clock;
    }
 
    export class DeactivateUser {
      private readonly users: UserRepository;
+     private readonly clock: Clock;
 
-     constructor({ userRepository }: DeactivateUserDeps) {
+     constructor({ userRepository, clock }: DeactivateUserDeps) {
        this.users = userRepository;
+       this.clock = clock;
      }
 
      async execute(input: DeactivateUserInput): Promise<DeactivateUserOutput> {
        const user = await this.users.findById(input.id);
        if (!user) throw new UserNotFoundError(input.id);
-       user.deactivate();
+       user.deactivate(this.clock.now());
        await this.users.save(user);
        return toUserDto(user);
      }
@@ -305,11 +318,12 @@ lives in [domain-events.md](./domain-events.md).
   equal — which is exactly what the "email unchanged" fast-path in `EditUser` (and `User.changeEmail`)
   relies on to skip a needless uniqueness lookup. The trade-off is an extra unwrap
   (`email.toString()`) at the persistence and DTO boundaries.
-- **Two factory methods: `create` vs `hydrate`.** `User.create` is the only path that stamps
-  timestamps, sets `status = active`, and records `UserCreatedEvent`; `User.hydrate` reconstructs an
-  existing user from a stored row and records **nothing**. Splitting them prevents rehydration from
-  re-emitting a "created" event or resetting audit fields — a subtle bug that a single constructor
-  would invite.
+- **Two factory methods: `create` vs `hydrate`.** `User.create(params, now)` is the only path that
+  stamps timestamps, sets `status = active`, and records `UserCreatedEvent`; `User.hydrate(props)`
+  reconstructs an existing user from a stored row and records **nothing**. Splitting them prevents
+  rehydration from re-emitting a "created" event or resetting audit fields — a subtle bug that a single
+  constructor would invite. The signatures encode the split: `create` always takes `now`, `hydrate`
+  never does, because every timestamp on a hydrated entity already comes from the database row.
 - **Domain event recorded in the entity, staged into a transactional outbox by the use case.**
   `User.create` buffers the event; `CreateUser` drains it with `pullDomainEvents()` and stages it via
   `outbox.stage(...)` **inside the same `UnitOfWork` transaction** as the user insert, so
@@ -333,14 +347,14 @@ lives in [domain-events.md](./domain-events.md).
   `deletedAt: null` filter, the pagination `$transaction`, the upsert) while the mapper owns the
   _field-by-field translation_ between the persistence row and the aggregate. This keeps each side
   single-responsibility and lets the mapping be reasoned about (and reused) without a database.
-- **Soft delete instead of a hard `DELETE`.** `DeleteUser` calls `user.softDelete()`, which stamps
-  `deletedAt` and deactivates the account rather than removing the row. The identity reads `findById`
+- **Soft delete instead of a hard `DELETE`.** `DeleteUser` calls `user.softDelete(this.clock.now())`,
+  which stamps `deletedAt` and deactivates the account rather than removing the row. The identity reads `findById`
   and `list` filter `deletedAt: null`, so a deleted user disappears from the API while its record —
   and any foreign-key references to it — survive for audit and integrity. `findByEmail` deliberately
   does **not** filter soft-deleted rows: it queries the unique `email` column directly, so a
   soft-deleted account's email still counts as taken and blocks re-registration under the same address
   (the create/edit uniqueness checks depend on this). The cost is that `deletedAt: null` must be
-  threaded through the identity reads, and a "resurrect" path (`User.restore`) has to exist for
+  threaded through the identity reads, and a "resurrect" path (`User.restore(now)`) has to exist for
   completeness.
 - **Deleted-user guards are defence in depth, not a reachable HTTP path.** `changeEmail`,
   `changeFirstName`, `deactivate`, etc. throw `UserDeletedError` (a `409`) when the user is deleted,
@@ -378,10 +392,12 @@ npm run test:integration          # the /users HTTP integration test (needs a da
 
 - `src/domain/user/user-entity.test.ts` — name normalization; `create` vs `hydrate` (only `create`
   records exactly one `UserCreatedEvent`, and `pullDomainEvents` has pull-once semantics; `hydrate`
-  records nothing); `activate`/`deactivate` no-op and deleted-user guards; `changeFirstName` /
+  records nothing, and `create` gives `createdAt`, `updatedAt` and the event's `occurredAt` equal
+  instants); `activate`/`deactivate` no-op and deleted-user guards; `changeFirstName` /
   `changeLastName` / `changeEmail` (including the value-equality no-op on `ADA@…` vs `ada@…`);
   `softDelete` (deactivates + stamps `deletedAt`) and `restore` (clears `deletedAt`, stays inactive);
-  and `equals`.
+  and `equals`. Every mutator is asserted against the explicit instant it was passed — the file uses no
+  fake timers.
 - `src/domain/user/email-vo.test.ts` — trimming/lowercasing, format validation (`InvalidEmailError`
   across a table of malformed inputs), value equality, and `toString`.
 - `src/domain/user/user-errors.test.ts` — each error's `instanceof` base, `code`, `kind`, message

@@ -27,13 +27,16 @@ function makePrismaError(code: string): PrismaClientKnownRequestError {
 }
 
 function makeUser(): User {
-  return User.create({
-    id: 'user-1',
-    firstName: 'John',
-    lastName: 'Doe',
-    email: Email.create('john@example.com'),
-    passwordHash: 'hashed-pw',
-  });
+  return User.create(
+    {
+      id: 'user-1',
+      firstName: 'John',
+      lastName: 'Doe',
+      email: Email.create('john@example.com'),
+      passwordHash: 'hashed-pw',
+    },
+    new Date('2024-01-15T10:00:00.000Z'),
+  );
 }
 
 function makeRepo() {

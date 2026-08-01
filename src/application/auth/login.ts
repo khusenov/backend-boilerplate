@@ -2,6 +2,7 @@ import type { AuthResultDto } from './auth-dto';
 import { SessionService } from './session-service';
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { PasswordHasher } from '@/application/shared/ports/password-hasher';
+import type { Clock } from '@/application/shared/ports/clock';
 import { Email } from '@/domain/user/email-vo';
 import { InvalidCredentialsError } from '@/domain/auth/auth-errors';
 import { toUserDto } from '@/application/user/user-dto';
@@ -19,6 +20,7 @@ interface LoginDeps {
   passwordHasher: PasswordHasher;
   sessionService: SessionService;
   grants: GrantsReader;
+  clock: Clock;
 }
 
 export class Login {
@@ -26,12 +28,14 @@ export class Login {
   private readonly hasher: PasswordHasher;
   private readonly sessions: SessionService;
   private readonly grants: GrantsReader;
+  private readonly clock: Clock;
 
-  constructor({ userRepository, passwordHasher, sessionService, grants }: LoginDeps) {
+  constructor({ userRepository, passwordHasher, sessionService, grants, clock }: LoginDeps) {
     this.users = userRepository;
     this.hasher = passwordHasher;
     this.sessions = sessionService;
     this.grants = grants;
+    this.clock = clock;
   }
 
   async execute(input: LoginInput): Promise<LoginOutput> {
@@ -46,7 +50,7 @@ export class Login {
     if (!user.isActive) throw new InvalidCredentialsError();
 
     const grants = await this.grants.grantsFor(user.id);
-    const tokens = await this.sessions.issue(user, grants);
+    const tokens = await this.sessions.issue(user, grants, this.clock.now());
     return { user: toUserDto(user), tokens };
   }
 }

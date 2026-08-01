@@ -5,9 +5,11 @@ import { DomainEvent } from '@/domain/shared/domain-event';
 import type { DomainEventHandler } from '@/application/shared/ports/domain-event-handler';
 import type { Logger } from '@/application/shared/ports/logger';
 
+const OCCURRED_AT = new Date('2026-01-01T00:00:00.000Z');
+
 class TestEvent extends DomainEvent {
-  constructor(aggregateId: string, eventName: string) {
-    super(aggregateId, eventName);
+  constructor(aggregateId: string, eventName: string, occurredAt: Date) {
+    super(aggregateId, eventName, occurredAt);
   }
 }
 
@@ -38,7 +40,7 @@ describe('InProcessDomainEventDispatcher', () => {
   it('routes an event to the handler whose eventName matches', async () => {
     const handler = makeHandler('user.created');
     const dispatcher = makeDispatcher([handler], makeLogger());
-    const event = new TestEvent('agg-1', 'user.created');
+    const event = new TestEvent('agg-1', 'user.created', OCCURRED_AT);
 
     await dispatcher.dispatch([event]);
 
@@ -50,7 +52,7 @@ describe('InProcessDomainEventDispatcher', () => {
     const handler = makeHandler('user.deleted');
     const dispatcher = makeDispatcher([handler], makeLogger());
 
-    await dispatcher.dispatch([new TestEvent('agg-1', 'user.created')]);
+    await dispatcher.dispatch([new TestEvent('agg-1', 'user.created', OCCURRED_AT)]);
 
     expect(handler.handle).not.toHaveBeenCalled();
   });
@@ -73,7 +75,7 @@ describe('InProcessDomainEventDispatcher', () => {
     } satisfies DomainEventHandler;
     const dispatcher = makeDispatcher([first, second], makeLogger());
 
-    await dispatcher.dispatch([new TestEvent('agg-1', 'user.created')]);
+    await dispatcher.dispatch([new TestEvent('agg-1', 'user.created', OCCURRED_AT)]);
 
     expect(calls).toEqual(['first', 'second']);
   });
@@ -88,7 +90,7 @@ describe('InProcessDomainEventDispatcher', () => {
     const dispatcher = makeDispatcher([failing, healthy], logger);
 
     await expect(
-      dispatcher.dispatch([new TestEvent('agg-1', 'user.created')]),
+      dispatcher.dispatch([new TestEvent('agg-1', 'user.created', OCCURRED_AT)]),
     ).resolves.toBeUndefined();
 
     expect(healthy.handle).toHaveBeenCalledOnce();
@@ -104,7 +106,10 @@ describe('InProcessDomainEventDispatcher', () => {
     const handlerB = makeHandler('b');
     const dispatcher = makeDispatcher([failingA, handlerB], logger);
 
-    await dispatcher.dispatch([new TestEvent('agg-1', 'a'), new TestEvent('agg-2', 'b')]);
+    await dispatcher.dispatch([
+      new TestEvent('agg-1', 'a', OCCURRED_AT),
+      new TestEvent('agg-2', 'b', OCCURRED_AT),
+    ]);
 
     expect(handlerB.handle).toHaveBeenCalledOnce();
     expect(logger.error).toHaveBeenCalledOnce();
@@ -115,7 +120,7 @@ describe('InProcessDomainEventDispatcher', () => {
     const dispatcher = makeDispatcher([], logger);
 
     await expect(
-      dispatcher.dispatch([new TestEvent('agg-1', 'user.created')]),
+      dispatcher.dispatch([new TestEvent('agg-1', 'user.created', OCCURRED_AT)]),
     ).resolves.toBeUndefined();
     expect(logger.error).not.toHaveBeenCalled();
   });

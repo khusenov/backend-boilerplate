@@ -8,6 +8,10 @@ import {
   SystemRoleProtectedError,
   UnknownPermissionError,
 } from '@/domain/authorization/role-errors';
+import type { Clock } from '@/application/shared/ports/clock';
+
+const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
+const NOW = new Date('2026-06-01T12:00:00.000Z');
 
 function makeEditRole() {
   const roles = {
@@ -18,9 +22,11 @@ function makeEditRole() {
     save: vi.fn<RoleRepository['save']>().mockResolvedValue(undefined),
   } satisfies RoleRepository;
 
-  const sut = new EditRole({ roleRepository: roles });
+  const clock = { now: vi.fn<Clock['now']>().mockReturnValue(NOW) } satisfies Clock;
 
-  return { sut, roles };
+  const sut = new EditRole({ roleRepository: roles, clock });
+
+  return { sut, roles, clock };
 }
 
 describe('EditRole', () => {
@@ -37,18 +43,21 @@ describe('EditRole', () => {
   });
 
   it('rejects an unknown permission before mutating the role', async () => {
-    const role = Role.create({ id: 'role-1', name: 'Editor' });
+    const role = Role.create({ id: 'role-1', name: 'Editor' }, CREATED_AT);
     ctx.roles.findById.mockResolvedValue(role);
 
     await expect(ctx.sut.execute({ id: 'role-1', permissions: ['nope.invalid'] })).rejects.toThrow(
       UnknownPermissionError,
     );
     expect(ctx.roles.save).not.toHaveBeenCalled();
+    expect(ctx.clock.now).not.toHaveBeenCalled();
   });
 
   it('rejects renaming onto a name held by a different active role', async () => {
-    ctx.roles.findById.mockResolvedValue(Role.create({ id: 'role-1', name: 'Editor' }));
-    ctx.roles.findByName.mockResolvedValue(Role.create({ id: 'role-2', name: 'Manager' }));
+    ctx.roles.findById.mockResolvedValue(Role.create({ id: 'role-1', name: 'Editor' }, CREATED_AT));
+    ctx.roles.findByName.mockResolvedValue(
+      Role.create({ id: 'role-2', name: 'Manager' }, CREATED_AT),
+    );
 
     await expect(ctx.sut.execute({ id: 'role-1', name: 'Manager' })).rejects.toThrow(
       RoleNameTakenError,
@@ -56,7 +65,7 @@ describe('EditRole', () => {
   });
 
   it('allows renaming when the colliding row is the role itself', async () => {
-    const role = Role.create({ id: 'role-1', name: 'Editor' });
+    const role = Role.create({ id: 'role-1', name: 'Editor' }, CREATED_AT);
     ctx.roles.findById.mockResolvedValue(role);
     ctx.roles.findByName.mockResolvedValue(role);
 
@@ -68,7 +77,7 @@ describe('EditRole', () => {
 
   it('edits description and permissions without touching the name', async () => {
     ctx.roles.findById.mockResolvedValue(
-      Role.create({ id: 'role-1', name: 'Editor', permissions: ['users.read'] }),
+      Role.create({ id: 'role-1', name: 'Editor', permissions: ['users.read'] }, CREATED_AT),
     );
 
     const result = await ctx.sut.execute({
@@ -86,7 +95,7 @@ describe('EditRole', () => {
 
   it('applies rename, description, and permissions then persists', async () => {
     ctx.roles.findById.mockResolvedValue(
-      Role.create({ id: 'role-1', name: 'Editor', permissions: ['users.read'] }),
+      Role.create({ id: 'role-1', name: 'Editor', permissions: ['users.read'] }, CREATED_AT),
     );
 
     const result = await ctx.sut.execute({
@@ -102,9 +111,27 @@ describe('EditRole', () => {
     expect(ctx.roles.save).toHaveBeenCalledOnce();
   });
 
+  it('stamps three mutations with one shared instant from a single clock reading', async () => {
+    const role = Role.create(
+      { id: 'role-1', name: 'Editor', permissions: ['users.read'] },
+      CREATED_AT,
+    );
+    ctx.roles.findById.mockResolvedValue(role);
+
+    await ctx.sut.execute({
+      id: 'role-1',
+      name: 'Manager',
+      description: 'Leads',
+      permissions: ['roles.read'],
+    });
+
+    expect(role.updatedAt).toEqual(NOW);
+    expect(ctx.clock.now).toHaveBeenCalledOnce();
+  });
+
   it('surfaces the domain guard when editing a system role', async () => {
     ctx.roles.findById.mockResolvedValue(
-      Role.createSystem({ id: 'role-1', key: 'super-admin', name: 'Super Admin' }),
+      Role.createSystem({ id: 'role-1', key: 'super-admin', name: 'Super Admin' }, CREATED_AT),
     );
 
     await expect(ctx.sut.execute({ id: 'role-1', name: 'X' })).rejects.toThrow(

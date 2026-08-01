@@ -21,7 +21,11 @@ describe('UserCreatedLogHandler', () => {
   it('logs the creation with the event data', async () => {
     const logger = makeLogger();
     const handler = new UserCreatedLogHandler({ logger });
-    const event = new UserCreatedEvent('user-1', 'ada@example.com');
+    const event = new UserCreatedEvent(
+      'user-1',
+      'ada@example.com',
+      new Date('2026-01-01T00:00:00.000Z'),
+    );
 
     await handler.handle(event);
 

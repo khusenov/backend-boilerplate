@@ -3,6 +3,7 @@ import { env, type Env } from '@/config/env';
 import type { PrismaClient } from '@/generated/prisma/client';
 import { createPrismaClient } from '@/infrastructure/persistence/prisma-client';
 import type { UserRepository } from '@/domain/user/user-repository';
+import type { Clock } from '@/application/shared/ports/clock';
 import type { IdGenerator } from '@/application/shared/ports/id-generator';
 import type { PasswordHasher } from '@/application/shared/ports/password-hasher';
 import { CreateUser } from '@/application/user/create-user';
@@ -12,6 +13,7 @@ import { EditUser } from '@/application/user/edit-user';
 import { DeleteUser } from '@/application/user/delete-user';
 import { PrismaUserRepository } from '@/infrastructure/persistence/prisma-user-repository';
 import { UuidIdGenerator } from '@/infrastructure/identity/uuid-id-generator';
+import { SystemClock } from '@/infrastructure/time/system-clock';
 import { Argon2PasswordHasher } from '@/infrastructure/security/argon2-password-hasher';
 import type { AccessTokenService } from '@/application/shared/ports/access-token-service';
 import type { OpaqueTokenService } from '@/application/shared/ports/opaque-token-service';
@@ -88,6 +90,7 @@ declare module '@fastify/awilix' {
     // ports
     userRepository: UserRepository;
     idGenerator: IdGenerator;
+    clock: Clock;
     passwordHasher: PasswordHasher;
     accessTokenService: AccessTokenService;
     opaqueTokenService: OpaqueTokenService;
@@ -169,6 +172,7 @@ export function registerDependencies(
 
     userRepository: asClass(PrismaUserRepository).singleton(),
     idGenerator: asClass(UuidIdGenerator).singleton(),
+    clock: asClass(SystemClock).singleton(),
     passwordHasher: asClass(Argon2PasswordHasher).singleton(),
     accessTokenService: asClass(JoseAccessTokenService).singleton(),
     opaqueTokenService: asClass(CryptoOpaqueTokenService).singleton(),
@@ -258,14 +262,20 @@ export function registerDependencies(
         refreshTokenRetentionTask,
         outboxRetentionTask,
         dataRetentionWindowMs,
+        clock,
         logger,
       }: Pick<
         Cradle,
-        'refreshTokenRetentionTask' | 'outboxRetentionTask' | 'dataRetentionWindowMs' | 'logger'
+        | 'refreshTokenRetentionTask'
+        | 'outboxRetentionTask'
+        | 'dataRetentionWindowMs'
+        | 'clock'
+        | 'logger'
       >) =>
         new EnforceDataRetentionJob({
           retentionTasks: [refreshTokenRetentionTask, outboxRetentionTask],
           dataRetentionWindowMs,
+          clock,
           logger,
         }),
     ).singleton(),

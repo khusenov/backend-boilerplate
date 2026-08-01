@@ -3,6 +3,7 @@ import type { DispatchDomainEventPayload } from './dispatch-domain-event-job-han
 import type { PrismaClient } from '@/generated/prisma/client';
 import type { JobHandler } from '@/application/shared/ports/job-handler';
 import type { JobQueue } from '@/application/shared/ports/job-queue';
+import type { Clock } from '@/application/shared/ports/clock';
 import type { Logger } from '@/application/shared/ports/logger';
 
 export const OUTBOX_RELAY_JOB = 'outbox.relay';
@@ -12,6 +13,7 @@ const RELAY_BATCH_SIZE = 100;
 export interface OutboxRelayDeps {
   prisma: PrismaClient;
   jobQueue: JobQueue;
+  clock: Clock;
   logger: Logger;
 }
 
@@ -19,11 +21,13 @@ export class OutboxRelay implements JobHandler {
   readonly jobName = OUTBOX_RELAY_JOB;
   private readonly prisma: PrismaClient;
   private readonly jobQueue: JobQueue;
+  private readonly clock: Clock;
   private readonly logger: Logger;
 
-  constructor({ prisma, jobQueue, logger }: OutboxRelayDeps) {
+  constructor({ prisma, jobQueue, clock, logger }: OutboxRelayDeps) {
     this.prisma = prisma;
     this.jobQueue = jobQueue;
+    this.clock = clock;
     this.logger = logger;
   }
 
@@ -55,7 +59,7 @@ export class OutboxRelay implements JobHandler {
     if (publishedIds.length > 0) {
       await this.prisma.outboxMessage.updateMany({
         where: { id: { in: publishedIds } },
-        data: { publishedAt: new Date() },
+        data: { publishedAt: this.clock.now() },
       });
     }
   }

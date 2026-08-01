@@ -10,15 +10,21 @@ import type { TransactionContext, UnitOfWork } from '@/application/shared/ports/
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { PasswordHasher } from '@/application/shared/ports/password-hasher';
 import type { IdGenerator } from '@/application/shared/ports/id-generator';
+import type { Clock } from '@/application/shared/ports/clock';
+
+const NOW = new Date('2026-01-01T00:00:00.000Z');
 
 function makeExistingUser(): User {
-  return User.create({
-    id: 'user-existing',
-    firstName: 'Jane',
-    lastName: 'Doe',
-    email: Email.create('jane@example.com'),
-    passwordHash: 'hashed-pw',
-  });
+  return User.create(
+    {
+      id: 'user-existing',
+      firstName: 'Jane',
+      lastName: 'Doe',
+      email: Email.create('jane@example.com'),
+      passwordHash: 'hashed-pw',
+    },
+    NOW,
+  );
 }
 
 // A fake UnitOfWork whose `run` invokes the callback with a stub transaction
@@ -37,15 +43,17 @@ function makeDeps() {
   const findByEmail = vi.fn<UserRepository['findByEmail']>().mockResolvedValue(null);
   const hash = vi.fn<PasswordHasher['hash']>().mockResolvedValue('hashed-secret');
   const generate = vi.fn<IdGenerator['generate']>().mockReturnValue('new-user-id');
+  const clock = { now: vi.fn<Clock['now']>().mockReturnValue(NOW) } satisfies Clock;
 
   const deps = {
     unitOfWork,
     userRepository: { findByEmail } as unknown as UserRepository,
     passwordHasher: { hash } as unknown as PasswordHasher,
     idGenerator: { generate } as unknown as IdGenerator,
+    clock,
   };
 
-  return { deps, run, findByEmail, hash, generate, stage, txSave };
+  return { deps, run, findByEmail, hash, generate, stage, txSave, clock };
 }
 
 const input = {
@@ -104,6 +112,15 @@ describe('CreateUser', () => {
       expect(savedUser.id).toBe('new-user-id');
     });
 
+    it('stamps the user from a single clock reading', async () => {
+      await new CreateUser(ctx.deps).execute(input);
+
+      const [savedUser] = ctx.txSave.mock.calls[0]!;
+      expect(savedUser.createdAt).toEqual(NOW);
+      expect(savedUser.updatedAt).toEqual(NOW);
+      expect(ctx.clock.now).toHaveBeenCalledOnce();
+    });
+
     it('stages the UserCreatedEvent inside the transaction', async () => {
       await new CreateUser(ctx.deps).execute(input);
 
@@ -114,6 +131,14 @@ describe('CreateUser', () => {
       expect(event).toBeInstanceOf(UserCreatedEvent);
       expect((event as UserCreatedEvent).aggregateId).toBe('new-user-id');
       expect((event as UserCreatedEvent).email).toBe(input.email);
+    });
+
+    it('stages an event whose occurredAt matches the saved user createdAt', async () => {
+      await new CreateUser(ctx.deps).execute(input);
+
+      const [savedUser] = ctx.txSave.mock.calls[0]!;
+      const [stagedEvents] = ctx.stage.mock.calls[0]!;
+      expect(stagedEvents[0]!.occurredAt).toEqual(savedUser.createdAt);
     });
 
     it('saves before it stages (save precedes stage within the transaction)', async () => {

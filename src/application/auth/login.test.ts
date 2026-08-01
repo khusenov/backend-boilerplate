@@ -9,25 +9,31 @@ import { User } from '@/domain/user/user-entity';
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { PasswordHasher } from '@/application/shared/ports/password-hasher';
 import type { GrantsReader } from '@/application/shared/ports/grants-reader';
+import type { Clock } from '@/application/shared/ports/clock';
 
 const FAKE_TOKENS: AuthTokensDto = {
   accessToken: 'access.token.jwt',
   refreshToken: 'raw-refresh-opaque',
 };
+const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
+const NOW = new Date('2026-06-01T12:00:00.000Z');
 
 function makeActiveUser(): User {
-  return User.create({
-    id: 'user-1',
-    firstName: 'Jane',
-    lastName: 'Doe',
-    email: Email.create('jane@example.com'),
-    passwordHash: 'hashed-secret',
-  });
+  return User.create(
+    {
+      id: 'user-1',
+      firstName: 'Jane',
+      lastName: 'Doe',
+      email: Email.create('jane@example.com'),
+      passwordHash: 'hashed-secret',
+    },
+    CREATED_AT,
+  );
 }
 
 function makeInactiveUser(): User {
   const user = makeActiveUser();
-  user.deactivate();
+  user.deactivate(CREATED_AT);
   return user;
 }
 
@@ -56,14 +62,17 @@ function makeLogin() {
       .mockResolvedValue({ systemRoleKeys: [], permissions: [] }),
   } satisfies GrantsReader;
 
+  const clock = { now: vi.fn<Clock['now']>().mockReturnValue(NOW) } satisfies Clock;
+
   const sut = new Login({
     userRepository: users,
     passwordHasher: hasher,
     sessionService: sessions,
     grants,
+    clock,
   });
 
-  return { sut, users, hasher, sessions, grants, issue };
+  return { sut, users, hasher, sessions, grants, issue, clock };
 }
 
 describe('Login', () => {
@@ -134,10 +143,40 @@ describe('Login', () => {
       await ctx.sut.execute({ email: 'jane@example.com', password: 'correct' });
 
       expect(ctx.grants.grantsFor).toHaveBeenCalledWith(user.id);
-      expect(ctx.issue).toHaveBeenCalledWith(user, {
-        systemRoleKeys: ['super-admin'],
-        permissions: ['users.read'],
-      });
+      expect(ctx.issue).toHaveBeenCalledWith(
+        user,
+        {
+          systemRoleKeys: ['super-admin'],
+          permissions: ['users.read'],
+        },
+        NOW,
+      );
+    });
+
+    it.each([
+      ['an unknown email', () => ctx.users.findByEmail.mockResolvedValue(null)],
+      [
+        'a wrong password',
+        () => {
+          ctx.users.findByEmail.mockResolvedValue(makeActiveUser());
+          ctx.hasher.verify.mockResolvedValue(false);
+        },
+      ],
+      [
+        'an inactive user',
+        () => {
+          ctx.users.findByEmail.mockResolvedValue(makeInactiveUser());
+          ctx.hasher.verify.mockResolvedValue(true);
+        },
+      ],
+    ])('never reads the clock for %s', async (_case, arrange) => {
+      arrange();
+
+      await expect(ctx.sut.execute({ email: 'jane@example.com', password: 'pw' })).rejects.toThrow(
+        InvalidCredentialsError,
+      );
+
+      expect(ctx.clock.now).not.toHaveBeenCalled();
     });
 
     it('verifies the supplied password against the stored hash', async () => {

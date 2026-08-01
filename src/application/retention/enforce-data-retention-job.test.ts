@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   DATA_RETENTION_JOB,
   EnforceDataRetentionJob,
 } from '@/application/retention/enforce-data-retention-job';
 import type { RetentionTask } from '@/application/shared/ports/retention-task';
+import type { Clock } from '@/application/shared/ports/clock';
 import type { Logger } from '@/application/shared/ports/logger';
 
 const WINDOW_MS = 1_000;
@@ -20,24 +21,18 @@ function fakeTask(resource: string, prune = vi.fn().mockResolvedValue(0)) {
 }
 
 function makeJob(tasks: RetentionTask[], logger: Logger = stubLogger()) {
+  const clock = { now: () => NOW } satisfies Clock;
+
   const job = new EnforceDataRetentionJob({
     retentionTasks: tasks,
     dataRetentionWindowMs: WINDOW_MS,
+    clock,
     logger,
   });
   return { job, logger };
 }
 
 describe('EnforceDataRetentionJob', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(NOW);
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   it('exposes the data-retention job name', () => {
     const { job } = makeJob([]);
     expect(job.jobName).toBe(DATA_RETENTION_JOB);

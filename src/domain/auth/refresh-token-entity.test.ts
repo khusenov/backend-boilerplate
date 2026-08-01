@@ -1,33 +1,28 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { RefreshToken } from './refresh-token-entity';
 
 const BASE_TIME = new Date('2026-01-01T00:00:00.000Z');
+const LATER = new Date('2026-01-01T00:00:01.000Z');
 const FUTURE = new Date('2026-12-31T00:00:00.000Z');
 const PAST = new Date('2025-01-01T00:00:00.000Z');
 
 function makeToken(
   overrides: Partial<Parameters<typeof RefreshToken.create>[0]> = {},
 ): RefreshToken {
-  return RefreshToken.create({
-    id: 'token-1',
-    userId: 'user-1',
-    familyId: 'family-1',
-    tokenHash: 'hash-abc',
-    expiresAt: FUTURE,
-    ...overrides,
-  });
+  return RefreshToken.create(
+    {
+      id: 'token-1',
+      userId: 'user-1',
+      familyId: 'family-1',
+      tokenHash: 'hash-abc',
+      expiresAt: FUTURE,
+      ...overrides,
+    },
+    BASE_TIME,
+  );
 }
 
 describe('RefreshToken', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(BASE_TIME);
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   describe('create', () => {
     it('creates a fresh token with usedAt and revokedAt as null', () => {
       const token = makeToken();
@@ -76,7 +71,7 @@ describe('RefreshToken', () => {
 
     it('is true after markUsed', () => {
       const token = makeToken();
-      token.markUsed();
+      token.markUsed(LATER);
       expect(token.isUsed).toBe(true);
     });
   });
@@ -88,93 +83,90 @@ describe('RefreshToken', () => {
 
     it('is true after revoke', () => {
       const token = makeToken();
-      token.revoke();
+      token.revoke(LATER);
       expect(token.isRevoked).toBe(true);
     });
   });
 
   describe('isExpired', () => {
-    it('is false when expiresAt is in the future', () => {
-      expect(makeToken({ expiresAt: FUTURE }).isExpired()).toBe(false);
+    it('is false when expiresAt is after the supplied instant', () => {
+      expect(makeToken({ expiresAt: FUTURE }).isExpired(BASE_TIME)).toBe(false);
     });
 
-    it('is true when expiresAt is in the past', () => {
-      expect(makeToken({ expiresAt: PAST }).isExpired()).toBe(true);
+    it('is true when expiresAt is before the supplied instant', () => {
+      expect(makeToken({ expiresAt: PAST }).isExpired(BASE_TIME)).toBe(true);
     });
 
-    it('is true when expiresAt equals now', () => {
-      expect(makeToken({ expiresAt: BASE_TIME }).isExpired()).toBe(true);
+    it('is true when expiresAt equals the supplied instant', () => {
+      expect(makeToken({ expiresAt: BASE_TIME }).isExpired(BASE_TIME)).toBe(true);
     });
 
-    it('accepts an explicit now reference', () => {
-      const token = makeToken({ expiresAt: FUTURE });
-      expect(token.isExpired(new Date('2027-01-01T00:00:00.000Z'))).toBe(true);
+    it('flips as the supplied instant crosses expiresAt', () => {
+      const token = makeToken({ expiresAt: LATER });
+      expect(token.isExpired(new Date(LATER.getTime() - 1))).toBe(false);
+      expect(token.isExpired(new Date(LATER.getTime() + 1))).toBe(true);
     });
   });
 
   describe('isActive', () => {
     it('is true when not used, not revoked, and not expired', () => {
-      expect(makeToken().isActive()).toBe(true);
+      expect(makeToken().isActive(BASE_TIME)).toBe(true);
     });
 
     it('is false when used', () => {
       const token = makeToken();
-      token.markUsed();
-      expect(token.isActive()).toBe(false);
+      token.markUsed(LATER);
+      expect(token.isActive(LATER)).toBe(false);
     });
 
     it('is false when revoked', () => {
       const token = makeToken();
-      token.revoke();
-      expect(token.isActive()).toBe(false);
+      token.revoke(LATER);
+      expect(token.isActive(LATER)).toBe(false);
     });
 
     it('is false when expired', () => {
-      expect(makeToken({ expiresAt: PAST }).isActive()).toBe(false);
+      expect(makeToken({ expiresAt: PAST }).isActive(BASE_TIME)).toBe(false);
     });
   });
 
   describe('markUsed', () => {
-    it('sets usedAt and bumps updatedAt', () => {
+    it('sets usedAt and updatedAt to the supplied instant', () => {
       const token = makeToken();
-      vi.advanceTimersByTime(1000);
 
-      token.markUsed();
+      token.markUsed(LATER);
 
-      expect(token.usedAt).toEqual(new Date('2026-01-01T00:00:01.000Z'));
-      expect(token.updatedAt).toEqual(new Date('2026-01-01T00:00:01.000Z'));
+      expect(token.usedAt).toEqual(LATER);
+      expect(token.updatedAt).toEqual(LATER);
     });
 
     it('is a no-op when the token is already used', () => {
       const token = makeToken();
-      token.markUsed();
+      token.markUsed(LATER);
       const usedAt = token.usedAt;
-      vi.advanceTimersByTime(1000);
 
-      token.markUsed();
+      token.markUsed(new Date('2026-01-01T00:00:02.000Z'));
 
       expect(token.usedAt).toBe(usedAt);
     });
   });
 
   describe('revoke', () => {
-    it('sets revokedAt and bumps updatedAt', () => {
+    it('sets revokedAt and updatedAt to the supplied instant', () => {
       const token = makeToken();
-      vi.advanceTimersByTime(1000);
 
-      token.revoke();
+      token.revoke(LATER);
 
-      expect(token.revokedAt).toEqual(new Date('2026-01-01T00:00:01.000Z'));
-      expect(token.updatedAt).toEqual(new Date('2026-01-01T00:00:01.000Z'));
+      expect(token.revokedAt).toEqual(LATER);
+      expect(token.updatedAt).toEqual(LATER);
     });
 
     it('is a no-op when the token is already revoked', () => {
       const token = makeToken();
-      token.revoke();
+      token.revoke(LATER);
       const revokedAt = token.revokedAt;
-      vi.advanceTimersByTime(1000);
 
-      token.revoke();
+      token.revoke(new Date('2026-01-01T00:00:02.000Z'));
 
       expect(token.revokedAt).toBe(revokedAt);
     });

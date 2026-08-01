@@ -33,7 +33,10 @@ describe('GetRole', () => {
 
   it('returns the mapped role DTO', async () => {
     ctx.roles.findById.mockResolvedValue(
-      Role.create({ id: 'role-1', name: 'Editor', permissions: ['users.read'] }),
+      Role.create(
+        { id: 'role-1', name: 'Editor', permissions: ['users.read'] },
+        new Date('2026-01-01T00:00:00.000Z'),
+      ),
     );
 
     const result = await ctx.sut.execute({ id: 'role-1' });

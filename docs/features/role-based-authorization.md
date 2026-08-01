@@ -162,7 +162,9 @@ claims at login.
 2. Read all stored permissions, compute the set present in the DB but absent from the catalogue, and
    `deleteByKeys(...)` them — the catalogue is authoritative, so drift is pruned.
 3. Look up the `super-admin` role by key; if missing, create it via `Role.createSystem({ ... key:
-SUPERADMIN_ROLE_KEY, name: 'Super Admin' })` and save it (`superadminCreated: true`).
+SUPERADMIN_ROLE_KEY, name: 'Super Admin' }, now)` and save it (`superadminCreated: true`). The `now` is
+   the one instant `execute` read from the `Clock` port up front, shared by the permission upserts, this
+   role, and the bootstrap assignment below.
 4. `promoteBootstrapAdmin`: if `BOOTSTRAP_ADMIN_EMAIL` is set and that user exists and is not already
    linked to the superadmin role, assign the role (`bootstrapPromoted: true`).
 
@@ -297,7 +299,7 @@ of the ports it needs and a single `execute(input)` method, register it in `src/
   permission set you can trim.
 
 - **System roles are protected in the domain, not just the API.** `Role.guardMutable()` and the
-  overridden `softDelete()` throw `SystemRoleProtectedError` for any `isSystem` role, and `AssignRole`
+  overridden `softDelete(now)` throw `SystemRoleProtectedError` for any `isSystem` role, and `AssignRole`
   refuses to assign a system role through the API. Putting the invariant on the aggregate means the
   protection holds no matter which caller (HTTP, a script, a future job) tries to mutate it — the rule
   cannot be bypassed by reaching around the route layer.

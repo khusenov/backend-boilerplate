@@ -2,29 +2,26 @@ import { User, UserStatus } from './user-entity';
 import { Email } from './email-vo';
 import { UserInvalidNameError, UserDeletedError } from './user-errors';
 import { UserCreatedEvent } from '@/domain/user/events/user-created-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+
+const BASE_TIME = new Date('2026-01-01T00:00:00.000Z');
+const LATER = new Date('2026-01-01T00:00:01.000Z');
 
 function makeUser(overrides: Partial<Parameters<typeof User.create>[0]> = {}): User {
-  return User.create({
-    id: 'user-1',
-    firstName: 'Ada',
-    lastName: 'Lovelace',
-    email: Email.create('ada@example.com'),
-    passwordHash: 'hashed-password',
-    ...overrides,
-  });
+  return User.create(
+    {
+      id: 'user-1',
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      email: Email.create('ada@example.com'),
+      passwordHash: 'hashed-password',
+      ...overrides,
+    },
+    BASE_TIME,
+  );
 }
 
 describe('User', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   describe('create', () => {
     it('creates an active user with normalized names', () => {
       const user = makeUser({ firstName: '  Ada  ', lastName: '  Lovelace  ' });
@@ -36,6 +33,7 @@ describe('User', () => {
       expect(user.isActive).toBe(true);
       expect(user.isDeleted).toBe(false);
       expect(user.deletedAt).toBeNull();
+      expect(user.createdAt).toEqual(BASE_TIME);
       expect(user.createdAt).toEqual(user.updatedAt);
     });
 
@@ -62,6 +60,15 @@ describe('User', () => {
       expect(created.email).toBe('ada@example.com');
     });
 
+    it('stamps the event with the same instant as createdAt and updatedAt', () => {
+      const user = makeUser();
+
+      const [event] = user.pullDomainEvents();
+
+      expect(event?.occurredAt).toEqual(user.createdAt);
+      expect(event?.occurredAt).toEqual(user.updatedAt);
+    });
+
     it('clears the buffer after pullDomainEvents (pull semantics)', () => {
       const user = makeUser();
 
@@ -77,8 +84,8 @@ describe('User', () => {
         email: Email.create('grace@example.com'),
         passwordHash: 'stored-hash',
         status: UserStatus.Inactive,
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        createdAt: BASE_TIME,
+        updatedAt: BASE_TIME,
         deletedAt: null,
       });
 
@@ -111,179 +118,170 @@ describe('User', () => {
   });
 
   describe('activate', () => {
-    it('activates an inactive user and bumps updatedAt', () => {
+    it('activates an inactive user and sets updatedAt to the supplied instant', () => {
       const user = makeUser();
-      user.deactivate();
-      vi.advanceTimersByTime(1000);
+      user.deactivate(BASE_TIME);
 
-      user.activate();
+      user.activate(LATER);
 
       expect(user.isActive).toBe(true);
-      expect(user.updatedAt).toEqual(new Date('2026-01-01T00:00:01.000Z'));
+      expect(user.updatedAt).toEqual(LATER);
     });
 
     it('is a no-op when the user is already active', () => {
       const user = makeUser();
       const before = user.updatedAt;
-      vi.advanceTimersByTime(1000);
 
-      user.activate();
+      user.activate(LATER);
 
       expect(user.updatedAt).toBe(before);
     });
 
     it('throws when the user is deleted', () => {
       const user = makeUser();
-      user.softDelete();
+      user.softDelete(BASE_TIME);
 
-      expect(() => user.activate()).toThrow(UserDeletedError);
+      expect(() => user.activate(LATER)).toThrow(UserDeletedError);
     });
   });
 
   describe('deactivate', () => {
-    it('deactivates an active user and bumps updatedAt', () => {
+    it('deactivates an active user and sets updatedAt to the supplied instant', () => {
       const user = makeUser();
-      vi.advanceTimersByTime(1000);
 
-      user.deactivate();
+      user.deactivate(LATER);
 
       expect(user.isActive).toBe(false);
-      expect(user.updatedAt).toEqual(new Date('2026-01-01T00:00:01.000Z'));
+      expect(user.updatedAt).toEqual(LATER);
     });
 
     it('is a no-op when the user is already inactive', () => {
       const user = makeUser();
-      user.deactivate();
+      user.deactivate(BASE_TIME);
       const before = user.updatedAt;
-      vi.advanceTimersByTime(1000);
 
-      user.deactivate();
+      user.deactivate(LATER);
 
       expect(user.updatedAt).toBe(before);
     });
 
     it('throws when the user is deleted', () => {
       const user = makeUser();
-      user.softDelete();
+      user.softDelete(BASE_TIME);
 
-      expect(() => user.deactivate()).toThrow(UserDeletedError);
+      expect(() => user.deactivate(LATER)).toThrow(UserDeletedError);
     });
   });
 
   describe('changeFirstName', () => {
-    it('updates the name and bumps updatedAt', () => {
+    it('updates the name and sets updatedAt to the supplied instant', () => {
       const user = makeUser();
-      vi.advanceTimersByTime(1000);
 
-      user.changeFirstName('  Augusta  ');
+      user.changeFirstName('  Augusta  ', LATER);
 
       expect(user.firstName).toBe('Augusta');
-      expect(user.updatedAt).toEqual(new Date('2026-01-01T00:00:01.000Z'));
+      expect(user.updatedAt).toEqual(LATER);
     });
 
     it('is a no-op when the normalized name is unchanged', () => {
       const user = makeUser({ firstName: 'Ada' });
       const before = user.updatedAt;
-      vi.advanceTimersByTime(1000);
 
-      user.changeFirstName('  Ada  ');
+      user.changeFirstName('  Ada  ', LATER);
 
       expect(user.updatedAt).toBe(before);
     });
 
     it('throws for a blank name', () => {
-      expect(() => makeUser().changeFirstName('   ')).toThrow(UserInvalidNameError);
+      expect(() => makeUser().changeFirstName('   ', LATER)).toThrow(UserInvalidNameError);
     });
 
     it('throws when the user is deleted', () => {
       const user = makeUser();
-      user.softDelete();
+      user.softDelete(BASE_TIME);
 
-      expect(() => user.changeFirstName('Augusta')).toThrow(UserDeletedError);
+      expect(() => user.changeFirstName('Augusta', LATER)).toThrow(UserDeletedError);
     });
   });
 
   describe('changeLastName', () => {
-    it('updates the name and bumps updatedAt', () => {
+    it('updates the name and sets updatedAt to the supplied instant', () => {
       const user = makeUser();
-      vi.advanceTimersByTime(1000);
 
-      user.changeLastName('  Byron  ');
+      user.changeLastName('  Byron  ', LATER);
 
       expect(user.lastName).toBe('Byron');
-      expect(user.updatedAt).toEqual(new Date('2026-01-01T00:00:01.000Z'));
+      expect(user.updatedAt).toEqual(LATER);
     });
 
     it('is a no-op when the normalized name is unchanged', () => {
       const user = makeUser({ lastName: 'Lovelace' });
       const before = user.updatedAt;
-      vi.advanceTimersByTime(1000);
 
-      user.changeLastName('  Lovelace  ');
+      user.changeLastName('  Lovelace  ', LATER);
 
       expect(user.updatedAt).toBe(before);
     });
 
     it('throws for a blank name', () => {
-      expect(() => makeUser().changeLastName('   ')).toThrow(UserInvalidNameError);
+      expect(() => makeUser().changeLastName('   ', LATER)).toThrow(UserInvalidNameError);
     });
 
     it('throws when the user is deleted', () => {
       const user = makeUser();
-      user.softDelete();
+      user.softDelete(BASE_TIME);
 
-      expect(() => user.changeLastName('Byron')).toThrow(UserDeletedError);
+      expect(() => user.changeLastName('Byron', LATER)).toThrow(UserDeletedError);
     });
   });
 
   describe('changeEmail', () => {
-    it('updates the email and bumps updatedAt', () => {
+    it('updates the email and sets updatedAt to the supplied instant', () => {
       const user = makeUser();
-      vi.advanceTimersByTime(1000);
 
-      user.changeEmail(Email.create('new@example.com'));
+      user.changeEmail(Email.create('new@example.com'), LATER);
 
       expect(user.email.value).toBe('new@example.com');
-      expect(user.updatedAt).toEqual(new Date('2026-01-01T00:00:01.000Z'));
+      expect(user.updatedAt).toEqual(LATER);
     });
 
     it('is a no-op when the email resolves to the same value', () => {
       const user = makeUser({ email: Email.create('ada@example.com') });
       const before = user.updatedAt;
-      vi.advanceTimersByTime(1000);
 
-      user.changeEmail(Email.create('ADA@example.com'));
+      user.changeEmail(Email.create('ADA@example.com'), LATER);
 
       expect(user.updatedAt).toBe(before);
     });
 
     it('throws when the user is deleted', () => {
       const user = makeUser();
-      user.softDelete();
+      user.softDelete(BASE_TIME);
 
-      expect(() => user.changeEmail(Email.create('new@example.com'))).toThrow(UserDeletedError);
+      expect(() => user.changeEmail(Email.create('new@example.com'), LATER)).toThrow(
+        UserDeletedError,
+      );
     });
   });
 
   describe('softDelete', () => {
-    it('marks the user deleted and deactivates it', () => {
+    it('marks the user deleted and deactivates it with one shared instant', () => {
       const user = makeUser();
-      vi.advanceTimersByTime(1000);
 
-      user.softDelete();
+      user.softDelete(LATER);
 
       expect(user.isDeleted).toBe(true);
       expect(user.isActive).toBe(false);
-      expect(user.deletedAt).toEqual(new Date('2026-01-01T00:00:01.000Z'));
+      expect(user.deletedAt).toEqual(LATER);
+      expect(user.updatedAt).toEqual(LATER);
     });
 
     it('is a no-op when the user is already deleted', () => {
       const user = makeUser();
-      user.softDelete();
+      user.softDelete(BASE_TIME);
       const deletedAt = user.deletedAt;
-      vi.advanceTimersByTime(1000);
 
-      user.softDelete();
+      user.softDelete(LATER);
 
       expect(user.deletedAt).toBe(deletedAt);
     });
@@ -292,9 +290,9 @@ describe('User', () => {
   describe('restore', () => {
     it('clears deletedAt but leaves the user inactive', () => {
       const user = makeUser();
-      user.softDelete();
+      user.softDelete(BASE_TIME);
 
-      user.restore();
+      user.restore(LATER);
 
       expect(user.isDeleted).toBe(false);
       expect(user.deletedAt).toBeNull();

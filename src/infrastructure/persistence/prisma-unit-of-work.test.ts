@@ -5,8 +5,8 @@ import { DomainEvent } from '@/domain/shared/domain-event';
 import type { PrismaOutboxWriter } from './prisma-outbox-writer';
 
 class TestEvent extends DomainEvent {
-  constructor(aggregateId: string) {
-    super(aggregateId, 'test.event');
+  constructor(aggregateId: string, occurredAt: Date) {
+    super(aggregateId, 'test.event', occurredAt);
   }
 }
 
@@ -49,7 +49,7 @@ describe('PrismaUnitOfWork', () => {
     const { prisma, tx } = makePrisma();
     const { write, writer } = makeOutboxWriter();
     const sut = new PrismaUnitOfWork({ prisma, outboxWriter: writer });
-    const event = new TestEvent('agg-1');
+    const event = new TestEvent('agg-1', new Date('2026-01-01T00:00:00.000Z'));
 
     await sut.run(({ outbox }) => {
       outbox.stage([event]);

@@ -3,18 +3,24 @@ import { Logout } from './logout';
 import { RefreshToken } from '@/domain/auth/refresh-token-entity';
 import type { RefreshTokenRepository } from '@/domain/auth/refresh-token-repository';
 import type { OpaqueTokenService } from '@/application/shared/ports/opaque-token-service';
+import type { Clock } from '@/application/shared/ports/clock';
 
 const TOKEN_HASH = 'hashed-raw-token';
 const FAMILY_ID = 'family-abc';
+const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
+const NOW = new Date('2026-06-01T12:00:00.000Z');
 
 function makeActiveToken(): RefreshToken {
-  return RefreshToken.create({
-    id: 'token-1',
-    userId: 'user-1',
-    familyId: FAMILY_ID,
-    tokenHash: TOKEN_HASH,
-    expiresAt: new Date(Date.now() + 60_000),
-  });
+  return RefreshToken.create(
+    {
+      id: 'token-1',
+      userId: 'user-1',
+      familyId: FAMILY_ID,
+      tokenHash: TOKEN_HASH,
+      expiresAt: new Date(CREATED_AT.getTime() + 60_000),
+    },
+    CREATED_AT,
+  );
 }
 
 function makeLogout() {
@@ -32,9 +38,15 @@ function makeLogout() {
     hash: vi.fn<OpaqueTokenService['hash']>().mockReturnValue(TOKEN_HASH),
   } satisfies OpaqueTokenService;
 
-  const sut = new Logout({ refreshTokenRepository: refreshTokens, opaqueTokenService: opaque });
+  const clock = { now: vi.fn<Clock['now']>().mockReturnValue(NOW) } satisfies Clock;
 
-  return { sut, refreshTokens, opaque };
+  const sut = new Logout({
+    refreshTokenRepository: refreshTokens,
+    opaqueTokenService: opaque,
+    clock,
+  });
+
+  return { sut, refreshTokens, opaque, clock };
 }
 
 describe('Logout', () => {
@@ -51,6 +63,7 @@ describe('Logout', () => {
       expect(ctx.opaque.hash).not.toHaveBeenCalled();
       expect(ctx.refreshTokens.findByTokenHash).not.toHaveBeenCalled();
       expect(ctx.refreshTokens.revokeFamily).not.toHaveBeenCalled();
+      expect(ctx.clock.now).not.toHaveBeenCalled();
     });
 
     it('does nothing when the token is not found in the repository', async () => {
@@ -69,8 +82,7 @@ describe('Logout', () => {
       await ctx.sut.execute({ refreshToken: 'raw-token' });
 
       expect(ctx.refreshTokens.revokeFamily).toHaveBeenCalledOnce();
-      const [calledFamilyId] = ctx.refreshTokens.revokeFamily.mock.calls[0]!;
-      expect(calledFamilyId).toBe(FAMILY_ID);
+      expect(ctx.refreshTokens.revokeFamily).toHaveBeenCalledWith(FAMILY_ID, NOW);
     });
 
     it('hashes the provided raw token before looking it up', async () => {

@@ -6,7 +6,7 @@ export class UserCreatedEvent extends DomainEvent {
   constructor(
     aggregateId: string,
     readonly email: string,
-    occurredAt?: Date,
+    occurredAt: Date,
   ) {
     super(aggregateId, UserCreatedEvent.EVENT_NAME, occurredAt);
   }

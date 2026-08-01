@@ -3,7 +3,11 @@ import { CreateRole } from './create-role';
 import { Role } from '@/domain/authorization/role-entity';
 import type { RoleRepository } from '@/domain/authorization/role-repository';
 import type { IdGenerator } from '@/application/shared/ports/id-generator';
+import type { Clock } from '@/application/shared/ports/clock';
 import { RoleNameTakenError, UnknownPermissionError } from '@/domain/authorization/role-errors';
+
+const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
+const NOW = new Date('2026-06-01T12:00:00.000Z');
 
 function makeCreateRole() {
   const roles = {
@@ -18,9 +22,11 @@ function makeCreateRole() {
     generate: vi.fn<IdGenerator['generate']>().mockReturnValue('new-role-id'),
   } satisfies IdGenerator;
 
-  const sut = new CreateRole({ roleRepository: roles, idGenerator: ids });
+  const clock = { now: vi.fn<Clock['now']>().mockReturnValue(NOW) } satisfies Clock;
 
-  return { sut, roles, ids };
+  const sut = new CreateRole({ roleRepository: roles, idGenerator: ids, clock });
+
+  return { sut, roles, ids, clock };
 }
 
 describe('CreateRole', () => {
@@ -38,7 +44,9 @@ describe('CreateRole', () => {
   });
 
   it('rejects a name already held by an active role', async () => {
-    ctx.roles.findByName.mockResolvedValue(Role.create({ id: 'other', name: 'Editor' }));
+    ctx.roles.findByName.mockResolvedValue(
+      Role.create({ id: 'other', name: 'Editor' }, CREATED_AT),
+    );
 
     await expect(ctx.sut.execute({ name: 'Editor' })).rejects.toThrow(RoleNameTakenError);
     expect(ctx.roles.save).not.toHaveBeenCalled();
@@ -64,5 +72,14 @@ describe('CreateRole', () => {
     expect(result.key).toBeNull();
     expect(result.isSystem).toBe(false);
     expect([...result.permissions].sort()).toEqual(['users.read', 'users.update']);
+  });
+
+  it('stamps the new role from a single clock reading', async () => {
+    await ctx.sut.execute({ name: 'Editor' });
+
+    const [savedRole] = ctx.roles.save.mock.calls[0]!;
+    expect(savedRole.createdAt).toEqual(NOW);
+    expect(savedRole.updatedAt).toEqual(NOW);
+    expect(ctx.clock.now).toHaveBeenCalledOnce();
   });
 });

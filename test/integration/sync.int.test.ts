@@ -25,6 +25,7 @@ describe('SyncAuthorization (integration)', () => {
     return new SyncAuthorization({
       unitOfWork: c.unitOfWork,
       idGenerator: c.idGenerator,
+      clock: c.clock,
       env: { BOOTSTRAP_ADMIN_EMAIL: bootstrapEmail } as Env,
     });
   }

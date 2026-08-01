@@ -65,8 +65,7 @@ export class User extends Entity<UserProps> {
     return trimmed;
   }
 
-  static create(params: UserCreateParams): User {
-    const now = new Date();
+  static create(params: UserCreateParams, now: Date): User {
     const firstName = this.normalizeName(params.firstName, 'firstName');
     const lastName = this.normalizeName(params.lastName, 'lastName');
 
@@ -80,7 +79,7 @@ export class User extends Entity<UserProps> {
       deletedAt: null,
     });
 
-    user.recordEvent(new UserCreatedEvent(user.id, user.email.toString()));
+    user.recordEvent(new UserCreatedEvent(user.id, user.email.toString(), now));
     return user;
   }
 
@@ -88,46 +87,46 @@ export class User extends Entity<UserProps> {
     return new User(props);
   }
 
-  activate(): void {
+  activate(now: Date): void {
     if (this.isDeleted) throw new UserDeletedError(this.id);
     if (this.isActive) return;
     this.props.status = UserStatus.Active;
-    this.touch();
+    this.touch(now);
   }
 
-  deactivate(): void {
+  deactivate(now: Date): void {
     if (this.isDeleted) throw new UserDeletedError(this.id);
     if (!this.isActive) return;
     this.props.status = UserStatus.Inactive;
-    this.touch();
+    this.touch(now);
   }
 
-  changeFirstName(val: string): void {
+  changeFirstName(rawFirstName: string, now: Date): void {
     if (this.isDeleted) throw new UserDeletedError(this.id);
-    const firstName = User.normalizeName(val, 'firstName');
+    const firstName = User.normalizeName(rawFirstName, 'firstName');
     if (this.props.firstName === firstName) return;
     this.props.firstName = firstName;
-    this.touch();
+    this.touch(now);
   }
 
-  changeLastName(val: string): void {
+  changeLastName(rawLastName: string, now: Date): void {
     if (this.isDeleted) throw new UserDeletedError(this.id);
-    const lastName = User.normalizeName(val, 'lastName');
+    const lastName = User.normalizeName(rawLastName, 'lastName');
     if (this.props.lastName === lastName) return;
     this.props.lastName = lastName;
-    this.touch();
+    this.touch(now);
   }
 
-  changeEmail(email: Email): void {
+  changeEmail(email: Email, now: Date): void {
     if (this.isDeleted) throw new UserDeletedError(this.id);
     if (this.props.email.equals(email)) return;
     this.props.email = email;
-    this.touch();
+    this.touch(now);
   }
 
-  override softDelete(): void {
+  override softDelete(now: Date): void {
     if (this.isDeleted) return;
-    this.deactivate();
-    super.softDelete();
+    this.deactivate(now);
+    super.softDelete(now);
   }
 }

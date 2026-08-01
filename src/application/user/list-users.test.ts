@@ -4,14 +4,19 @@ import { Email } from '@/domain/user/email-vo';
 import { User } from '@/domain/user/user-entity';
 import type { UserRepository } from '@/domain/user/user-repository';
 
+const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
+
 function makeUser(id: string): User {
-  return User.create({
-    id,
-    firstName: 'Jane',
-    lastName: 'Doe',
-    email: Email.create(`${id}@example.com`),
-    passwordHash: 'hashed-pw',
-  });
+  return User.create(
+    {
+      id,
+      firstName: 'Jane',
+      lastName: 'Doe',
+      email: Email.create(`${id}@example.com`),
+      passwordHash: 'hashed-pw',
+    },
+    CREATED_AT,
+  );
 }
 
 function makeListUsers() {

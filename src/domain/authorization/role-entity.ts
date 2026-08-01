@@ -54,15 +54,15 @@ export class Role extends Entity<RoleProps> {
 
   private static build(
     params: RoleCreateParams,
-    opts: { key: string | null; isSystem: boolean },
+    options: { key: string | null; isSystem: boolean },
+    now: Date,
   ): Role {
-    const now = new Date();
     return new Role({
       id: params.id,
-      key: opts.key,
+      key: options.key,
       name: Role.normalizeName(params.name),
       description: Role.normalizeDescription(params.description),
-      isSystem: opts.isSystem,
+      isSystem: options.isSystem,
       permissions: new Set(params.permissions ?? []),
       createdAt: now,
       updatedAt: now,
@@ -70,60 +70,60 @@ export class Role extends Entity<RoleProps> {
     });
   }
 
-  static create(params: RoleCreateParams): Role {
-    return Role.build(params, { key: null, isSystem: false });
+  static create(params: RoleCreateParams, now: Date): Role {
+    return Role.build(params, { key: null, isSystem: false }, now);
   }
 
-  static createSystem(params: RoleCreateParams & { key: string }): Role {
-    return Role.build(params, { key: params.key, isSystem: true });
+  static createSystem(params: RoleCreateParams & { key: string }, now: Date): Role {
+    return Role.build(params, { key: params.key, isSystem: true }, now);
   }
 
   static hydrate(props: RoleProps): Role {
     return new Role(props);
   }
 
-  rename(name: string): void {
+  rename(name: string, now: Date): void {
     this.guardMutable();
     const next = Role.normalizeName(name);
     if (this.props.name === next) return;
     this.props.name = next;
-    this.touch();
+    this.touch(now);
   }
 
-  changeDescription(description: string | null): void {
+  changeDescription(description: string | null, now: Date): void {
     this.guardMutable();
     const next = Role.normalizeDescription(description);
     if (this.props.description === next) return;
     this.props.description = next;
-    this.touch();
+    this.touch(now);
   }
 
-  grant(permission: string): void {
+  grant(permission: string, now: Date): void {
     this.guardMutable();
     if (this.props.permissions.has(permission)) return;
     this.props.permissions.add(permission);
-    this.touch();
+    this.touch(now);
   }
 
-  revoke(permission: string): void {
+  revoke(permission: string, now: Date): void {
     this.guardMutable();
     if (!this.props.permissions.delete(permission)) return;
-    this.touch();
+    this.touch(now);
   }
 
-  setPermissions(permissions: string[]): void {
+  setPermissions(permissions: string[], now: Date): void {
     this.guardMutable();
     this.props.permissions = new Set(permissions);
-    this.touch();
+    this.touch(now);
   }
 
   hasPermission(permission: string): boolean {
     return this.props.permissions.has(permission);
   }
 
-  override softDelete(): void {
+  override softDelete(now: Date): void {
     if (this.props.isSystem) throw new SystemRoleProtectedError(this.id);
-    super.softDelete();
+    super.softDelete(now);
   }
 
   private guardMutable(): void {

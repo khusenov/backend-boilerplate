@@ -9,6 +9,7 @@ import type { RoleRepository } from '@/domain/authorization/role-repository';
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { UserRoleRepository } from '@/application/shared/ports/user-role-repository';
 import type { IdGenerator } from '@/application/shared/ports/id-generator';
+import type { Clock } from '@/application/shared/ports/clock';
 import type { Env } from '@/config/env';
 import type {
   TransactionalRepositories,
@@ -16,19 +17,27 @@ import type {
 } from '@/application/shared/ports/unit-of-work';
 
 const SUPERADMIN_ID = 'superadmin-id';
+const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
+const NOW = new Date('2026-06-01T12:00:00.000Z');
 
 function existingSuperadmin(): Role {
-  return Role.createSystem({ id: SUPERADMIN_ID, key: SUPERADMIN_ROLE_KEY, name: 'Super Admin' });
+  return Role.createSystem(
+    { id: SUPERADMIN_ID, key: SUPERADMIN_ROLE_KEY, name: 'Super Admin' },
+    CREATED_AT,
+  );
 }
 
 function bootstrapUser(): User {
-  return User.create({
-    id: 'admin-user',
-    firstName: 'Boot',
-    lastName: 'Strap',
-    email: Email.create('admin@finflow.com'),
-    passwordHash: 'hash',
-  });
+  return User.create(
+    {
+      id: 'admin-user',
+      firstName: 'Boot',
+      lastName: 'Strap',
+      email: Email.create('admin@finflow.com'),
+      passwordHash: 'hash',
+    },
+    CREATED_AT,
+  );
 }
 
 function makeSync(envOverrides: Partial<Env> = {}) {
@@ -80,9 +89,11 @@ function makeSync(envOverrides: Partial<Env> = {}) {
       ),
   };
 
-  const sut = new SyncAuthorization({ unitOfWork, idGenerator: ids, env });
+  const clock = { now: vi.fn<Clock['now']>().mockReturnValue(NOW) } satisfies Clock;
 
-  return { sut, permissions, roles, users, userRoles, ids, unitOfWork };
+  const sut = new SyncAuthorization({ unitOfWork, idGenerator: ids, clock, env });
+
+  return { sut, permissions, roles, users, userRoles, ids, unitOfWork, clock };
 }
 
 describe('SyncAuthorization', () => {
@@ -188,6 +199,22 @@ describe('SyncAuthorization', () => {
       expect(userId).toBe('admin-user');
       expect(roleId).toBe(SUPERADMIN_ID);
       expect(result.bootstrapPromoted).toBe(true);
+    });
+
+    it('stamps upserts, the superadmin role and the promotion with one shared instant', async () => {
+      const ctx = makeSync({ BOOTSTRAP_ADMIN_EMAIL: 'admin@finflow.com' });
+      ctx.users.findByEmail.mockResolvedValue(bootstrapUser());
+
+      await ctx.sut.execute();
+
+      for (const [record] of ctx.permissions.upsertByKey.mock.calls) {
+        expect(record.createdAt).toEqual(NOW);
+        expect(record.updatedAt).toEqual(NOW);
+      }
+      const [savedRole] = ctx.roles.save.mock.calls[0]!;
+      expect(savedRole.createdAt).toEqual(NOW);
+      expect(ctx.userRoles.assign).toHaveBeenCalledWith('admin-user', 'gen-id', NOW);
+      expect(ctx.clock.now).toHaveBeenCalledOnce();
     });
 
     it('is idempotent when the operator already holds the role', async () => {

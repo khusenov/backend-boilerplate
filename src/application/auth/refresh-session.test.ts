@@ -10,62 +10,69 @@ import { User } from '@/domain/user/user-entity';
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { OpaqueTokenService } from '@/application/shared/ports/opaque-token-service';
 import type { GrantsReader, UserGrants } from '@/application/shared/ports/grants-reader';
+import type { Clock } from '@/application/shared/ports/clock';
 
 const RAW_TOKEN = 'raw-refresh-token';
 const TOKEN_HASH = 'hashed-raw-refresh-token';
 const FAMILY_ID = 'family-abc';
 const GRANTS: UserGrants = { systemRoleKeys: [], permissions: ['users.read'] };
+const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
+const NOW = new Date('2026-06-01T12:00:00.000Z');
 
 const FAKE_TOKENS: AuthTokensDto = {
   accessToken: 'new.access.token',
   refreshToken: 'new-raw-refresh',
 };
 
+function makeTokenExpiringAt(expiresAt: Date): RefreshToken {
+  return RefreshToken.create(
+    {
+      id: 'token-1',
+      userId: 'user-1',
+      familyId: FAMILY_ID,
+      tokenHash: TOKEN_HASH,
+      expiresAt,
+    },
+    CREATED_AT,
+  );
+}
+
 function makeActiveToken(): RefreshToken {
-  return RefreshToken.create({
-    id: 'token-1',
-    userId: 'user-1',
-    familyId: FAMILY_ID,
-    tokenHash: TOKEN_HASH,
-    expiresAt: new Date(Date.now() + 60_000),
-  });
+  return makeTokenExpiringAt(new Date(NOW.getTime() + 60_000));
 }
 
 function makeRevokedToken(): RefreshToken {
   const token = makeActiveToken();
-  token.revoke();
+  token.revoke(CREATED_AT);
   return token;
 }
 
 function makeUsedToken(): RefreshToken {
   const token = makeActiveToken();
-  token.markUsed();
+  token.markUsed(CREATED_AT);
   return token;
 }
 
 function makeExpiredToken(): RefreshToken {
-  return RefreshToken.create({
-    id: 'token-1',
-    userId: 'user-1',
-    familyId: FAMILY_ID,
-    tokenHash: TOKEN_HASH,
-    expiresAt: new Date(Date.now() - 60_000),
-  });
+  return makeTokenExpiringAt(new Date(NOW.getTime() - 60_000));
 }
 
 function makeActiveUser(): User {
-  return User.create({
-    id: 'user-1',
-    firstName: 'Jane',
-    lastName: 'Doe',
-    email: Email.create('jane@example.com'),
-    passwordHash: 'hashed-secret',
-  });
+  return User.create(
+    {
+      id: 'user-1',
+      firstName: 'Jane',
+      lastName: 'Doe',
+      email: Email.create('jane@example.com'),
+      passwordHash: 'hashed-secret',
+    },
+    CREATED_AT,
+  );
 }
 
 function makeInactiveUser(): User {
   const user = makeActiveUser();
-  user.deactivate();
+  user.deactivate(CREATED_AT);
   return user;
 }
 
@@ -100,15 +107,18 @@ function makeRefreshSession() {
     grantsFor: vi.fn<GrantsReader['grantsFor']>().mockResolvedValue(GRANTS),
   } satisfies GrantsReader;
 
+  const clock = { now: vi.fn<Clock['now']>().mockReturnValue(NOW) } satisfies Clock;
+
   const sut = new RefreshSession({
     userRepository: users,
     refreshTokenRepository: refreshTokens,
     opaqueTokenService: opaque,
     sessionService: sessions as unknown as SessionService,
     grants,
+    clock,
   });
 
-  return { sut, refreshTokens, users, opaque, sessions, grants };
+  return { sut, refreshTokens, users, opaque, sessions, grants, clock };
 }
 
 describe('RefreshSession', () => {
@@ -141,6 +151,35 @@ describe('RefreshSession', () => {
     it('throws RefreshTokenInvalidError when the token is revoked', async () => {
       ctx.refreshTokens.findByTokenHash.mockResolvedValue(makeRevokedToken());
 
+      await expect(ctx.sut.execute({ refreshToken: RAW_TOKEN })).rejects.toThrow(
+        RefreshTokenInvalidError,
+      );
+    });
+
+    it.each([
+      ['an unknown token', null],
+      ['an already-revoked token', makeRevokedToken],
+    ])('never reads the clock for %s', async (_case, arrange) => {
+      ctx.refreshTokens.findByTokenHash.mockResolvedValue(arrange?.() ?? null);
+
+      await expect(ctx.sut.execute({ refreshToken: RAW_TOKEN })).rejects.toThrow(
+        RefreshTokenInvalidError,
+      );
+
+      expect(ctx.clock.now).not.toHaveBeenCalled();
+    });
+
+    it('accepts a token expiring one millisecond after now and rejects one expiring before', async () => {
+      ctx.users.findById.mockResolvedValue(makeActiveUser());
+
+      ctx.refreshTokens.findByTokenHash.mockResolvedValue(
+        makeTokenExpiringAt(new Date(NOW.getTime() + 1)),
+      );
+      await expect(ctx.sut.execute({ refreshToken: RAW_TOKEN })).resolves.toEqual(FAKE_TOKENS);
+
+      ctx.refreshTokens.findByTokenHash.mockResolvedValue(
+        makeTokenExpiringAt(new Date(NOW.getTime() - 1)),
+      );
       await expect(ctx.sut.execute({ refreshToken: RAW_TOKEN })).rejects.toThrow(
         RefreshTokenInvalidError,
       );
@@ -210,8 +249,20 @@ describe('RefreshSession', () => {
       const result = await ctx.sut.execute({ refreshToken: RAW_TOKEN });
 
       expect(ctx.sessions.reissue).toHaveBeenCalledOnce();
-      expect(ctx.sessions.reissue).toHaveBeenCalledWith(user, FAMILY_ID, GRANTS);
+      expect(ctx.sessions.reissue).toHaveBeenCalledWith(user, FAMILY_ID, GRANTS, NOW);
       expect(result).toEqual(FAKE_TOKENS);
+    });
+
+    it('stamps usedAt and the reissue with one instant from a single clock reading', async () => {
+      const token = makeActiveToken();
+      ctx.refreshTokens.findByTokenHash.mockResolvedValue(token);
+      ctx.users.findById.mockResolvedValue(makeActiveUser());
+
+      await ctx.sut.execute({ refreshToken: RAW_TOKEN });
+
+      expect(token.usedAt).toEqual(NOW);
+      expect(ctx.sessions.reissue.mock.calls[0]![3]).toEqual(token.usedAt);
+      expect(ctx.clock.now).toHaveBeenCalledOnce();
     });
 
     it('re-resolves the user grants on every refresh rather than reusing old claims', async () => {

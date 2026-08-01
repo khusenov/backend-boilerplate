@@ -6,7 +6,7 @@ export interface AccessTokenPayload {
 }
 
 export interface AccessTokenService {
-  sign(payload: AccessTokenPayload): Promise<string>;
+  sign(payload: AccessTokenPayload, now: Date): Promise<string>;
 
   verify(token: string): Promise<AccessTokenPayload>;
 }

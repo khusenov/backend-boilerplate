@@ -53,14 +53,17 @@ describe('outbox (integration)', () => {
     });
 
     it('rolls back the outbox row when the transaction fails (atomic write)', async () => {
-      const { unitOfWork, idGenerator } = h.app.diContainer.cradle;
-      const user = User.create({
-        id: idGenerator.generate(),
-        firstName: 'Rollback',
-        lastName: 'User',
-        email: Email.create('rollback@finflow.test'),
-        passwordHash: 'hashed',
-      });
+      const { unitOfWork, idGenerator, clock } = h.app.diContainer.cradle;
+      const user = User.create(
+        {
+          id: idGenerator.generate(),
+          firstName: 'Rollback',
+          lastName: 'User',
+          email: Email.create('rollback@finflow.test'),
+          passwordHash: 'hashed',
+        },
+        clock.now(),
+      );
 
       await expect(
         unitOfWork.run(async ({ userRepository, outbox }) => {
@@ -92,7 +95,12 @@ describe('outbox (integration)', () => {
       const connection = new Redis(redisUrl, { maxRetriesPerRequest: null });
       const queue = new BullMqJobQueue({ connection, queuePrefix: 'test-outbox-drain' });
       const enqueueSpy = vi.spyOn(queue, 'enqueue');
-      const relay = new OutboxRelay({ prisma: h.prisma, jobQueue: queue, logger: noopLogger });
+      const relay = new OutboxRelay({
+        prisma: h.prisma,
+        jobQueue: queue,
+        clock: h.app.diContainer.cradle.clock,
+        logger: noopLogger,
+      });
 
       await h.app.diContainer.cradle.createUser.execute({
         firstName: 'Relay',
@@ -151,7 +159,12 @@ describe('outbox (integration)', () => {
         handlers: [dispatchHandler],
         logger: noopLogger,
       });
-      const relay = new OutboxRelay({ prisma: h.prisma, jobQueue: queue, logger: noopLogger });
+      const relay = new OutboxRelay({
+        prisma: h.prisma,
+        jobQueue: queue,
+        clock: h.app.diContainer.cradle.clock,
+        logger: noopLogger,
+      });
 
       try {
         await h.app.diContainer.cradle.createUser.execute({

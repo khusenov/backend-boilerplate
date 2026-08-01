@@ -6,6 +6,8 @@ import type {
 import { UnauthorizedError } from '@/shared/errors';
 import type { Env } from '@/config/env';
 
+const MILLISECONDS_PER_SECOND = 1000;
+
 interface Deps {
   env: Env;
 }
@@ -23,7 +25,9 @@ export class JoseAccessTokenService implements AccessTokenService {
     this.ttlSeconds = env.ACCESS_TOKEN_TTL;
   }
 
-  async sign(payload: AccessTokenPayload): Promise<string> {
+  async sign(payload: AccessTokenPayload, now: Date): Promise<string> {
+    const expiresAt = new Date(now.getTime() + this.ttlSeconds * MILLISECONDS_PER_SECOND);
+
     return new SignJWT({
       email: payload.email,
       systemRoleKeys: payload.systemRoleKeys,
@@ -31,10 +35,10 @@ export class JoseAccessTokenService implements AccessTokenService {
     })
       .setProtectedHeader({ alg: 'HS256' })
       .setSubject(payload.sub)
-      .setIssuedAt()
+      .setIssuedAt(now)
       .setIssuer(this.issuer)
       .setAudience(this.audience)
-      .setExpirationTime(`${this.ttlSeconds}s`)
+      .setExpirationTime(expiresAt)
       .sign(this.secret);
   }
 

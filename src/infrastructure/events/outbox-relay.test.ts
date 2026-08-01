@@ -4,6 +4,9 @@ import { DISPATCH_DOMAIN_EVENT_JOB } from './dispatch-domain-event-job-handler';
 import type { PrismaClient } from '@/generated/prisma/client';
 import type { JobQueue } from '@/application/shared/ports/job-queue';
 import type { Logger } from '@/application/shared/ports/logger';
+import type { Clock } from '@/application/shared/ports/clock';
+
+const NOW = new Date('2026-06-01T12:00:00.000Z');
 
 function row(id: string) {
   return {
@@ -27,7 +30,9 @@ function makeRelay(
   const error = vi.fn<Logger['error']>();
   const logger: Logger = { info: vi.fn(), warn: vi.fn(), error, debug: vi.fn() };
 
-  const relay = new OutboxRelay({ prisma, jobQueue, logger });
+  const clock = { now: () => NOW } satisfies Clock;
+
+  const relay = new OutboxRelay({ prisma, jobQueue, clock, logger });
   return { relay, findMany, updateMany, enqueue, error };
 }
 
@@ -58,7 +63,7 @@ describe('OutboxRelay', () => {
     expect(updateMany).toHaveBeenCalledOnce();
     const marked = markPublishedArg(updateMany);
     expect(marked.where).toEqual({ id: { in: ['1', '2', '3'] } });
-    expect(marked.data.publishedAt).toBeInstanceOf(Date);
+    expect(marked.data.publishedAt).toEqual(NOW);
   });
 
   it('never marks anything published when every enqueue fails, and logs each error', async () => {
@@ -85,7 +90,7 @@ describe('OutboxRelay', () => {
     expect(updateMany).toHaveBeenCalledOnce();
     const marked = markPublishedArg(updateMany);
     expect(marked.where).toEqual({ id: { in: ['1', '3'] } }); // row 2 stays unpublished
-    expect(marked.data.publishedAt).toBeInstanceOf(Date);
+    expect(marked.data.publishedAt).toEqual(NOW);
     expect(error).toHaveBeenCalledOnce();
   });
 

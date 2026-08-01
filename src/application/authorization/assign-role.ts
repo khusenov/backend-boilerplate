@@ -1,6 +1,7 @@
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { RoleRepository } from '@/domain/authorization/role-repository';
 import type { UserRoleRepository } from '@/application/shared/ports/user-role-repository';
+import type { Clock } from '@/application/shared/ports/clock';
 import { UserNotFoundError } from '@/domain/user/user-errors';
 import { RoleNotFoundError, SystemRoleProtectedError } from '@/domain/authorization/role-errors';
 
@@ -15,17 +16,20 @@ interface AssignRoleDeps {
   userRepository: UserRepository;
   roleRepository: RoleRepository;
   userRoleRepository: UserRoleRepository;
+  clock: Clock;
 }
 
 export class AssignRole {
   private readonly users: UserRepository;
   private readonly roles: RoleRepository;
   private readonly userRoles: UserRoleRepository;
+  private readonly clock: Clock;
 
-  constructor({ userRepository, roleRepository, userRoleRepository }: AssignRoleDeps) {
+  constructor({ userRepository, roleRepository, userRoleRepository, clock }: AssignRoleDeps) {
     this.users = userRepository;
     this.roles = roleRepository;
     this.userRoles = userRoleRepository;
+    this.clock = clock;
   }
 
   async execute(input: AssignRoleInput): Promise<AssignRoleOutput> {
@@ -37,6 +41,6 @@ export class AssignRole {
 
     if (role.isSystem) throw new SystemRoleProtectedError(role.id);
 
-    await this.userRoles.assign(user.id, role.id, new Date());
+    await this.userRoles.assign(user.id, role.id, this.clock.now());
   }
 }

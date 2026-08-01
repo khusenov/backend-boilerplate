@@ -6,14 +6,19 @@ import type { UserRepository } from '@/domain/user/user-repository';
 import type { UserRoleRepository } from '@/application/shared/ports/user-role-repository';
 import { UserNotFoundError } from '@/domain/user/user-errors';
 
+const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
+
 function makeUser(): User {
-  return User.create({
-    id: 'user-1',
-    firstName: 'Jane',
-    lastName: 'Doe',
-    email: Email.create('jane@example.com'),
-    passwordHash: 'hash',
-  });
+  return User.create(
+    {
+      id: 'user-1',
+      firstName: 'Jane',
+      lastName: 'Doe',
+      email: Email.create('jane@example.com'),
+      passwordHash: 'hash',
+    },
+    CREATED_AT,
+  );
 }
 
 function makeRevokeRole() {

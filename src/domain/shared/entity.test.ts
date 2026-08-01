@@ -15,10 +15,12 @@ class TestEntity extends Entity<TestProps> {
     return this.props.name;
   }
 
-  touchPublic(): void {
-    this.touch();
+  touchPublic(now: Date): void {
+    this.touch(now);
   }
 }
+
+const LATER = new Date('2024-02-01T00:00:00Z');
 
 function makeProps(overrides: Partial<EntityProps> = {}): TestProps {
   const now = new Date('2024-01-01T00:00:00Z');
@@ -115,57 +117,60 @@ describe('Entity', () => {
   });
 
   describe('touch', () => {
-    it('updates updatedAt to a later time', () => {
-      const original = new Date('2024-01-01T00:00:00Z');
-      const entity = TestEntity.create(makeProps({ updatedAt: original }));
-      entity.touchPublic();
-      expect(entity.updatedAt.getTime()).toBeGreaterThanOrEqual(original.getTime());
+    it('sets updatedAt to the supplied instant', () => {
+      const entity = TestEntity.create(makeProps({ updatedAt: new Date('2024-01-01T00:00:00Z') }));
+      entity.touchPublic(LATER);
+      expect(entity.updatedAt).toEqual(LATER);
     });
   });
 
   describe('softDelete', () => {
     it('sets deletedAt and marks entity as deleted', () => {
       const entity = TestEntity.create(makeProps());
-      entity.softDelete();
+      entity.softDelete(LATER);
       expect(entity.isDeleted).toBe(true);
-      expect(entity.deletedAt).toBeInstanceOf(Date);
+      expect(entity.deletedAt).toEqual(LATER);
     });
 
-    it('updates updatedAt when soft-deleting', () => {
-      const original = new Date('2024-01-01T00:00:00Z');
-      const entity = TestEntity.create(makeProps({ updatedAt: original }));
-      entity.softDelete();
-      expect(entity.updatedAt.getTime()).toBeGreaterThanOrEqual(original.getTime());
+    it('stamps deletedAt and updatedAt with the same instant', () => {
+      const entity = TestEntity.create(makeProps({ updatedAt: new Date('2024-01-01T00:00:00Z') }));
+      entity.softDelete(LATER);
+      expect(entity.updatedAt).toEqual(LATER);
+      expect(entity.updatedAt).toEqual(entity.deletedAt);
     });
 
     it('is idempotent — calling twice does not change deletedAt', () => {
       const entity = TestEntity.create(makeProps());
-      entity.softDelete();
+      entity.softDelete(LATER);
       const firstDeletedAt = entity.deletedAt;
-      entity.softDelete();
+      entity.softDelete(new Date('2024-03-01T00:00:00Z'));
       expect(entity.deletedAt).toBe(firstDeletedAt);
     });
   });
 
   describe('restore', () => {
     it('clears deletedAt and marks entity as not deleted', () => {
-      const entity = TestEntity.create(makeProps({ deletedAt: new Date() }));
-      entity.restore();
+      const entity = TestEntity.create(makeProps({ deletedAt: new Date('2024-01-15T00:00:00Z') }));
+      entity.restore(LATER);
       expect(entity.isDeleted).toBe(false);
       expect(entity.deletedAt).toBeNull();
     });
 
-    it('updates updatedAt when restoring', () => {
-      const original = new Date('2024-01-01T00:00:00Z');
-      const entity = TestEntity.create(makeProps({ updatedAt: original, deletedAt: new Date() }));
-      entity.restore();
-      expect(entity.updatedAt.getTime()).toBeGreaterThanOrEqual(original.getTime());
+    it('sets updatedAt to the supplied instant when restoring', () => {
+      const entity = TestEntity.create(
+        makeProps({
+          updatedAt: new Date('2024-01-01T00:00:00Z'),
+          deletedAt: new Date('2024-01-15T00:00:00Z'),
+        }),
+      );
+      entity.restore(LATER);
+      expect(entity.updatedAt).toEqual(LATER);
     });
 
     it('is idempotent — calling on a non-deleted entity is a no-op', () => {
       const original = new Date('2024-01-01T00:00:00Z');
       const entity = TestEntity.create(makeProps({ updatedAt: original }));
-      entity.restore();
+      entity.restore(LATER);
       expect(entity.updatedAt).toBe(original);
       expect(entity.deletedAt).toBeNull();
     });

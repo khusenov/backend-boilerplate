@@ -54,16 +54,15 @@ export class RefreshToken extends Entity<RefreshTokenProps> {
     return this.props.revokedAt !== null;
   }
 
-  isExpired(now: Date = new Date()): boolean {
+  isExpired(now: Date): boolean {
     return this.props.expiresAt.getTime() <= now.getTime();
   }
 
-  isActive(now: Date = new Date()): boolean {
+  isActive(now: Date): boolean {
     return !this.isUsed && !this.isRevoked && !this.isExpired(now);
   }
 
-  static create(params: RefreshTokenCreateParams): RefreshToken {
-    const now = new Date();
+  static create(params: RefreshTokenCreateParams, now: Date): RefreshToken {
     return new RefreshToken({
       ...params,
       usedAt: null,
@@ -78,15 +77,15 @@ export class RefreshToken extends Entity<RefreshTokenProps> {
     return new RefreshToken(props);
   }
 
-  markUsed(): void {
+  markUsed(now: Date): void {
     if (this.isUsed) return;
-    this.props.usedAt = new Date();
-    this.touch();
+    this.props.usedAt = now;
+    this.touch(now);
   }
 
-  revoke(): void {
+  revoke(now: Date): void {
     if (this.isRevoked) return;
-    this.props.revokedAt = new Date();
-    this.touch();
+    this.props.revokedAt = now;
+    this.touch(now);
   }
 }
