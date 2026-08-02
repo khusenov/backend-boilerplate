@@ -46,6 +46,23 @@ export const env = cleanEnv(process.env, {
   BULL_BOARD_USERNAME: str({ default: 'admin' }),
   BULL_BOARD_PASSWORD: str({ default: '' }),
   BULL_BOARD_READONLY: bool({ default: true }),
+  SMTP_HOST: host({ devDefault: 'localhost' }),
+  SMTP_PORT: port({ default: 587, devDefault: 1025 }),
+  SMTP_SECURE: bool({
+    default: false,
+    desc: 'true for port 465 (implicit TLS); false uses STARTTLS',
+  }),
+  SMTP_REQUIRE_TLS: bool({
+    default: true,
+    devDefault: false,
+    desc: 'Refuse to send if STARTTLS cannot be negotiated; keep on in prod, off for a plaintext dev catcher',
+  }),
+  SMTP_USER: str({ default: '', desc: 'SMTP auth user; empty means no auth (e.g. local catcher)' }),
+  SMTP_PASSWORD: str({ default: '', desc: 'SMTP auth password; unused when SMTP_USER is empty' }),
+  EMAIL_FROM: email({
+    devDefault: 'no-reply@finflow.local',
+    desc: 'Default From address for outbound mail',
+  }),
 });
 
 export type Env = typeof env;

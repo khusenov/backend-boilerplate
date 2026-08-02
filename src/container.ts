@@ -82,6 +82,8 @@ import type { Queue } from 'bullmq';
 import { createDashboardQueue } from '@/infrastructure/jobs/dashboard-queue';
 import type { IdempotencyStore } from '@/application/shared/ports/idempotency-store';
 import { RedisIdempotencyStore } from '@/infrastructure/idempotency/redis-idempotency-store';
+import type { EmailSender } from '@/application/shared/ports/email-sender';
+import { NodemailerEmailSender } from '@/infrastructure/email/nodemailer-email-sender';
 
 declare module '@fastify/awilix' {
   interface Cradle {
@@ -94,6 +96,7 @@ declare module '@fastify/awilix' {
     idGenerator: IdGenerator;
     clock: Clock;
     passwordHasher: PasswordHasher;
+    emailSender: EmailSender;
     accessTokenService: AccessTokenService;
     opaqueTokenService: OpaqueTokenService;
     refreshTokenRepository: RefreshTokenRepository;
@@ -178,6 +181,18 @@ export function registerDependencies(
     idGenerator: asClass(UuidIdGenerator).singleton(),
     clock: asClass(SystemClock).singleton(),
     passwordHasher: asClass(Argon2PasswordHasher).singleton(),
+    emailSender: asFunction(
+      () =>
+        new NodemailerEmailSender({
+          host: env.SMTP_HOST,
+          port: env.SMTP_PORT,
+          secure: env.SMTP_SECURE,
+          requireTls: env.SMTP_REQUIRE_TLS,
+          user: env.SMTP_USER,
+          password: env.SMTP_PASSWORD,
+          from: env.EMAIL_FROM,
+        }),
+    ).singleton(),
     accessTokenService: asClass(JoseAccessTokenService).singleton(),
     opaqueTokenService: asClass(CryptoOpaqueTokenService).singleton(),
     refreshTokenRepository: asClass(PrismaRefreshTokenRepository).singleton(),
