@@ -1,7 +1,11 @@
 export const MIN_SECRET_LENGTH = 32;
 const MIN_DASHBOARD_PASSWORD_LENGTH = 16;
 
-const PRODUCTION_SECRET_KEYS = ['COOKIE_SECRET', 'JWT_ACCESS_SECRET'] as const;
+const PRODUCTION_SECRET_KEYS = [
+  'COOKIE_SECRET',
+  'JWT_ACCESS_SECRET',
+  'VERIFICATION_CODE_SECRET',
+] as const;
 
 export interface SecretPolicyInput {
   readonly isProduction: boolean;
@@ -9,6 +13,7 @@ export interface SecretPolicyInput {
   readonly JWT_ACCESS_SECRET: string;
   readonly BULL_BOARD_ENABLED: boolean;
   readonly BULL_BOARD_PASSWORD: string;
+  readonly VERIFICATION_CODE_SECRET: string;
 }
 
 export function assertProductionSecrets(env: SecretPolicyInput): void {

@@ -8,6 +8,7 @@ import type { PermissionRepository } from '@/application/shared/ports/permission
 import type { RoleRepository } from '@/domain/authorization/role-repository';
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { UserRoleRepository } from '@/application/shared/ports/user-role-repository';
+import type { EmailVerificationCodeRepository } from '@/domain/verification/email-verification-code-repository';
 import type { IdGenerator } from '@/application/shared/ports/id-generator';
 import type { Clock } from '@/application/shared/ports/clock';
 import type { Env } from '@/config/env';
@@ -68,6 +69,12 @@ function makeSync(envOverrides: Partial<Env> = {}) {
     revoke: vi.fn<UserRoleRepository['revoke']>(),
   } satisfies UserRoleRepository;
 
+  const verificationCodes = {
+    create: vi.fn<EmailVerificationCodeRepository['create']>(),
+    update: vi.fn<EmailVerificationCodeRepository['update']>(),
+    findActiveByUserId: vi.fn<EmailVerificationCodeRepository['findActiveByUserId']>(),
+  } satisfies EmailVerificationCodeRepository;
+
   const ids = {
     generate: vi.fn<IdGenerator['generate']>().mockReturnValue('gen-id'),
   } satisfies IdGenerator;
@@ -79,6 +86,7 @@ function makeSync(envOverrides: Partial<Env> = {}) {
     roleRepository: roles,
     userRepository: users,
     userRoleRepository: userRoles,
+    emailVerificationCodeRepository: verificationCodes,
   } satisfies TransactionalRepositories;
 
   const unitOfWork: UnitOfWork = {

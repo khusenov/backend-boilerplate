@@ -84,6 +84,14 @@ import type { IdempotencyStore } from '@/application/shared/ports/idempotency-st
 import { RedisIdempotencyStore } from '@/infrastructure/idempotency/redis-idempotency-store';
 import type { EmailSender } from '@/application/shared/ports/email-sender';
 import { NodemailerEmailSender } from '@/infrastructure/email/nodemailer-email-sender';
+import { CryptoVerificationCodeService } from '@/infrastructure/security/crypto-verification-code-service';
+import { PrismaEmailVerificationCodeRepository } from '@/infrastructure/persistence/prisma-email-verification-code-repository';
+import { RegisterUser } from '@/application/auth/register-user';
+import { VerifyEmail } from '@/application/auth/verify-email';
+import { SendVerificationEmailHandler } from '@/application/jobs/send-verification-email-handler';
+import type { VerificationCodeService } from '@/application/shared/ports/verification-code-service';
+import type { EmailVerificationCodeRepository } from '@/domain/verification/email-verification-code-repository';
+import type { VerificationConfig } from '@/application/auth/verification-config';
 
 declare module '@fastify/awilix' {
   interface Cradle {
@@ -123,7 +131,6 @@ declare module '@fastify/awilix' {
     redisConnection: Redis;
     workerConnection: Redis;
     rateLimitRedis: Redis;
-    exampleJobHandler: ExampleJobHandler;
     jobQueue: JobQueue;
     jobWorker: JobWorker;
     jobScheduler: JobScheduler;
@@ -136,6 +143,9 @@ declare module '@fastify/awilix' {
     metricsExposition: MetricsExposition;
     idempotencyRedis: Redis;
     idempotencyStore: IdempotencyStore;
+    verificationCodeService: VerificationCodeService;
+    emailVerificationCodeRepository: EmailVerificationCodeRepository;
+    verificationConfig: VerificationConfig;
 
     // use cases
     listUsers: ListUsers;
@@ -156,6 +166,12 @@ declare module '@fastify/awilix' {
     revokeRole: RevokeRole;
     listPermissions: ListPermissions;
     syncAuthorization: SyncAuthorization;
+    registerUser: RegisterUser;
+    verifyEmail: VerifyEmail;
+
+    // job handlers
+    exampleJobHandler: ExampleJobHandler;
+    sendVerificationEmailHandler: SendVerificationEmailHandler;
   }
 }
 
@@ -251,6 +267,7 @@ export function registerDependencies(
         Cradle,
         | 'workerConnection'
         | 'exampleJobHandler'
+        | 'sendVerificationEmailHandler'
         | 'outboxRelay'
         | 'dispatchDomainEventJobHandler'
         | 'enforceDataRetentionJob'
@@ -333,6 +350,15 @@ export function registerDependencies(
           resultTtlSeconds: env.IDEMPOTENCY_RESULT_TTL,
         }),
     ).singleton(),
+    verificationCodeService: asFunction(
+      () =>
+        new CryptoVerificationCodeService({ verificationCodeSecret: env.VERIFICATION_CODE_SECRET }),
+    ).singleton(),
+    emailVerificationCodeRepository: asClass(PrismaEmailVerificationCodeRepository).singleton(),
+    verificationConfig: asValue({
+      ttlSeconds: env.VERIFICATION_CODE_TTL,
+      maxAttempts: env.VERIFICATION_MAX_ATTEMPTS,
+    }),
 
     listUsers: asClass(ListUsers).singleton(),
     getUser: asClass(GetUser).singleton(),
@@ -352,5 +378,9 @@ export function registerDependencies(
     revokeRole: asClass(RevokeRole).singleton(),
     listPermissions: asClass(ListPermissions).singleton(),
     syncAuthorization: asClass(SyncAuthorization).singleton(),
+    registerUser: asClass(RegisterUser).singleton(),
+    verifyEmail: asClass(VerifyEmail).singleton(),
+
+    sendVerificationEmailHandler: asClass(SendVerificationEmailHandler).singleton(),
   });
 }

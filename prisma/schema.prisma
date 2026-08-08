@@ -10,20 +10,22 @@ datasource db {
 enum UserStatus {
   active
   inactive
+  pending
 }
 
 model User {
-  id            String         @id @db.Char(36)
-  firstName     String         @map("first_name") @db.VarChar(100)
-  lastName      String         @map("last_name") @db.VarChar(100)
-  email         String         @unique @db.VarChar(255)
-  passwordHash  String         @map("password_hash") @db.VarChar(255)
-  status        UserStatus
-  createdAt     DateTime       @map("created_at")
-  updatedAt     DateTime       @map("updated_at")
-  deletedAt     DateTime?      @map("deleted_at")
-  refreshTokens RefreshToken[]
-  roles         UserRole[]
+  id                String                  @id @db.Char(36)
+  firstName         String                  @map("first_name") @db.VarChar(100)
+  lastName          String                  @map("last_name") @db.VarChar(100)
+  email             String                  @unique @db.VarChar(255)
+  passwordHash      String                  @map("password_hash") @db.VarChar(255)
+  status            UserStatus
+  createdAt         DateTime                @map("created_at")
+  updatedAt         DateTime                @map("updated_at")
+  deletedAt         DateTime?               @map("deleted_at")
+  refreshTokens     RefreshToken[]
+  verificationCodes EmailVerificationCode[]
+  roles             UserRole[]
 
   @@index([deletedAt])
   @@map("users")
@@ -46,6 +48,23 @@ model RefreshToken {
   @@index([familyId])
   @@index([expiresAt])
   @@map("refresh_tokens")
+}
+
+model EmailVerificationCode {
+  id          String    @id @db.Char(36)
+  userId      String    @map("user_id") @db.Char(36)
+  codeHash    String    @map("code_hash") @db.VarChar(64)
+  expiresAt   DateTime  @map("expires_at")
+  attempts    Int
+  maxAttempts Int       @map("max_attempts")
+  consumedAt  DateTime? @map("consumed_at")
+  createdAt   DateTime  @map("created_at")
+  updatedAt   DateTime  @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, consumedAt])
+  @@map("email_verification_codes")
 }
 
 model Role {

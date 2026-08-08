@@ -21,6 +21,20 @@ function makeUser(overrides: Partial<Parameters<typeof User.create>[0]> = {}): U
   );
 }
 
+function makeRegisteredUser(overrides: Partial<Parameters<typeof User.register>[0]> = {}): User {
+  return User.register(
+    {
+      id: 'user-1',
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      email: Email.create('ada@example.com'),
+      passwordHash: 'hashed-password',
+      ...overrides,
+    },
+    BASE_TIME,
+  );
+}
+
 describe('User', () => {
   describe('create', () => {
     it('creates an active user with normalized names', () => {
@@ -43,6 +57,56 @@ describe('User', () => {
 
     it.each(['', '   '])('throws when lastName is %j', (lastName) => {
       expect(() => makeUser({ lastName })).toThrow(UserInvalidNameError);
+    });
+  });
+
+  describe('register', () => {
+    it('creates a pending user with normalized names', () => {
+      const user = makeRegisteredUser({ firstName: '  Ada  ', lastName: '  Lovelace  ' });
+
+      expect(user.firstName).toBe('Ada');
+      expect(user.lastName).toBe('Lovelace');
+      expect(user.status).toBe(UserStatus.Pending);
+      expect(user.createdAt).toEqual(BASE_TIME);
+      expect(user.createdAt).toEqual(user.updatedAt);
+    });
+
+    // Login gates on isActive, so a pending user is barred until verification
+    // without Login needing to know that pending exists.
+    it('is not active until verified', () => {
+      expect(makeRegisteredUser().isActive).toBe(false);
+    });
+
+    it('becomes active through activate, the same transition inactive users use', () => {
+      const user = makeRegisteredUser();
+
+      user.activate(LATER);
+
+      expect(user.status).toBe(UserStatus.Active);
+      expect(user.updatedAt).toEqual(LATER);
+    });
+
+    it('records exactly one UserCreatedEvent, like create', () => {
+      const user = makeRegisteredUser({ id: 'user-42' });
+
+      const [event, ...rest] = user.pullDomainEvents();
+
+      expect(rest).toHaveLength(0);
+      expect(event).toBeInstanceOf(UserCreatedEvent);
+      expect((event as UserCreatedEvent).aggregateId).toBe('user-42');
+      expect((event as UserCreatedEvent).email).toBe('ada@example.com');
+    });
+
+    it.each(['', '   '])('enforces the shared name invariants (firstName %j)', (firstName) => {
+      expect(() => makeRegisteredUser({ firstName })).toThrow(UserInvalidNameError);
+    });
+
+    it.each(['', '   '])('enforces the shared name invariants (lastName %j)', (lastName) => {
+      expect(() => makeRegisteredUser({ lastName })).toThrow(UserInvalidNameError);
+    });
+
+    it('leaves the admin create path active', () => {
+      expect(makeUser().status).toBe(UserStatus.Active);
     });
   });
 

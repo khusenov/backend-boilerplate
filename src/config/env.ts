@@ -63,6 +63,12 @@ export const env = cleanEnv(process.env, {
     devDefault: 'no-reply@finflow.local',
     desc: 'Default From address for outbound mail',
   }),
+  VERIFICATION_CODE_TTL: num({ default: 60 * 15 }), // 15 minutes
+  VERIFICATION_MAX_ATTEMPTS: num({ default: 5 }),
+  VERIFICATION_CODE_SECRET: str({
+    devDefault: 'dev-verification-code-secret-change-me',
+    desc: 'HMAC pepper for verification codes; >= 32 chars in production',
+  }),
 });
 
 export type Env = typeof env;

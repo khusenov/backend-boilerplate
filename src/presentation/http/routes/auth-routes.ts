@@ -22,6 +22,11 @@ const registerBody = z.object({
   password: z.string().min(8).max(128),
 });
 
+const verifyEmailBody = z.object({
+  email: z.email(),
+  code: z.string().regex(/^\d{6}$/),
+});
+
 const refreshBody = z
   .object({
     refreshToken: z.string().min(1).optional(),
@@ -47,8 +52,8 @@ export const authRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       },
     },
     async (request, reply) => {
-      const { createUser } = request.diScope.cradle;
-      const user = await createUser.execute(request.body);
+      const { registerUser } = request.diScope.cradle;
+      const user = await registerUser.execute(request.body);
       return reply.status(201).send(user);
     },
   );
@@ -118,6 +123,24 @@ export const authRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
     async (request, reply) => {
       const { getUser } = request.diScope.cradle;
       const user = await getUser.execute({ id: request.user!.sub });
+      return reply.status(200).send(user);
+    },
+  );
+
+  app.post(
+    '/verify-email',
+    {
+      config: {
+        rateLimit: { max: env.RATE_LIMIT_AUTH_MAX, timeWindow: env.RATE_LIMIT_WINDOW },
+      },
+      schema: {
+        body: verifyEmailBody,
+        response: { 200: userResponse, 400: errorResponse },
+      },
+    },
+    async (request, reply) => {
+      const { verifyEmail } = request.diScope.cradle;
+      const user = await verifyEmail.execute(request.body);
       return reply.status(200).send(user);
     },
   );

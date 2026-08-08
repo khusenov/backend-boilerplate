@@ -7,6 +7,7 @@ import { UserCreatedEvent } from '@/domain/user/events/user-created-event';
 export const UserStatus = {
   Active: 'active',
   Inactive: 'inactive',
+  Pending: 'pending',
 } as const;
 
 export type UserStatusType = (typeof UserStatus)[keyof typeof UserStatus];
@@ -66,7 +67,7 @@ export class User extends AggregateRoot<UserProps> {
     return trimmed;
   }
 
-  static create(params: UserCreateParams, now: Date): User {
+  private static build(params: UserCreateParams, status: UserStatusType, now: Date): User {
     const firstName = this.normalizeName(params.firstName, 'firstName');
     const lastName = this.normalizeName(params.lastName, 'lastName');
 
@@ -74,7 +75,7 @@ export class User extends AggregateRoot<UserProps> {
       ...params,
       firstName,
       lastName,
-      status: UserStatus.Active,
+      status,
       createdAt: now,
       updatedAt: now,
       deletedAt: null,
@@ -82,6 +83,14 @@ export class User extends AggregateRoot<UserProps> {
 
     user.recordEvent(new UserCreatedEvent(user.id, user.email.toString(), now));
     return user;
+  }
+
+  static create(params: UserCreateParams, now: Date): User {
+    return this.build(params, UserStatus.Active, now);
+  }
+
+  static register(params: UserCreateParams, now: Date): User {
+    return this.build(params, UserStatus.Pending, now);
   }
 
   static hydrate(props: UserProps): User {

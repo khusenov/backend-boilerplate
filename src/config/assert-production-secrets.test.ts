@@ -14,6 +14,7 @@ function makeEnv(overrides: Partial<SecretPolicyInput> = {}) {
     JWT_ACCESS_SECRET: strongSecret,
     BULL_BOARD_ENABLED: false,
     BULL_BOARD_PASSWORD: '',
+    VERIFICATION_CODE_SECRET: strongSecret,
     ...overrides,
   };
 }

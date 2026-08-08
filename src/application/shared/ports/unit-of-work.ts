@@ -3,12 +3,14 @@ import type { RoleRepository } from '@/domain/authorization/role-repository';
 import type { PermissionRepository } from '@/application/shared/ports/permission-repository';
 import type { UserRoleRepository } from '@/application/shared/ports/user-role-repository';
 import type { DomainEvent } from '@/domain/shared/domain-event';
+import type { EmailVerificationCodeRepository } from '@/domain/verification/email-verification-code-repository';
 
 export interface TransactionalRepositories {
   userRepository: UserRepository;
   roleRepository: RoleRepository;
   permissionRepository: PermissionRepository;
   userRoleRepository: UserRoleRepository;
+  emailVerificationCodeRepository: EmailVerificationCodeRepository;
 }
 
 export interface OutboxStaging {

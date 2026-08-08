@@ -111,7 +111,7 @@ describe('/auth (integration)', () => {
   });
 
   describe('POST /auth/register', () => {
-    it('is public, creates a user with no roles, and returns 201', async () => {
+    it('is public, creates a pending user with no roles, and returns 201', async () => {
       const res = await h.app.inject({
         method: 'POST',
         url: '/v1/auth/register',
@@ -124,26 +124,61 @@ describe('/auth (integration)', () => {
       });
 
       expect(res.statusCode).toBe(201);
-      const body = res.json<{ id: string; email: string }>();
-      expect(body).toMatchObject({ email: 'signup@finflow.test' });
+      const body = res.json<{ id: string; email: string; status: string }>();
+      expect(body).toMatchObject({ email: 'signup@finflow.test', status: 'pending' });
       expect(body).not.toHaveProperty('passwordHash');
+
+      const persisted = await h.prisma.user.findUnique({ where: { id: body.id } });
+      expect(persisted?.status).toBe('pending');
 
       const roleCount = await h.prisma.userRole.count({ where: { userId: body.id } });
       expect(roleCount).toBe(0);
+    });
+
+    it('issues exactly one unconsumed verification code, stored hashed', async () => {
+      const res = await h.app.inject({
+        method: 'POST',
+        url: '/v1/auth/register',
+        payload: {
+          firstName: 'Code',
+          lastName: 'Owner',
+          email: 'coded@finflow.test',
+          password: 'password123',
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      const { id } = res.json<{ id: string }>();
+
+      const codes = await h.prisma.emailVerificationCode.findMany({ where: { userId: id } });
+      expect(codes).toHaveLength(1);
+      expect(codes[0]?.consumedAt).toBeNull();
+      expect(codes[0]?.attempts).toBe(0);
+      // Only the HMAC reaches the table — never the six digits the user types.
+      expect(codes[0]?.codeHash).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    // Login already gates on isActive, so pending accounts are barred with no
+    // change to the login use case. The verified happy path lives in
+    // verify-email.int.test.ts.
+    it('leaves the account unable to log in until verified (401)', async () => {
+      const res = await h.app.inject({
+        method: 'POST',
+        url: '/v1/auth/register',
+        payload: {
+          firstName: 'Not',
+          lastName: 'Verified',
+          email: 'unverified@finflow.test',
+          password: 'password123',
+        },
+      });
+      expect(res.statusCode).toBe(201);
 
       const loginRes = await h.app.inject({
         method: 'POST',
         url: '/v1/auth/login',
-        payload: { email: 'signup@finflow.test', password: 'password123' },
+        payload: { email: 'unverified@finflow.test', password: 'password123' },
       });
-      expect(loginRes.statusCode).toBe(200);
-      const { accessToken } = loginRes.json<{ accessToken: string }>();
-      const list = await h.app.inject({
-        method: 'GET',
-        url: '/v1/users',
-        headers: { authorization: `Bearer ${accessToken}` },
-      });
-      expect(list.statusCode).toBe(403);
+      expect(loginRes.statusCode).toBe(401);
     });
 
     it('does not auto-login (no refresh cookie set)', async () => {
