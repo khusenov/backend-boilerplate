@@ -10,7 +10,10 @@ export interface SendVerificationEmailHandlerDeps {
   emailSender: EmailSender;
 }
 
-export class SendVerificationEmailHandler implements JobHandler<SendVerificationEmailPayload> {
+export class SendVerificationEmailHandler implements JobHandler<
+  SendVerificationEmailPayload,
+  typeof SEND_VERIFICATION_EMAIL_JOB
+> {
   readonly jobName = SEND_VERIFICATION_EMAIL_JOB;
   private readonly emailSender: EmailSender;
 

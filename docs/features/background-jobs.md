@@ -14,7 +14,7 @@ There are two sides: producers put jobs on the queue, and a single worker takes 
 
 **At bootstrap, in the worker process (`src/worker.ts` → `startWorker` in `src/start-worker.ts`):**
 
-1. **The worker starts.** `void container.resolve('jobWorker')` resolves the `JobWorker` singleton. Constructing it calls `new Worker('default', …)`, which immediately opens a _blocking_ connection to Redis — a connection dedicated to parking until the next job arrives, so it can serve no other commands while it waits — and begins consuming jobs. The worker is built with a fixed list of handlers — `[exampleJobHandler, outboxRelay, dispatchDomainEventJobHandler, enforceDataRetentionJob]` (`container.ts`) — indexed into a `Map` keyed by each handler's `jobName`. That `Map` is built as `new Map(handlers.map((handler) => [handler.jobName, handler]))`, so each `jobName` must be unique across the handler list: a duplicate silently overwrites the earlier handler (last one wins), with no boot-time error.
+1. **The worker starts.** `void container.resolve('jobWorker')` resolves the `JobWorker` singleton. Constructing it calls `new Worker('default', …)`, which immediately opens a _blocking_ connection to Redis — a connection dedicated to parking until the next job arrives, so it can serve no other commands while it waits — and begins consuming jobs. The worker's handler list is assembled in `container.ts` by `toJobHandlerList`, which takes a record keyed by job name — `{ [EXAMPLE_JOB]: exampleJobHandler, [SEND_VERIFICATION_EMAIL_JOB]: sendVerificationEmailHandler, … }` — and returns its values. `JobWorker` then indexes those into a `Map` built as `new Map(handlers.map((handler) => [handler.jobName, handler]))`. Because that record's type `JobHandlersByName` (`src/job-catalogue.ts`) is a mapped type over the `JobName` union, every job name has exactly one slot: omitting a handler is a compile error, and a second handler under a name already in use is unrepresentable rather than a silent last-one-wins overwrite at boot.
 2. **Two recurring jobs are scheduled.** `startWorker` resolves `jobScheduler` and calls `schedule` twice:
    - `jobScheduler.schedule(OUTBOX_RELAY_JOB, {}, { everyMs: OUTBOX_RELAY_INTERVAL_MS })` registers `outbox.relay` as a repeatable job that BullMQ re-enqueues every `5_000` ms.
    - `jobScheduler.schedule(DATA_RETENTION_JOB, {}, { everyMs: DATA_RETENTION_INTERVAL_MS })` registers `data.retention` as a repeatable job that fires hourly (`60 * 60 * 1000` ms).
@@ -30,39 +30,43 @@ There are two sides: producers put jobs on the queue, and a single worker takes 
 
 **Graceful shutdown.** On `SIGINT` or `SIGTERM`, the worker process runs `createWorkerShutdown` (`src/worker-shutdown.ts`), which closes the health app and then disposes the container — running the Awilix `.disposer`s registered in `container.ts` on `jobWorker`, `jobQueue`, `jobScheduler`, and `dashboardQueue`. `JobWorker.close()` closes the worker and quits its `workerConnection`; `BullMqJobQueue.close()` closes its queue and quits the shared `redisConnection`; the scheduler and dashboard queues close their queue objects (they share `redisConnection`, which the queue disposer quits). In-flight work drains and no socket is left dangling.
 
-**Where the real traffic comes from.** Two scheduled producers are wired today, both via `jobScheduler`:
+**Where the real traffic comes from.** Three producers are wired today — two scheduled through `jobScheduler`, and one on the HTTP request path:
 
-- **Outbox relay** — the domain-events outbox (see [domain-events.md](./domain-events.md)). Every 5 s the scheduled `outbox.relay` job runs `OutboxRelay.handle()` on the worker; for each unpublished outbox row it calls `jobQueue.enqueue(DISPATCH_DOMAIN_EVENT_JOB, …)` (in `src/infrastructure/events/outbox-relay.ts`). Those `domain-event.dispatch` jobs are then consumed by `DispatchDomainEventJobHandler`, which deserialises and delivers the event to its in-process handlers. This is the only live `enqueue → process` path: a real `schedule → handle → enqueue → process` pipeline, and the sole runtime caller of `JobQueue.enqueue`.
+- **Outbox relay** — the domain-events outbox (see [domain-events.md](./domain-events.md)). Every 5 s the scheduled `outbox.relay` job runs `OutboxRelay.handle()` on the worker; for each unpublished outbox row it calls `jobQueue.enqueue(DISPATCH_DOMAIN_EVENT_JOB, …)` (in `src/infrastructure/events/outbox-relay.ts`). Those `domain-event.dispatch` jobs are then consumed by `DispatchDomainEventJobHandler`, which deserialises and delivers the event to its in-process handlers. It is the full `schedule → handle → enqueue → process` pipeline, and the only producer that enqueues from _inside_ the worker.
 - **Data retention** — the scheduled housekeeping sweep (see [data-retention.md](./data-retention.md)). Every hour the scheduled `data.retention` job runs `EnforceDataRetentionJob.handle()` on the worker, which prunes stale rows via its `RetentionTask` list (`refreshTokenRetentionTask`, `outboxRetentionTask`) older than a cutoff of `now − DATA_RETENTION_TTL`. This job does not enqueue further jobs; it is a scheduled maintenance handler that touches the database directly.
+- **Verification email** — the registration flow (see [authentication.md](./authentication.md)). `RegisterUser` calls `jobQueue.enqueue(SEND_VERIFICATION_EMAIL_JOB, { email, code })` (`src/application/auth/register-user.ts`), and `SendVerificationEmailHandler` consumes it on the worker, rendering the message and sending it through the `EmailSender` port. This is the only producer that runs on an HTTP request, and the reason it exists is to keep SMTP latency and SMTP failures off the registration response.
 
-So this feature is the transport, and both scheduled jobs are live producers — the outbox relay is additionally the only producer that enqueues _ad-hoc_ jobs onto the queue.
+So this feature is the transport, and all three producers are live.
 
-**The example job is dormant scaffolding.** `ExampleJobHandler` (job name `example.ping`) is registered in the worker's handler list and unit-tested, but no production runtime path enqueues `EXAMPLE_JOB` — only the transport tests do (see [Testing](#testing)). It exists solely as a copy-paste template for adding new jobs (see [Usage & extension](#usage--extension)); it does not run in production.
+**The example job is dormant scaffolding.** `ExampleJobHandler` (job name `example.ping`) is registered in the worker's handler record and unit-tested, but no production runtime path enqueues `EXAMPLE_JOB` — only the transport tests do (see [Testing](#testing)). It exists solely as a copy-paste template for adding new jobs (see [Usage & extension](#usage--extension)); it does not run in production.
 
 ## Architecture
 
 The feature is split across the port/adapter boundary. The application layer owns three abstractions — `JobQueue` (enqueue one-off work), `JobScheduler` (register recurring work), and `JobHandler` (the contract a consumer implements) — expressed with no reference to BullMQ or Redis. The infrastructure layer holds the only code that knows the transport: `BullMqJobQueue`, `BullMqJobScheduler`, and `JobWorker`. The presentation layer adds `bullBoardPlugin`, a Fastify plugin that exposes the queue over an operational web UI. Dependencies point inward: a producer depends on the `JobQueue`/`JobScheduler` _interfaces_, a job handler implements the `JobHandler` _interface_, and the concrete BullMQ adapters are bound to those interfaces **only** in `src/container.ts`. Replacing BullMQ (e.g. with SQS or an in-memory fake for tests) means writing new adapters and rebinding a few registrations — no application code changes.
 
-| Component                                                              | Layer              | Responsibility                                                                                                                                | File                                                             |
-| ---------------------------------------------------------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `JobQueue`                                                             | Application (port) | Contract to enqueue a one-off (optionally delayed) job onto the queue                                                                         | `src/application/shared/ports/job-queue.ts`                      |
-| `JobScheduler`                                                         | Application (port) | Contract to register a repeatable job that fires on a fixed interval                                                                          | `src/application/shared/ports/job-scheduler.ts`                  |
-| `JobHandler`                                                           | Application (port) | Contract a consumer implements: a `jobName` to bind to and an async `handle(payload)`                                                         | `src/application/shared/ports/job-handler.ts`                    |
-| `EXAMPLE_JOB` / `ExampleJobPayload`                                    | Application        | Demo job name (`example.ping`) and payload shape — a template, never enqueued by production code                                              | `src/application/jobs/example-job.ts`                            |
-| `ExampleJobHandler`                                                    | Application        | Demo handler that logs its payload — the worked template for new jobs (dormant)                                                               | `src/application/jobs/example-job-handler.ts`                    |
-| `EnforceDataRetentionJob`                                              | Application        | Scheduled handler (`data.retention`) that prunes stale rows via its `RetentionTask` list on an hourly cadence                                 | `src/application/retention/enforce-data-retention-job.ts`        |
-| `OutboxRelay`                                                          | Infrastructure     | Scheduled handler (`outbox.relay`) that reads unpublished outbox rows and `enqueue`s a dispatch job for each — the only live `enqueue` caller | `src/infrastructure/events/outbox-relay.ts`                      |
-| `DispatchDomainEventJobHandler`                                        | Infrastructure     | Consumes `domain-event.dispatch` and delivers each deserialized event to its in-process handlers (owned by domain-events)                     | `src/infrastructure/events/dispatch-domain-event-job-handler.ts` |
-| `BullMqJobQueue`                                                       | Infrastructure     | `JobQueue` adapter: adds jobs to the `default` queue with retry/backoff, retention, and injected trace context                                | `src/infrastructure/jobs/bullmq-job-queue.ts`                    |
-| `BullMqJobScheduler`                                                   | Infrastructure     | `JobScheduler` adapter: upserts a BullMQ job scheduler for repeatable jobs                                                                    | `src/infrastructure/jobs/bullmq-job-scheduler.ts`                |
-| `JobWorker`                                                            | Infrastructure     | Consumes the `default` queue and routes each job to its registered `JobHandler` by name, inside the extracted trace context                   | `src/infrastructure/jobs/job-worker.ts`                          |
-| `injectTraceContext` / `runWithExtractedContext` / `stripTraceContext` | Infrastructure     | Propagate the OpenTelemetry trace context across the enqueue → process boundary via a payload carrier                                         | `src/infrastructure/jobs/job-trace-context.ts`                   |
-| `DEFAULT_QUEUE_NAME`                                                   | Infrastructure     | The single queue name (`'default'`) shared by every producer, the worker, and the dashboard                                                   | `src/infrastructure/jobs/queue-name.ts`                          |
-| `createRedisConnection`                                                | Infrastructure     | Builds an ioredis client configured for BullMQ (`maxRetriesPerRequest: null`)                                                                 | `src/infrastructure/jobs/redis-connection.ts`                    |
-| `createDashboardQueue`                                                 | Infrastructure     | Builds a read-side BullMQ `Queue` handle over the `default` queue for Bull Board to introspect                                                | `src/infrastructure/jobs/dashboard-queue.ts`                     |
-| `bullBoardPlugin` / `createBasicAuthValidator`                         | Presentation       | Fastify plugin that mounts the Bull Board UI, guarded by HTTP basic auth and a CSP header                                                     | `src/presentation/http/plugins/bull-board.ts`                    |
-| Container wiring                                                       | Composition root   | Binds the ports to the BullMQ adapters, provides the two Redis connections, assembles the handler list, registers the dashboard queue         | `src/container.ts`                                               |
-| Bootstrap                                                              | Composition root   | Starts the worker and schedules the outbox relay and data-retention jobs                                                                      | `src/worker.ts` → `src/start-worker.ts`                          |
+| Component                                                              | Layer              | Responsibility                                                                                                                                         | File                                                             |
+| ---------------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| `JobQueue`                                                             | Application (port) | Contract to enqueue a one-off (optionally delayed) job onto the queue                                                                                  | `src/application/shared/ports/job-queue.ts`                      |
+| `JobScheduler`                                                         | Application (port) | Contract to register a repeatable job that fires on a fixed interval                                                                                   | `src/application/shared/ports/job-scheduler.ts`                  |
+| `JobHandler`                                                           | Application (port) | Contract a consumer implements: a `jobName` to bind to and an async `handle(payload)`                                                                  | `src/application/shared/ports/job-handler.ts`                    |
+| `EXAMPLE_JOB` / `ExampleJobPayload`                                    | Application        | Demo job name (`example.ping`) and payload shape — a template, never enqueued by production code                                                       | `src/application/jobs/example-job.ts`                            |
+| `ExampleJobHandler`                                                    | Application        | Demo handler that logs its payload — the worked template for new jobs (dormant)                                                                        | `src/application/jobs/example-job-handler.ts`                    |
+| `SEND_VERIFICATION_EMAIL_JOB` / `SendVerificationEmailPayload`         | Application        | Job name (`email.send-verification`) and payload (`email`, `code`) for the registration verification email                                             | `src/application/jobs/send-verification-email-job.ts`            |
+| `SendVerificationEmailHandler`                                         | Application        | Consumes `email.send-verification` and sends the rendered code through the `EmailSender` port                                                          | `src/application/jobs/send-verification-email-handler.ts`        |
+| `EnforceDataRetentionJob`                                              | Application        | Scheduled handler (`data.retention`) that prunes stale rows via its `RetentionTask` list on an hourly cadence                                          | `src/application/retention/enforce-data-retention-job.ts`        |
+| `OutboxRelay`                                                          | Infrastructure     | Scheduled handler (`outbox.relay`) that reads unpublished outbox rows and `enqueue`s a dispatch job for each — the only `enqueue` caller on the worker | `src/infrastructure/events/outbox-relay.ts`                      |
+| `DispatchDomainEventJobHandler`                                        | Infrastructure     | Consumes `domain-event.dispatch` and delivers each deserialized event to its in-process handlers (owned by domain-events)                              | `src/infrastructure/events/dispatch-domain-event-job-handler.ts` |
+| `BullMqJobQueue`                                                       | Infrastructure     | `JobQueue` adapter: adds jobs to the `default` queue with retry/backoff, retention, and injected trace context                                         | `src/infrastructure/jobs/bullmq-job-queue.ts`                    |
+| `BullMqJobScheduler`                                                   | Infrastructure     | `JobScheduler` adapter: upserts a BullMQ job scheduler for repeatable jobs                                                                             | `src/infrastructure/jobs/bullmq-job-scheduler.ts`                |
+| `JobWorker`                                                            | Infrastructure     | Consumes the `default` queue and routes each job to its registered `JobHandler` by name, inside the extracted trace context                            | `src/infrastructure/jobs/job-worker.ts`                          |
+| `injectTraceContext` / `runWithExtractedContext` / `stripTraceContext` | Infrastructure     | Propagate the OpenTelemetry trace context across the enqueue → process boundary via a payload carrier                                                  | `src/infrastructure/jobs/job-trace-context.ts`                   |
+| `DEFAULT_QUEUE_NAME`                                                   | Infrastructure     | The single queue name (`'default'`) shared by every producer, the worker, and the dashboard                                                            | `src/infrastructure/jobs/queue-name.ts`                          |
+| `createRedisConnection`                                                | Infrastructure     | Builds an ioredis client configured for BullMQ (`maxRetriesPerRequest: null`)                                                                          | `src/infrastructure/jobs/redis-connection.ts`                    |
+| `createDashboardQueue`                                                 | Infrastructure     | Builds a read-side BullMQ `Queue` handle over the `default` queue for Bull Board to introspect                                                         | `src/infrastructure/jobs/dashboard-queue.ts`                     |
+| `bullBoardPlugin` / `createBasicAuthValidator`                         | Presentation       | Fastify plugin that mounts the Bull Board UI, guarded by HTTP basic auth and a CSP header                                                              | `src/presentation/http/plugins/bull-board.ts`                    |
+| `JOB_NAMES` / `JobHandlersByName` / `toJobHandlerList`                 | Composition root   | The catalogue of live job names, the mapped type that forces one handler per name, and the function that flattens the record for the worker            | `src/job-catalogue.ts`                                           |
+| Container wiring                                                       | Composition root   | Binds the ports to the BullMQ adapters, provides the two Redis connections, assembles the name-keyed handler record, registers the dashboard queue     | `src/container.ts`                                               |
+| Bootstrap                                                              | Composition root   | Starts the worker and schedules the outbox relay and data-retention jobs                                                                               | `src/worker.ts` → `src/start-worker.ts`                          |
 
 ## Public surface
 
@@ -105,16 +109,16 @@ export interface JobScheduler {
 **3. `JobHandler` — implement this to consume a job.**
 
 ```ts
-export interface JobHandler<TPayload = unknown> {
-  readonly jobName: string;
+export interface JobHandler<TPayload = unknown, TName extends string = string> {
+  readonly jobName: TName;
 
   handle(payload: TPayload): Promise<void>;
 }
 ```
 
-A handler binds to exactly one `jobName` and receives the enqueued payload as `handle`'s argument. The `<TPayload>` generic is a compile-time convenience only — the worker passes BullMQ's stored `job.data` (with the trace carrier stripped) straight to `handle` with no runtime schema validation, so the producer and handler must agree on the payload shape. Delivery is **at-least-once** — BullMQ retries a failed attempt, and the outbox relay can re-enqueue a dispatch job after a crash — so `handle` may run more than once for the same logical job and **must be idempotent**: dedupe on a stable key rather than assuming exactly-once. A handler is only reachable once it is added to the worker's handler list in `container.ts` (see below), and its `jobName` must be unique within that list — the worker routes by name through a `Map`, so registering a second handler under a name already in use silently replaces the first.
+A handler binds to exactly one `jobName` and receives the enqueued payload as `handle`'s argument. The two generics do different jobs. `TPayload` is a compile-time convenience only — the worker passes BullMQ's stored `job.data` (with the trace carrier stripped) straight to `handle` with no runtime schema validation, so the producer and handler must agree on the payload shape. `TName` is load-bearing: pinning it to a job-name literal (`implements JobHandler<MyPayload, typeof MY_JOB>`) is what lets the composition root check the wiring, so **always pin it** rather than leaving it at its `string` default. Delivery is **at-least-once** — BullMQ retries a failed attempt, and the outbox relay can re-enqueue a dispatch job after a crash — so `handle` may run more than once for the same logical job and **must be idempotent**: dedupe on a stable key rather than assuming exactly-once. A handler is reachable once it is registered in the worker's handler record in `container.ts` (see below); because that record is typed by `JobHandlersByName`, a handler that is declared but never filed under its job name fails to compile, and its `jobName` cannot collide with another's — the record gives each name exactly one slot.
 
-The `jobName`s live today are: `example.ping` (dormant), `outbox.relay`, `domain-event.dispatch`, and `data.retention`.
+The `jobName`s live today are: `example.ping` (dormant), `email.send-verification`, `outbox.relay`, `domain-event.dispatch`, and `data.retention`. `src/job-catalogue.ts` lists them as `JOB_NAMES`, and `src/job-catalogue.test.ts` fails if a handler declares a `jobName` missing from that list.
 
 ### Bull Board dashboard — operational visibility
 
@@ -173,7 +177,10 @@ export interface SendWelcomeEmailJobHandlerDeps {
   logger: Logger;
 }
 
-export class SendWelcomeEmailJobHandler implements JobHandler<SendWelcomeEmailPayload> {
+export class SendWelcomeEmailJobHandler implements JobHandler<
+  SendWelcomeEmailPayload,
+  typeof SEND_WELCOME_EMAIL_JOB
+> {
   readonly jobName = SEND_WELCOME_EMAIL_JOB;
   private readonly logger: Logger;
 
@@ -188,14 +195,28 @@ export class SendWelcomeEmailJobHandler implements JobHandler<SendWelcomeEmailPa
 }
 ```
 
-**Step 3 — Register the handler and add it to the worker (`src/container.ts`).** Import it, declare it on the `Cradle` interface, register it, and — the step that actually makes it run — append it to the `jobWorker` factory's `handlers` array (and to that factory's `Pick<…>` destructure):
+**Step 3 — Register the handler and add it to the worker.** Add the job name to `JOB_NAMES` in `src/job-catalogue.ts`, then in `src/container.ts` import the handler, declare it on the `Cradle` **by its port type** (not by its class — that is what keeps the composition root depending on the abstraction), register it, add its key to the `jobWorker` factory's `Pick<Cradle, …>` union, destructure it, and file it in the handler record under its job name:
 
 ```ts
-// import at the top
-import { SendWelcomeEmailJobHandler } from '@/application/jobs/send-welcome-email-job-handler';
+// in src/job-catalogue.ts — import the constant, then add it to JOB_NAMES
+import { SEND_WELCOME_EMAIL_JOB } from '@/application/jobs/send-welcome-email-job';
 
-// on the Cradle interface, near exampleJobHandler
-sendWelcomeEmailJobHandler: SendWelcomeEmailJobHandler;
+export const JOB_NAMES = [
+  // …existing names
+  SEND_WELCOME_EMAIL_JOB,
+] as const;
+```
+
+```ts
+// in src/container.ts — import at the top
+import { SendWelcomeEmailJobHandler } from '@/application/jobs/send-welcome-email-job-handler';
+import {
+  SEND_WELCOME_EMAIL_JOB,
+  type SendWelcomeEmailPayload,
+} from '@/application/jobs/send-welcome-email-job';
+
+// on the Cradle interface, near exampleJobHandler — the port, not the class
+sendWelcomeEmailJobHandler: JobHandler<SendWelcomeEmailPayload, typeof SEND_WELCOME_EMAIL_JOB>;
 
 // inside registerDependencies(...)
 sendWelcomeEmailJobHandler: asClass(SendWelcomeEmailJobHandler).singleton(),
@@ -205,6 +226,7 @@ jobWorker: asFunction(
   ({
     workerConnection,
     exampleJobHandler,
+    sendVerificationEmailHandler,
     outboxRelay,
     dispatchDomainEventJobHandler,
     enforceDataRetentionJob,
@@ -216,6 +238,7 @@ jobWorker: asFunction(
     Cradle,
     | 'workerConnection'
     | 'exampleJobHandler'
+    | 'sendVerificationEmailHandler'
     | 'outboxRelay'
     | 'dispatchDomainEventJobHandler'
     | 'enforceDataRetentionJob'
@@ -228,13 +251,14 @@ jobWorker: asFunction(
       connection: workerConnection,
       queuePrefix,
       concurrency: queueConcurrency,
-      handlers: [
-        exampleJobHandler,
-        outboxRelay,
-        dispatchDomainEventJobHandler,
-        enforceDataRetentionJob,
-        sendWelcomeEmailJobHandler,
-      ],
+      handlers: toJobHandlerList({
+        [EXAMPLE_JOB]: exampleJobHandler,
+        [SEND_VERIFICATION_EMAIL_JOB]: sendVerificationEmailHandler,
+        [DATA_RETENTION_JOB]: enforceDataRetentionJob,
+        [OUTBOX_RELAY_JOB]: outboxRelay,
+        [DISPATCH_DOMAIN_EVENT_JOB]: dispatchDomainEventJobHandler,
+        [SEND_WELCOME_EMAIL_JOB]: sendWelcomeEmailJobHandler,
+      }),
       logger,
     }),
 )
@@ -242,7 +266,9 @@ jobWorker: asFunction(
   .disposer((worker) => worker.close()),
 ```
 
-If you skip adding the handler to that array, enqueuing the job makes the worker throw `No handler registered for job "email.send-welcome"` when it tries to process it.
+Once the name is in `JOB_NAMES`, the compiler holds you to the rest: omitting the record entry fails with `TS2345` naming the missing key, and filing a handler under the wrong key fails with `TS2418`. Both are reported in `container.ts`. Pinning `typeof SEND_WELCOME_EMAIL_JOB` in the handler's `implements` clause (Step 2) is what makes the second check meaningful — a handler left at the `string` default satisfies every key alike.
+
+That guarantee is bounded to the **consumer** side: a registered handler can no longer be dropped from the worker. It does not mean no job can dead-letter. `JobQueue.enqueue(jobName: string, …)` still takes a plain string, so a producer can enqueue a name no handler claims, and the worker will throw `No handler registered for job "email.send-welcome"` when it tries to process it.
 
 **Step 4 — Enqueue it from a producer.** Any component that injects `jobQueue` (a use case, another job handler) enqueues work:
 
@@ -296,6 +322,8 @@ Three constraints come with it:
 Coverage spans unit tests for the pieces that can be exercised in isolation and integration tests that stand up a real Redis (via testcontainers) to prove the transport end-to-end.
 
 - **`src/application/jobs/example-job-handler.test.ts`** (unit) asserts that `ExampleJobHandler.jobName` equals `EXAMPLE_JOB` and that `handle` logs `'Example job processed'` with the payload's `message`. It exercises the demo handler, not the transport.
+- **`src/application/jobs/send-verification-email-handler.test.ts`** (unit) asserts that `SendVerificationEmailHandler.jobName` equals `SEND_VERIFICATION_EMAIL_JOB`, that `handle` sends exactly one message to the payload's address carrying the rendered subject/text/html, and that a delivery failure propagates so the worker retries rather than swallowing it.
+- **`src/job-catalogue.test.ts`** (unit) closes the one gap the type system cannot: `JOB_NAMES` is hand-maintained, so the compiler forces the record to be _complete_ for the names listed but cannot force a new name to be listed at all. The test scans every non-generated, non-test `.ts` file under `src/` for `readonly jobName = …` declarations, resolves each to its string value (following exported constants, and accepting inline literals or a Prettier-wrapped declaration), and asserts that set equals `JOB_NAMES`. It keys on what actually determines routing rather than on a naming convention, so a handler whose name is missing from the catalogue fails here.
 - **`src/infrastructure/jobs/job-trace-context.test.ts`** (unit) covers the trace-propagation helpers directly: `injectTraceContext` envelopes an object payload with a carrier carrying the `traceparent` when a span is active, and returns the payload untouched with no active span or for a primitive; `runWithExtractedContext` restores a context whose active span `traceId` equals the injected one, and runs the callback directly when the payload has no carrier; `stripTraceContext` removes the `__otelCarrier` envelope and leaves carrier-less, null-carrier, or primitive payloads intact.
 - **`src/infrastructure/jobs/bullmq-job-queue.test.ts`** (unit) covers the producer adapter against a mocked BullMQ `Queue`: the default retry and backoff policy, the retention settings (asserted explicitly as the deduplication horizon), that `jobId` is **omitted entirely** when no key is supplied, that a supplied key is namespaced as `` `${jobName}.${key}` ``, that the same key under two job names yields two distinct ids, and that the generated id satisfies BullMQ's custom-id rules (does not round-trip through `parseInt`, contains no `:`).
 - **`src/infrastructure/jobs/job-worker.test.ts`** (unit) covers the consumer adapter against a mocked BullMQ `Worker`: handler routing by job name, the no-handler throw, and every failure path — warn while a retry is pending, error once BullMQ has declined to retry, error when attempts remain but the error was unrecoverable (this case would pass under an `attemptsMade`-based predicate and fail under a correct one), a retried job whose `finishedOn` was reset to `null` treated as still retrying (guarding the `!= null` comparison against a "strictness cleanup" to `!== undefined`), a `failed` emission with no job at all, and the `stalled` listener.

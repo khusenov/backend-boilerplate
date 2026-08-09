@@ -52,7 +52,7 @@ describe('data retention (outbox)', () => {
       ],
     });
 
-    await h.app.diContainer.resolve('enforceDataRetentionJob').handle();
+    await h.app.diContainer.resolve('enforceDataRetentionJob').handle(undefined);
 
     const survivors = await h.prisma.outboxMessage.findMany({ orderBy: { id: 'asc' } });
     expect(survivors.map((message) => message.id)).toEqual([

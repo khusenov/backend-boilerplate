@@ -6,7 +6,7 @@ export interface ExampleJobHandlerDeps {
   logger: Logger;
 }
 
-export class ExampleJobHandler implements JobHandler<ExampleJobPayload> {
+export class ExampleJobHandler implements JobHandler<ExampleJobPayload, typeof EXAMPLE_JOB> {
   readonly jobName = EXAMPLE_JOB;
   private readonly logger: Logger;
 

@@ -1,5 +1,5 @@
-export interface JobHandler<TPayload = unknown> {
-  readonly jobName: string;
+export interface JobHandler<TPayload = unknown, TName extends string = string> {
+  readonly jobName: TName;
 
   handle(payload: TPayload): Promise<void>;
 }

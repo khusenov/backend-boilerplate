@@ -14,7 +14,10 @@ export interface DispatchDomainEventJobHandlerDeps {
   domainEventHandlerRegistry: DomainEventHandlerRegistry;
 }
 
-export class DispatchDomainEventJobHandler implements JobHandler<DispatchDomainEventPayload> {
+export class DispatchDomainEventJobHandler implements JobHandler<
+  DispatchDomainEventPayload,
+  typeof DISPATCH_DOMAIN_EVENT_JOB
+> {
   readonly jobName = DISPATCH_DOMAIN_EVENT_JOB;
   private readonly serializer: DomainEventSerializer;
   private readonly registry: DomainEventHandlerRegistry;

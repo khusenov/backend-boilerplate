@@ -13,7 +13,7 @@ export interface EnforceDataRetentionJobDeps {
   logger: Logger;
 }
 
-export class EnforceDataRetentionJob implements JobHandler {
+export class EnforceDataRetentionJob implements JobHandler<unknown, typeof DATA_RETENTION_JOB> {
   readonly jobName = DATA_RETENTION_JOB;
   private readonly retentionTasks: RetentionTask[];
   private readonly dataRetentionWindowMs: number;

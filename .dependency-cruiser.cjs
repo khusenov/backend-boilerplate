@@ -59,6 +59,32 @@ module.exports = {
       to: { path: '^src/(domain|shared|application|infrastructure|presentation)/' },
     },
 
+    {
+      name: 'composition-root-is-not-importable',
+      comment:
+        'Top-level src/*.ts modules are composition roots: they sit outside every layer and are ' +
+        'the only place allowed to see both application and infrastructure. Importing one from ' +
+        'inside a layer launders a forbidden dependency past the layer rules — depend on a port ' +
+        'instead. src/container.ts has its own rule below.',
+      severity: 'error',
+      from: { path: '^src/(domain|shared|application|infrastructure|presentation|config)/' },
+      to: { path: '^src/[^/]+\\.ts$', pathNot: '^src/container\\.ts$' },
+    },
+    {
+      name: 'container-is-imported-only-by-buildapp',
+      comment:
+        'The composition root wires every concretion, so importing it from inside a layer defeats ' +
+        'every rule above at once. buildApp is the single sanctioned edge from a layer: it calls ' +
+        'registerDependencies. Entry points under src/scripts/ are a sibling tier, not a layer, ' +
+        'and are deliberately out of scope here.',
+      severity: 'error',
+      from: {
+        path: '^src/(domain|shared|application|infrastructure|presentation|config)/',
+        pathNot: '^src/presentation/http/app\\.ts$',
+      },
+      to: { path: '^src/container\\.ts$' },
+    },
+
     // ─── General hygiene ───
     {
       name: 'no-circular',

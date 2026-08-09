@@ -60,12 +60,18 @@ import { createRedisConnection } from '@/infrastructure/jobs/redis-connection';
 import { BullMqJobQueue } from '@/infrastructure/jobs/bullmq-job-queue';
 import { JobWorker } from '@/infrastructure/jobs/job-worker';
 import type { JobQueue } from '@/application/shared/ports/job-queue';
+import type { JobHandler } from '@/application/shared/ports/job-handler';
 import { ExampleJobHandler } from '@/application/jobs/example-job-handler';
+import { EXAMPLE_JOB, type ExampleJobPayload } from '@/application/jobs/example-job';
 import { DomainEventSerializer } from '@/infrastructure/events/domain-event-serializer';
 import { domainEventFactories } from '@/infrastructure/events/domain-event-factories';
 import { DomainEventHandlerRegistry } from '@/infrastructure/events/domain-event-handler-registry';
-import { DispatchDomainEventJobHandler } from '@/infrastructure/events/dispatch-domain-event-job-handler';
-import { OutboxRelay } from '@/infrastructure/events/outbox-relay';
+import {
+  DispatchDomainEventJobHandler,
+  DISPATCH_DOMAIN_EVENT_JOB,
+  type DispatchDomainEventPayload,
+} from '@/infrastructure/events/dispatch-domain-event-job-handler';
+import { OutboxRelay, OUTBOX_RELAY_JOB } from '@/infrastructure/events/outbox-relay';
 import { PrismaOutboxWriter } from '@/infrastructure/persistence/prisma-outbox-writer';
 import { BullMqJobScheduler } from '@/infrastructure/jobs/bullmq-job-scheduler';
 import type { JobScheduler } from '@/application/shared/ports/job-scheduler';
@@ -76,7 +82,10 @@ import { CompositeHealthCheck } from '@/infrastructure/health/composite-health-c
 import { createRateLimitRedis } from '@/infrastructure/security/rate-limit-redis';
 import { RefreshTokenRetentionTask } from '@/infrastructure/persistence/refresh-token-retention-task';
 import { OutboxRetentionTask } from '@/infrastructure/persistence/outbox-retention-task';
-import { EnforceDataRetentionJob } from '@/application/retention/enforce-data-retention-job';
+import {
+  EnforceDataRetentionJob,
+  DATA_RETENTION_JOB,
+} from '@/application/retention/enforce-data-retention-job';
 import type { RetentionTask } from '@/application/shared/ports/retention-task';
 import type { Queue } from 'bullmq';
 import { createDashboardQueue } from '@/infrastructure/jobs/dashboard-queue';
@@ -89,9 +98,14 @@ import { PrismaEmailVerificationCodeRepository } from '@/infrastructure/persiste
 import { RegisterUser } from '@/application/auth/register-user';
 import { VerifyEmail } from '@/application/auth/verify-email';
 import { SendVerificationEmailHandler } from '@/application/jobs/send-verification-email-handler';
+import {
+  SEND_VERIFICATION_EMAIL_JOB,
+  type SendVerificationEmailPayload,
+} from '@/application/jobs/send-verification-email-job';
 import type { VerificationCodeService } from '@/application/shared/ports/verification-code-service';
 import type { EmailVerificationCodeRepository } from '@/domain/verification/email-verification-code-repository';
 import type { VerificationConfig } from '@/application/auth/verification-config';
+import { toJobHandlerList } from '@/job-catalogue';
 
 declare module '@fastify/awilix' {
   interface Cradle {
@@ -124,8 +138,11 @@ declare module '@fastify/awilix' {
     domainEventHandlerRegistry: DomainEventHandlerRegistry;
     domainEventSerializer: DomainEventSerializer;
     outboxWriter: PrismaOutboxWriter;
-    dispatchDomainEventJobHandler: DispatchDomainEventJobHandler;
-    outboxRelay: OutboxRelay;
+    dispatchDomainEventJobHandler: JobHandler<
+      DispatchDomainEventPayload,
+      typeof DISPATCH_DOMAIN_EVENT_JOB
+    >;
+    outboxRelay: JobHandler<unknown, typeof OUTBOX_RELAY_JOB>;
     queuePrefix: string;
     queueConcurrency: number;
     redisConnection: Redis;
@@ -138,7 +155,7 @@ declare module '@fastify/awilix' {
     dataRetentionWindowMs: number;
     refreshTokenRetentionTask: RetentionTask;
     outboxRetentionTask: RetentionTask;
-    enforceDataRetentionJob: EnforceDataRetentionJob;
+    enforceDataRetentionJob: JobHandler<unknown, typeof DATA_RETENTION_JOB>;
     metricsRecorder: MetricsRecorder;
     metricsExposition: MetricsExposition;
     idempotencyRedis: Redis;
@@ -170,8 +187,11 @@ declare module '@fastify/awilix' {
     verifyEmail: VerifyEmail;
 
     // job handlers
-    exampleJobHandler: ExampleJobHandler;
-    sendVerificationEmailHandler: SendVerificationEmailHandler;
+    exampleJobHandler: JobHandler<ExampleJobPayload, typeof EXAMPLE_JOB>;
+    sendVerificationEmailHandler: JobHandler<
+      SendVerificationEmailPayload,
+      typeof SEND_VERIFICATION_EMAIL_JOB
+    >;
   }
 }
 
@@ -257,6 +277,7 @@ export function registerDependencies(
       ({
         workerConnection,
         exampleJobHandler,
+        sendVerificationEmailHandler,
         outboxRelay,
         dispatchDomainEventJobHandler,
         enforceDataRetentionJob,
@@ -279,12 +300,13 @@ export function registerDependencies(
           connection: workerConnection,
           queuePrefix,
           concurrency: queueConcurrency,
-          handlers: [
-            exampleJobHandler,
-            outboxRelay,
-            dispatchDomainEventJobHandler,
-            enforceDataRetentionJob,
-          ],
+          handlers: toJobHandlerList({
+            [EXAMPLE_JOB]: exampleJobHandler,
+            [SEND_VERIFICATION_EMAIL_JOB]: sendVerificationEmailHandler,
+            [DATA_RETENTION_JOB]: enforceDataRetentionJob,
+            [OUTBOX_RELAY_JOB]: outboxRelay,
+            [DISPATCH_DOMAIN_EVENT_JOB]: dispatchDomainEventJobHandler,
+          }),
           logger,
         }),
     )

@@ -23,7 +23,7 @@ export interface OutboxRelayDeps {
   logger: Logger;
 }
 
-export class OutboxRelay implements JobHandler {
+export class OutboxRelay implements JobHandler<unknown, typeof OUTBOX_RELAY_JOB> {
   readonly jobName = OUTBOX_RELAY_JOB;
   private readonly prisma: PrismaClient;
   private readonly jobQueue: JobQueue;
