@@ -476,5 +476,19 @@ describe('/users (integration)', () => {
       });
       expect(res.statusCode).toBe(403);
     });
+
+    it('forbids editing another user even when the body spoofs the caller id (403)', async () => {
+      const self = await seedUser(h.app);
+      const other = await seedUser(h.app);
+      const selfAuth = await authHeader(h.app, self);
+
+      const res = await h.app.inject({
+        method: 'PATCH',
+        url: `/v1/users/${other.id}`,
+        headers: selfAuth,
+        payload: { id: self.id, firstName: 'Spoofed' },
+      });
+      expect(res.statusCode).toBe(403);
+    });
   });
 });

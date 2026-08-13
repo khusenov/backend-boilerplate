@@ -1,5 +1,17 @@
 import type { FastifyInstance } from 'fastify';
-import { SUPERADMIN_ROLE_KEY } from '@/domain/authorization/permission-catalogue';
+import { PERMISSIONS, SUPERADMIN_ROLE_KEY } from '@/domain/authorization/permission-catalogue';
+import { createUserActor } from '@/domain/authorization/actor';
+import { createSystemActor } from '@/domain/authorization/system-actor';
+
+// A plain user holding exactly users.create — not a superadmin and not a SystemActor,
+// both of which short-circuit the policy, so fixtures would skip the permission lookup.
+export const INTEGRATION_SEED_ACTOR = createUserActor({
+  userId: 'integration-seed',
+  systemRoleKeys: [],
+  permissions: [PERMISSIONS.UsersCreate.key],
+});
+
+export const INTEGRATION_SYSTEM_ACTOR = createSystemActor('integration-test');
 
 export interface SeededUser {
   id: string;
@@ -71,7 +83,10 @@ export async function seedUser(
   const password = overrides.password ?? 'super-secret-password';
 
   const { createUser } = app.diContainer.cradle;
-  const dto = await createUser.execute({ firstName, lastName, email, password });
+  const dto = await createUser.execute(
+    { firstName, lastName, email, password },
+    INTEGRATION_SEED_ACTOR,
+  );
 
   return { id: dto.id, email, password };
 }

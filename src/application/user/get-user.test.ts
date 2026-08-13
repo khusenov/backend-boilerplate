@@ -4,6 +4,21 @@ import { UserNotFoundError } from '@/domain/user/user-errors';
 import { Email } from '@/domain/user/email-vo';
 import { User } from '@/domain/user/user-entity';
 import type { UserRepository } from '@/domain/user/user-repository';
+import { createUserActor } from '@/domain/authorization/actor';
+import { PermissionDeniedError } from '@/domain/authorization/access-policy-errors';
+import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
+
+const ACTOR = createUserActor({
+  userId: 'actor-1',
+  systemRoleKeys: [],
+  permissions: [PERMISSIONS.UsersRead.key],
+});
+
+const UNPRIVILEGED_ACTOR = createUserActor({
+  userId: 'actor-2',
+  systemRoleKeys: [],
+  permissions: [],
+});
 
 const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
 
@@ -44,13 +59,13 @@ describe('GetUser', () => {
     it('throws UserNotFoundError when the user does not exist', async () => {
       ctx.users.findById.mockResolvedValue(null);
 
-      await expect(ctx.sut.execute({ id: 'user-1' })).rejects.toThrow(UserNotFoundError);
+      await expect(ctx.sut.execute({ id: 'user-1' }, ACTOR)).rejects.toThrow(UserNotFoundError);
     });
 
     it('looks up the user by id', async () => {
       ctx.users.findById.mockResolvedValue(makeUser());
 
-      await ctx.sut.execute({ id: 'user-1' });
+      await ctx.sut.execute({ id: 'user-1' }, ACTOR);
 
       expect(ctx.users.findById).toHaveBeenCalledOnce();
       expect(ctx.users.findById).toHaveBeenCalledWith('user-1');
@@ -59,7 +74,7 @@ describe('GetUser', () => {
     it('returns a mapped UserDto on success', async () => {
       ctx.users.findById.mockResolvedValue(makeUser());
 
-      const result = await ctx.sut.execute({ id: 'user-1' });
+      const result = await ctx.sut.execute({ id: 'user-1' }, ACTOR);
 
       expect(result.id).toBe('user-1');
       expect(result.firstName).toBe('Jane');
@@ -68,5 +83,26 @@ describe('GetUser', () => {
       expect(result.email).toBe('jane@example.com');
       expect(result.status).toBe('active');
     });
+  });
+});
+
+describe('GetUser authorization', () => {
+  it('denies a caller without users.read before touching the repository', async () => {
+    const ctx = makeGetUser();
+
+    await expect(ctx.sut.execute({ id: 'user-1' }, UNPRIVILEGED_ACTOR)).rejects.toThrow(
+      PermissionDeniedError,
+    );
+
+    expect(ctx.users.findById).not.toHaveBeenCalled();
+  });
+
+  it('lets a user read their own record while holding no permissions', async () => {
+    const ctx = makeGetUser();
+    ctx.users.findById.mockResolvedValue(makeUser());
+
+    await ctx.sut.execute({ id: UNPRIVILEGED_ACTOR.userId }, UNPRIVILEGED_ACTOR);
+
+    expect(ctx.users.findById).toHaveBeenCalledWith(UNPRIVILEGED_ACTOR.userId);
   });
 });

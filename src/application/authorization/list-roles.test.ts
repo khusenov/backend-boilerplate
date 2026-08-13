@@ -2,6 +2,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ListRoles } from './list-roles';
 import { Role } from '@/domain/authorization/role-entity';
 import type { RoleRepository } from '@/domain/authorization/role-repository';
+import { createUserActor } from '@/domain/authorization/actor';
+import { PermissionDeniedError } from '@/domain/authorization/access-policy-errors';
+import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
+
+const ACTOR = createUserActor({
+  userId: 'actor-1',
+  systemRoleKeys: [],
+  permissions: [PERMISSIONS.RolesRead.key],
+});
+
+const UNPRIVILEGED_ACTOR = createUserActor({
+  userId: 'actor-2',
+  systemRoleKeys: [],
+  permissions: [],
+});
 
 function makeListRoles() {
   const roles = {
@@ -30,7 +45,7 @@ describe('ListRoles', () => {
       total: 1,
     });
 
-    const result = await ctx.sut.execute({});
+    const result = await ctx.sut.execute({}, ACTOR);
 
     expect(ctx.roles.list).toHaveBeenCalledWith({ page: 1, pageSize: 10 });
     expect(result).toMatchObject({
@@ -46,8 +61,18 @@ describe('ListRoles', () => {
   it('clamps an oversized pageSize to the maximum', async () => {
     ctx.roles.list.mockResolvedValue({ items: [], total: 0 });
 
-    await ctx.sut.execute({ page: 2, pageSize: 9999 });
+    await ctx.sut.execute({ page: 2, pageSize: 9999 }, ACTOR);
 
     expect(ctx.roles.list).toHaveBeenCalledWith({ page: 2, pageSize: 100 });
+  });
+});
+
+describe('ListRoles authorization', () => {
+  it('denies a caller without roles.read before touching the repository', async () => {
+    const ctx = makeListRoles();
+
+    await expect(ctx.sut.execute({}, UNPRIVILEGED_ACTOR)).rejects.toThrow(PermissionDeniedError);
+
+    expect(ctx.roles.list).not.toHaveBeenCalled();
   });
 });

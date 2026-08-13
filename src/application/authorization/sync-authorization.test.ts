@@ -16,6 +16,17 @@ import type {
   TransactionalRepositories,
   UnitOfWork,
 } from '@/application/shared/ports/unit-of-work';
+import { createSystemActor } from '@/domain/authorization/system-actor';
+import { createUserActor } from '@/domain/authorization/actor';
+import { SystemActorRequiredError } from '@/domain/authorization/access-policy-errors';
+
+const ACTOR = createSystemActor('test');
+
+const SUPERADMIN_ACTOR = createUserActor({
+  userId: 'actor-1',
+  systemRoleKeys: [SUPERADMIN_ROLE_KEY],
+  permissions: [],
+});
 
 const SUPERADMIN_ID = 'superadmin-id';
 const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
@@ -109,7 +120,7 @@ describe('SyncAuthorization', () => {
     it('upserts every catalogue permission by key', async () => {
       const ctx = makeSync();
 
-      const result = await ctx.sut.execute();
+      const result = await ctx.sut.execute(ACTOR);
 
       expect(ctx.permissions.upsertByKey).toHaveBeenCalledTimes(ALL_PERMISSIONS.length);
       expect(result.permissionsUpserted).toBe(ALL_PERMISSIONS.length);
@@ -141,7 +152,7 @@ describe('SyncAuthorization', () => {
         },
       ]);
 
-      const result = await ctx.sut.execute();
+      const result = await ctx.sut.execute(ACTOR);
 
       expect(ctx.permissions.deleteByKeys).toHaveBeenCalledWith(['legacy.gone']);
       expect(result.permissionsRemoved).toEqual(['legacy.gone']);
@@ -152,7 +163,7 @@ describe('SyncAuthorization', () => {
     it('creates the superadmin system role when absent', async () => {
       const ctx = makeSync();
 
-      const result = await ctx.sut.execute();
+      const result = await ctx.sut.execute(ACTOR);
 
       expect(ctx.roles.save).toHaveBeenCalledOnce();
       const [saved] = ctx.roles.save.mock.calls[0]!;
@@ -165,7 +176,7 @@ describe('SyncAuthorization', () => {
       const ctx = makeSync();
       ctx.roles.findByKey.mockResolvedValue(existingSuperadmin());
 
-      const result = await ctx.sut.execute();
+      const result = await ctx.sut.execute(ACTOR);
 
       expect(ctx.roles.save).not.toHaveBeenCalled();
       expect(result.superadminCreated).toBe(false);
@@ -176,7 +187,7 @@ describe('SyncAuthorization', () => {
     it('does nothing when no bootstrap email is configured', async () => {
       const ctx = makeSync({ BOOTSTRAP_ADMIN_EMAIL: '' });
 
-      const result = await ctx.sut.execute();
+      const result = await ctx.sut.execute(ACTOR);
 
       expect(ctx.users.findByEmail).not.toHaveBeenCalled();
       expect(ctx.userRoles.assign).not.toHaveBeenCalled();
@@ -188,7 +199,7 @@ describe('SyncAuthorization', () => {
       ctx.roles.findByKey.mockResolvedValue(existingSuperadmin());
       ctx.users.findByEmail.mockResolvedValue(null);
 
-      const result = await ctx.sut.execute();
+      const result = await ctx.sut.execute(ACTOR);
 
       expect(ctx.userRoles.assign).not.toHaveBeenCalled();
       expect(result.bootstrapPromoted).toBe(false);
@@ -200,7 +211,7 @@ describe('SyncAuthorization', () => {
       ctx.users.findByEmail.mockResolvedValue(bootstrapUser());
       ctx.userRoles.listRoleIdsForUser.mockResolvedValue([]);
 
-      const result = await ctx.sut.execute();
+      const result = await ctx.sut.execute(ACTOR);
 
       expect(ctx.userRoles.assign).toHaveBeenCalledOnce();
       const [userId, roleId] = ctx.userRoles.assign.mock.calls[0]!;
@@ -213,7 +224,7 @@ describe('SyncAuthorization', () => {
       const ctx = makeSync({ BOOTSTRAP_ADMIN_EMAIL: 'admin@finflow.com' });
       ctx.users.findByEmail.mockResolvedValue(bootstrapUser());
 
-      await ctx.sut.execute();
+      await ctx.sut.execute(ACTOR);
 
       for (const [record] of ctx.permissions.upsertByKey.mock.calls) {
         expect(record.createdAt).toEqual(NOW);
@@ -231,7 +242,7 @@ describe('SyncAuthorization', () => {
       ctx.users.findByEmail.mockResolvedValue(bootstrapUser());
       ctx.userRoles.listRoleIdsForUser.mockResolvedValue([SUPERADMIN_ID]);
 
-      const result = await ctx.sut.execute();
+      const result = await ctx.sut.execute(ACTOR);
 
       expect(ctx.userRoles.assign).not.toHaveBeenCalled();
       expect(result.bootstrapPromoted).toBe(false);
@@ -240,10 +251,21 @@ describe('SyncAuthorization', () => {
     it('wraps all operations in a single transaction', async () => {
       const ctx = makeSync();
 
-      await ctx.sut.execute();
+      await ctx.sut.execute(ACTOR);
 
       // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(ctx.unitOfWork.run).toHaveBeenCalledOnce();
     });
+  });
+});
+
+describe('SyncAuthorization authorization', () => {
+  it('rejects a user actor — even a superadmin — without opening a transaction', async () => {
+    const ctx = makeSync();
+
+    await expect(ctx.sut.execute(SUPERADMIN_ACTOR)).rejects.toThrow(SystemActorRequiredError);
+
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(ctx.unitOfWork.run).not.toHaveBeenCalled();
   });
 });

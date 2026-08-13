@@ -1,5 +1,8 @@
 import { toRoleDto, type RoleDto } from './role-dto';
 import type { RoleRepository } from '@/domain/authorization/role-repository';
+import type { Actor } from '@/domain/authorization/actor';
+import { ensurePermission } from '@/domain/authorization/access-policy';
+import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
 import {
   createPage,
   normalizePageQuery,
@@ -22,7 +25,9 @@ export class ListRoles {
     this.roles = roleRepository;
   }
 
-  async execute(input: ListRolesInput): Promise<ListRolesOutput> {
+  async execute(input: ListRolesInput, actor: Actor): Promise<ListRolesOutput> {
+    ensurePermission(actor, PERMISSIONS.RolesRead.key);
+
     const query = normalizePageQuery(input);
     const { items, total } = await this.roles.list(query);
     return createPage(items.map(toRoleDto), total, query);

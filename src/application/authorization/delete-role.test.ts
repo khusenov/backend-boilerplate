@@ -4,6 +4,21 @@ import { Role } from '@/domain/authorization/role-entity';
 import type { RoleRepository } from '@/domain/authorization/role-repository';
 import type { Clock } from '@/application/shared/ports/clock';
 import { RoleNotFoundError, SystemRoleProtectedError } from '@/domain/authorization/role-errors';
+import { createUserActor } from '@/domain/authorization/actor';
+import { PermissionDeniedError } from '@/domain/authorization/access-policy-errors';
+import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
+
+const ACTOR = createUserActor({
+  userId: 'actor-1',
+  systemRoleKeys: [],
+  permissions: [PERMISSIONS.RolesDelete.key],
+});
+
+const UNPRIVILEGED_ACTOR = createUserActor({
+  userId: 'actor-2',
+  systemRoleKeys: [],
+  permissions: [],
+});
 
 const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
 const NOW = new Date('2026-06-01T12:00:00.000Z');
@@ -34,14 +49,14 @@ describe('DeleteRole', () => {
   it('throws RoleNotFoundError when the role does not exist', async () => {
     ctx.roles.findById.mockResolvedValue(null);
 
-    await expect(ctx.sut.execute({ id: 'missing' })).rejects.toThrow(RoleNotFoundError);
+    await expect(ctx.sut.execute({ id: 'missing' }, ACTOR)).rejects.toThrow(RoleNotFoundError);
   });
 
   it('soft-deletes an admin role and persists it', async () => {
     const role = Role.create({ id: 'role-1', name: 'Editor' }, CREATED_AT);
     ctx.roles.findById.mockResolvedValue(role);
 
-    await ctx.sut.execute({ id: 'role-1' });
+    await ctx.sut.execute({ id: 'role-1' }, ACTOR);
 
     expect(role.isDeleted).toBe(true);
     expect(ctx.roles.save).toHaveBeenCalledWith(role);
@@ -51,7 +66,7 @@ describe('DeleteRole', () => {
     const role = Role.create({ id: 'role-1', name: 'Editor' }, CREATED_AT);
     ctx.roles.findById.mockResolvedValue(role);
 
-    await ctx.sut.execute({ id: 'role-1' });
+    await ctx.sut.execute({ id: 'role-1' }, ACTOR);
 
     expect(role.deletedAt).toEqual(NOW);
     expect(role.updatedAt).toEqual(NOW);
@@ -63,7 +78,21 @@ describe('DeleteRole', () => {
       Role.createSystem({ id: 'role-1', key: 'super-admin', name: 'Super Admin' }, CREATED_AT),
     );
 
-    await expect(ctx.sut.execute({ id: 'role-1' })).rejects.toThrow(SystemRoleProtectedError);
+    await expect(ctx.sut.execute({ id: 'role-1' }, ACTOR)).rejects.toThrow(
+      SystemRoleProtectedError,
+    );
     expect(ctx.roles.save).not.toHaveBeenCalled();
+  });
+});
+
+describe('DeleteRole authorization', () => {
+  it('denies a caller without roles.delete before touching the repository', async () => {
+    const ctx = makeDeleteRole();
+
+    await expect(ctx.sut.execute({ id: 'role-1' }, UNPRIVILEGED_ACTOR)).rejects.toThrow(
+      PermissionDeniedError,
+    );
+
+    expect(ctx.roles.findById).not.toHaveBeenCalled();
   });
 });

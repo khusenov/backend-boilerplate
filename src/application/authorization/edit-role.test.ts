@@ -9,6 +9,21 @@ import {
   UnknownPermissionError,
 } from '@/domain/authorization/role-errors';
 import type { Clock } from '@/application/shared/ports/clock';
+import { createUserActor } from '@/domain/authorization/actor';
+import { PermissionDeniedError } from '@/domain/authorization/access-policy-errors';
+import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
+
+const ACTOR = createUserActor({
+  userId: 'actor-1',
+  systemRoleKeys: [],
+  permissions: [PERMISSIONS.RolesUpdate.key],
+});
+
+const UNPRIVILEGED_ACTOR = createUserActor({
+  userId: 'actor-2',
+  systemRoleKeys: [],
+  permissions: [],
+});
 
 const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
 const NOW = new Date('2026-06-01T12:00:00.000Z');
@@ -39,16 +54,18 @@ describe('EditRole', () => {
   it('throws RoleNotFoundError when the role does not exist', async () => {
     ctx.roles.findById.mockResolvedValue(null);
 
-    await expect(ctx.sut.execute({ id: 'missing', name: 'X' })).rejects.toThrow(RoleNotFoundError);
+    await expect(ctx.sut.execute({ id: 'missing', name: 'X' }, ACTOR)).rejects.toThrow(
+      RoleNotFoundError,
+    );
   });
 
   it('rejects an unknown permission before mutating the role', async () => {
     const role = Role.create({ id: 'role-1', name: 'Editor' }, CREATED_AT);
     ctx.roles.findById.mockResolvedValue(role);
 
-    await expect(ctx.sut.execute({ id: 'role-1', permissions: ['nope.invalid'] })).rejects.toThrow(
-      UnknownPermissionError,
-    );
+    await expect(
+      ctx.sut.execute({ id: 'role-1', permissions: ['nope.invalid'] }, ACTOR),
+    ).rejects.toThrow(UnknownPermissionError);
     expect(ctx.roles.save).not.toHaveBeenCalled();
     expect(ctx.clock.now).not.toHaveBeenCalled();
   });
@@ -59,7 +76,7 @@ describe('EditRole', () => {
       Role.create({ id: 'role-2', name: 'Manager' }, CREATED_AT),
     );
 
-    await expect(ctx.sut.execute({ id: 'role-1', name: 'Manager' })).rejects.toThrow(
+    await expect(ctx.sut.execute({ id: 'role-1', name: 'Manager' }, ACTOR)).rejects.toThrow(
       RoleNameTakenError,
     );
   });
@@ -69,7 +86,7 @@ describe('EditRole', () => {
     ctx.roles.findById.mockResolvedValue(role);
     ctx.roles.findByName.mockResolvedValue(role);
 
-    const result = await ctx.sut.execute({ id: 'role-1', name: 'Editor' });
+    const result = await ctx.sut.execute({ id: 'role-1', name: 'Editor' }, ACTOR);
 
     expect(result.name).toBe('Editor');
     expect(ctx.roles.save).toHaveBeenCalledOnce();
@@ -80,11 +97,14 @@ describe('EditRole', () => {
       Role.create({ id: 'role-1', name: 'Editor', permissions: ['users.read'] }, CREATED_AT),
     );
 
-    const result = await ctx.sut.execute({
-      id: 'role-1',
-      description: 'Leads content',
-      permissions: ['roles.read'],
-    });
+    const result = await ctx.sut.execute(
+      {
+        id: 'role-1',
+        description: 'Leads content',
+        permissions: ['roles.read'],
+      },
+      ACTOR,
+    );
 
     expect(result.name).toBe('Editor');
     expect(result.description).toBe('Leads content');
@@ -98,12 +118,15 @@ describe('EditRole', () => {
       Role.create({ id: 'role-1', name: 'Editor', permissions: ['users.read'] }, CREATED_AT),
     );
 
-    const result = await ctx.sut.execute({
-      id: 'role-1',
-      name: 'Manager',
-      description: 'Leads',
-      permissions: ['roles.read'],
-    });
+    const result = await ctx.sut.execute(
+      {
+        id: 'role-1',
+        name: 'Manager',
+        description: 'Leads',
+        permissions: ['roles.read'],
+      },
+      ACTOR,
+    );
 
     expect(result.name).toBe('Manager');
     expect(result.description).toBe('Leads');
@@ -118,12 +141,15 @@ describe('EditRole', () => {
     );
     ctx.roles.findById.mockResolvedValue(role);
 
-    await ctx.sut.execute({
-      id: 'role-1',
-      name: 'Manager',
-      description: 'Leads',
-      permissions: ['roles.read'],
-    });
+    await ctx.sut.execute(
+      {
+        id: 'role-1',
+        name: 'Manager',
+        description: 'Leads',
+        permissions: ['roles.read'],
+      },
+      ACTOR,
+    );
 
     expect(role.updatedAt).toEqual(NOW);
     expect(ctx.clock.now).toHaveBeenCalledOnce();
@@ -134,8 +160,20 @@ describe('EditRole', () => {
       Role.createSystem({ id: 'role-1', key: 'super-admin', name: 'Super Admin' }, CREATED_AT),
     );
 
-    await expect(ctx.sut.execute({ id: 'role-1', name: 'X' })).rejects.toThrow(
+    await expect(ctx.sut.execute({ id: 'role-1', name: 'X' }, ACTOR)).rejects.toThrow(
       SystemRoleProtectedError,
     );
+  });
+});
+
+describe('EditRole authorization', () => {
+  it('denies a caller without roles.update before touching the repository', async () => {
+    const ctx = makeEditRole();
+
+    await expect(
+      ctx.sut.execute({ id: 'role-1', name: 'auditor' }, UNPRIVILEGED_ACTOR),
+    ).rejects.toThrow(PermissionDeniedError);
+
+    expect(ctx.roles.findById).not.toHaveBeenCalled();
   });
 });

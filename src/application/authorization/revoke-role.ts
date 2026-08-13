@@ -1,6 +1,9 @@
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { UserRoleRepository } from '@/application/shared/ports/user-role-repository';
 import { UserNotFoundError } from '@/domain/user/user-errors';
+import type { Actor } from '@/domain/authorization/actor';
+import { ensurePermission } from '@/domain/authorization/access-policy';
+import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
 
 export interface RevokeRoleInput {
   userId: string;
@@ -23,7 +26,9 @@ export class RevokeRole {
     this.userRoles = userRoleRepository;
   }
 
-  async execute(input: RevokeRoleInput): Promise<RevokeRoleOutput> {
+  async execute(input: RevokeRoleInput, actor: Actor): Promise<RevokeRoleOutput> {
+    ensurePermission(actor, PERMISSIONS.RolesAssign.key);
+
     const user = await this.users.findById(input.userId);
     if (!user) throw new UserNotFoundError(input.userId);
 

@@ -3,6 +3,9 @@ import type { UserRepository } from '@/domain/user/user-repository';
 import type { Clock } from '@/application/shared/ports/clock';
 import { EmailAlreadyTakenError, UserNotFoundError } from '@/domain/user/user-errors';
 import { Email } from '@/domain/user/email-vo';
+import type { Actor } from '@/domain/authorization/actor';
+import { ensureSelfOrPermission } from '@/domain/authorization/access-policy';
+import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
 
 export interface EditUserInput {
   id: string;
@@ -27,7 +30,9 @@ export class EditUser {
     this.clock = clock;
   }
 
-  async execute(input: EditUserInput): Promise<EditUserOutput> {
+  async execute(input: EditUserInput, actor: Actor): Promise<EditUserOutput> {
+    ensureSelfOrPermission(actor, input.id, PERMISSIONS.UsersUpdate.key);
+
     const user = await this.users.findById(input.id);
     if (!user) throw new UserNotFoundError(input.id);
 

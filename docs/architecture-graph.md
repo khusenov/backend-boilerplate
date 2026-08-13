@@ -7,10 +7,15 @@ subgraph src["src"]
   src_container_ts["container.ts"]
   src_domain["domain"]
   src_infrastructure["infrastructure"]
+  src_instrumentation_ts["instrumentation.ts"]
+  src_job_catalogue_ts["job-catalogue.ts"]
   src_main_ts["main.ts"]
   src_presentation["presentation"]
   src_scripts["scripts"]
   src_shared["shared"]
+  src_start_worker_ts["start-worker.ts"]
+  src_worker_shutdown_ts["worker-shutdown.ts"]
+  src_worker_ts["worker.ts"]
 end
 src_application-->src_domain
 src_application-->src_config
@@ -19,11 +24,16 @@ src_container_ts-->src_application
 src_container_ts-->src_config
 src_container_ts-->src_domain
 src_container_ts-->src_infrastructure
+src_container_ts-->src_job_catalogue_ts
 src_domain-->src_shared
 src_infrastructure-->src_application
 src_infrastructure-->src_domain
 src_infrastructure-->src_config
 src_infrastructure-->src_shared
+src_instrumentation_ts-->src_infrastructure
+src_job_catalogue_ts-->src_application
+src_job_catalogue_ts-->src_infrastructure
+src_main_ts-->src_instrumentation_ts
 src_main_ts-->src_config
 src_main_ts-->src_infrastructure
 src_main_ts-->src_presentation
@@ -34,6 +44,16 @@ src_presentation-->src_application
 src_presentation-->src_domain
 src_scripts-->src_application
 src_scripts-->src_config
-src_scripts-->src_container_ts
 src_scripts-->src_infrastructure
+src_scripts-->src_container_ts
+src_scripts-->src_domain
+src_start_worker_ts-->src_application
+src_start_worker_ts-->src_infrastructure
+src_worker_ts-->src_instrumentation_ts
+src_worker_ts-->src_config
+src_worker_ts-->src_container_ts
+src_worker_ts-->src_infrastructure
+src_worker_ts-->src_presentation
+src_worker_ts-->src_start_worker_ts
+src_worker_ts-->src_worker_shutdown_ts
 ```

@@ -127,34 +127,34 @@ the rate limiter and the Bull Board plugin (`app.ts`); `metricsRecorder`, when m
 from the cradle **per response** inside the `onResponse` metrics hook (`plugins/metrics.ts`), not at
 composition time.
 
-| Component                                       | Layer        | Responsibility                                                                                          | File                                                 |
-| ----------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| `buildApp`                                      | Presentation | Composition root: configures Fastify, registers plugins in order, mounts routes                         | `src/presentation/http/app.ts`                       |
-| `registerErrorHandler`                          | Presentation | Single `setErrorHandler` + `setNotFoundHandler`; maps every error to the JSON envelope                  | `src/presentation/http/error-handler.ts`             |
-| `KIND_TO_STATUS`                                | Presentation | Maps each `ErrorKindType` to its HTTP status code                                                       | `src/presentation/http/error-handler.ts`             |
-| `helmetOptions` / `rateLimitOptions`            | Presentation | Security defaults: helmet Content-Security-Policy (CSP) toggle and the Redis-backed rate-limit envelope | `src/presentation/http/security.ts`                  |
-| `errorResponse`                                 | Presentation | Zod response contract for the error envelope                                                            | `src/presentation/http/schemas/error-schema.ts`      |
-| `paginated`                                     | Presentation | Zod response-contract factory wrapping a page of items                                                  | `src/presentation/http/schemas/pagination-schema.ts` |
-| `timestamp`                                     | Presentation | Zod response contract for date fields (`z.date()`)                                                      | `src/presentation/http/schemas/timestamp-schema.ts`  |
-| `correlationIdPlugin`                           | Presentation | Per-request correlation id (see [Structured Logging](./structured-logging.md))                          | `src/presentation/http/plugins/correlation-id.ts`    |
-| `metricsPlugin`                                 | Presentation | `onResponse` hook recording HTTP metrics (see [Metrics](./metrics.md))                                  | `src/presentation/http/plugins/metrics.ts`           |
-| `authPlugin`                                    | Presentation | `authenticate` decorator for bearer auth (see [Authentication](./authentication.md))                    | `src/presentation/http/plugins/authenticate.ts`      |
-| `bullBoardPlugin` / `createBasicAuthValidator`  | Presentation | Basic-auth-guarded Bull Board dashboard mount (see [Background Jobs](./background-jobs.md))             | `src/presentation/http/plugins/bull-board.ts`        |
-| `requirePermission` / `requireSelfOrPermission` | Presentation | Route guards enforcing permissions (see [Role-Based Authorization](./role-based-authorization.md))      | `src/presentation/http/guards/authorize.ts`          |
-| cookie helpers                                  | Presentation | Read/write the signed refresh-token cookie (see [Authentication](./authentication.md))                  | `src/presentation/http/cookies.ts`                   |
-| `AppError`                                      | Shared       | Abstract base error carrying `kind`, `code`, `details`, `isOperational`, `timestamp`, `toJSON()`        | `src/shared/errors/app-error.ts`                     |
-| `ErrorKind`                                     | Shared       | The closed set of error kinds (`VALIDATION`…`INTERNAL`)                                                 | `src/shared/errors/app-error.ts`                     |
-| `ValidationError` … `InternalError`             | Shared       | Semantic `AppError` subclasses inner layers throw                                                       | `src/shared/errors/semantic-errors.ts`               |
-| `normalizePageQuery` / `createPage`             | Shared       | Framework-free pagination: clamp request input, compute page metadata                                   | `src/shared/pagination.ts`                           |
-| `Page` / `PageQuery` / `PageSlice`              | Shared       | Pagination types shared by use cases, repositories, and response schemas                                | `src/shared/pagination.ts`                           |
-| `env`                                           | Config       | Parse + validate the whole environment once at boot (`envalid`), exported frozen                        | `src/config/env.ts`                                  |
-| `assertProductionSecrets`                       | Config       | Boot-time guard: refuse to start when a production secret is weak                                       | `src/config/assert-production-secrets.ts`            |
-| `toServiceIdentity`                             | Config       | Derive `{ service, environment, version }` for logs/traces from env                                     | `src/config/service-identity.ts`                     |
+| Component                                      | Layer        | Responsibility                                                                                                                          | File                                                         |
+| ---------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `buildApp`                                     | Presentation | Composition root: configures Fastify, registers plugins in order, mounts routes                                                         | `src/presentation/http/app.ts`                               |
+| `registerErrorHandler`                         | Presentation | Single `setErrorHandler` + `setNotFoundHandler`; maps every error to the JSON envelope                                                  | `src/presentation/http/error-handler.ts`                     |
+| `KIND_TO_STATUS`                               | Presentation | Maps each `ErrorKindType` to its HTTP status code                                                                                       | `src/presentation/http/error-handler.ts`                     |
+| `helmetOptions` / `rateLimitOptions`           | Presentation | Security defaults: helmet Content-Security-Policy (CSP) toggle and the Redis-backed rate-limit envelope                                 | `src/presentation/http/security.ts`                          |
+| `errorResponse`                                | Presentation | Zod response contract for the error envelope                                                                                            | `src/presentation/http/schemas/error-schema.ts`              |
+| `paginated`                                    | Presentation | Zod response-contract factory wrapping a page of items                                                                                  | `src/presentation/http/schemas/pagination-schema.ts`         |
+| `timestamp`                                    | Presentation | Zod response contract for date fields (`z.date()`)                                                                                      | `src/presentation/http/schemas/timestamp-schema.ts`          |
+| `correlationIdPlugin`                          | Presentation | Per-request correlation id (see [Structured Logging](./structured-logging.md))                                                          | `src/presentation/http/plugins/correlation-id.ts`            |
+| `metricsPlugin`                                | Presentation | `onResponse` hook recording HTTP metrics (see [Metrics](./metrics.md))                                                                  | `src/presentation/http/plugins/metrics.ts`                   |
+| `authPlugin`                                   | Presentation | `authenticate` decorator for bearer auth (see [Authentication](./authentication.md))                                                    | `src/presentation/http/plugins/authenticate.ts`              |
+| `bullBoardPlugin` / `createBasicAuthValidator` | Presentation | Basic-auth-guarded Bull Board dashboard mount (see [Background Jobs](./background-jobs.md))                                             | `src/presentation/http/plugins/bull-board.ts`                |
+| `toRequestActor`                               | Presentation | Maps `request.user` to the domain `Actor` a use case authorizes against (see [Role-Based Authorization](./role-based-authorization.md)) | `src/presentation/http/identity/actor-from-token-payload.ts` |
+| cookie helpers                                 | Presentation | Read/write the signed refresh-token cookie (see [Authentication](./authentication.md))                                                  | `src/presentation/http/cookies.ts`                           |
+| `AppError`                                     | Shared       | Abstract base error carrying `kind`, `code`, `details`, `isOperational`, `timestamp`, `toJSON()`                                        | `src/shared/errors/app-error.ts`                             |
+| `ErrorKind`                                    | Shared       | The closed set of error kinds (`VALIDATION`…`INTERNAL`)                                                                                 | `src/shared/errors/app-error.ts`                             |
+| `ValidationError` … `InternalError`            | Shared       | Semantic `AppError` subclasses inner layers throw                                                                                       | `src/shared/errors/semantic-errors.ts`                       |
+| `normalizePageQuery` / `createPage`            | Shared       | Framework-free pagination: clamp request input, compute page metadata                                                                   | `src/shared/pagination.ts`                                   |
+| `Page` / `PageQuery` / `PageSlice`             | Shared       | Pagination types shared by use cases, repositories, and response schemas                                                                | `src/shared/pagination.ts`                                   |
+| `env`                                          | Config       | Parse + validate the whole environment once at boot (`envalid`), exported frozen                                                        | `src/config/env.ts`                                          |
+| `assertProductionSecrets`                      | Config       | Boot-time guard: refuse to start when a production secret is weak                                                                       | `src/config/assert-production-secrets.ts`                    |
+| `toServiceIdentity`                            | Config       | Derive `{ service, environment, version }` for logs/traces from env                                                                     | `src/config/service-identity.ts`                             |
 
 ## Public surface
 
 Two things clients program against (the wire contracts) and three things engineers program against
-(the shared building blocks and the route decorators/guards).
+(the shared building blocks and the route decorators/identity helpers).
 
 **Error-response envelope.** Every failure — validation, auth, rate limit, unknown crash, unknown
 route — produces exactly this shape, validated by `errorResponse` in `error-schema.ts`:
@@ -224,20 +224,22 @@ const timestamp;      // z.date() for date fields
 const errorResponse;  // the error envelope
 ```
 
-**Route decorators and guards** the HTTP layer exposes for feature routes to program against (their
-behaviour is documented in depth in the linked feature docs):
+**Route decorators and identity helpers** the HTTP layer exposes for feature routes to program against
+(their behaviour is documented in depth in the linked feature docs):
 
 ```ts
-app.authenticate;                              // FastifyInstance decorator — verifies the bearer token,
-                                               // sets request.user; use as an onRequest/preHandler hook
-request.user?: AccessTokenPayload;             // FastifyRequest decorator populated by authenticate
+app.authenticate;                  // FastifyInstance decorator — verifies the bearer token,
+                                   // sets request.user; use as an onRequest/preHandler hook
+request.user?: AccessTokenPayload; // FastifyRequest decorator populated by authenticate
 
-requirePermission(permission);                 // preHandler guard → 403 unless the caller holds it
-requireSelfOrPermission(getTargetUserId, permission); // preHandler guard — allows self-access or the permission
+toRequestActor(request.user);      // → RequestActor (a UserActor, or ANONYMOUS_ACTOR when absent);
+                                   // pass it as the last argument of a use case's execute()
 ```
 
-See [Authentication](./authentication.md) for `authenticate` / `request.user` and
-[Role-Based Authorization](./role-based-authorization.md) for the guards.
+Authorization is **not** an HTTP-layer concern: the permission check lives in the use case, so it
+holds for every caller rather than only for requests. The HTTP layer's job is to prove identity and
+hand the use case an `Actor`. See [Authentication](./authentication.md) for `authenticate` /
+`request.user` and [Role-Based Authorization](./role-based-authorization.md) for the access policy.
 
 ## Configuration
 
@@ -404,17 +406,22 @@ async execute(input: ListUsersInput): Promise<ListUsersOutput> {
 }
 ```
 
-**Protect a route** by wiring the decorator and a guard as hooks (see the linked docs for depth):
+**Protect a route** by wiring the decorator as a hook and handing the use case an actor (see the
+linked docs for depth):
 
 ```ts
 app.get(
   '/',
   {
     onRequest: [app.authenticate], // 401 if the bearer token is missing/invalid
-    preHandler: [requirePermission('users.read')], // 403 if the caller lacks the permission
     schema: { response: { 200: paginatedUsers, 401: errorResponse, 403: errorResponse } },
   },
-  handler,
+  async (request, reply) => {
+    const { listUsers } = request.diScope.cradle;
+    // ListUsers.execute calls ensurePermission first — 403 if the caller lacks users.read
+    const page = await listUsers.execute(request.query, toRequestActor(request.user));
+    return reply.status(200).send(page);
+  },
 );
 ```
 

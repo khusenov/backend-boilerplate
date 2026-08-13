@@ -8,6 +8,8 @@ import type { Env } from '@/config/env';
 import { Role } from '@/domain/authorization/role-entity';
 import { Email } from '@/domain/user/email-vo';
 import { ALL_PERMISSIONS, SUPERADMIN_ROLE_KEY } from '@/domain/authorization/permission-catalogue';
+import type { Actor } from '@/domain/authorization/actor';
+import { ensureSystemActor } from '@/domain/authorization/access-policy';
 
 export interface SyncAuthorizationResult {
   permissionsUpserted: number;
@@ -36,7 +38,9 @@ export class SyncAuthorization {
     this.env = env;
   }
 
-  async execute(): Promise<SyncAuthorizationResult> {
+  async execute(actor: Actor): Promise<SyncAuthorizationResult> {
+    ensureSystemActor(actor);
+
     const now = this.clock.now();
 
     return this.unitOfWork.run(async (repos) => {

@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createHarness, resetDb, type TestHarness } from './support/harness';
-import { authHeader, makeSuperadmin, seedUser, type SeededUser } from './support/factories';
+import {
+  authHeader,
+  INTEGRATION_SYSTEM_ACTOR,
+  makeSuperadmin,
+  seedUser,
+  type SeededUser,
+} from './support/factories';
 
 describe('/roles & /permissions (integration)', () => {
   let h: TestHarness;
@@ -17,7 +23,7 @@ describe('/roles & /permissions (integration)', () => {
   });
 
   beforeEach(async () => {
-    await h.app.diContainer.cradle.syncAuthorization.execute();
+    await h.app.diContainer.cradle.syncAuthorization.execute(INTEGRATION_SYSTEM_ACTOR);
     admin = await seedUser(h.app);
     await makeSuperadmin(h.app, admin.id);
     auth = await authHeader(h.app, admin);

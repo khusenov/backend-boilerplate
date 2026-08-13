@@ -15,7 +15,7 @@ purely stateless scheme cannot offer.
 Authorization — deciding _what_ an authenticated caller may do — is a separate concern owned by the
 [Role-Based Authorization](./role-based-authorization.md) (RBAC) feature; this feature only proves
 identity and packages the caller's current grants (roles and permissions) into the access token so the
-authorization guards can read them.
+access policy can read them.
 
 ## How it works
 
@@ -112,7 +112,7 @@ All routes are registered under the `/auth` prefix in `src/presentation/http/app
 
 Two related endpoints share this router but belong to adjacent features and are documented with them:
 `POST /auth/register` (self-service user creation, the User feature) and the Role-Based Authorization
-guards that read the access-token claims. `/auth/refresh` and `/auth/logout` accept the refresh token either
+access policy that reads the access-token claims. `/auth/refresh` and `/auth/logout` accept the refresh token either
 from the `refreshToken` cookie (preferred) or from a `refreshToken` field in the JSON body as a
 fallback for non-browser clients.
 

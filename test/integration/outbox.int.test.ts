@@ -2,6 +2,7 @@ import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redi
 import { Redis } from 'ioredis';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createHarness, resetDb, type TestHarness } from './support/harness';
+import { INTEGRATION_SEED_ACTOR } from './support/factories';
 import { Email } from '@/domain/user/email-vo';
 import { User } from '@/domain/user/user-entity';
 import { UserCreatedEvent } from '@/domain/user/events/user-created-event';
@@ -36,12 +37,15 @@ describe('outbox (integration)', () => {
 
   describe('transactional write', () => {
     it('writes exactly one unpublished outbox row when a user is created', async () => {
-      await h.app.diContainer.cradle.createUser.execute({
-        firstName: 'Jane',
-        lastName: 'Doe',
-        email: 'jane@finflow.test',
-        password: 'password123',
-      });
+      await h.app.diContainer.cradle.createUser.execute(
+        {
+          firstName: 'Jane',
+          lastName: 'Doe',
+          email: 'jane@finflow.test',
+          password: 'password123',
+        },
+        INTEGRATION_SEED_ACTOR,
+      );
 
       const rows = await h.prisma.outboxMessage.findMany();
       expect(rows).toHaveLength(1);
@@ -102,12 +106,15 @@ describe('outbox (integration)', () => {
         logger: noopLogger,
       });
 
-      await h.app.diContainer.cradle.createUser.execute({
-        firstName: 'Relay',
-        lastName: 'Target',
-        email: 'relay@finflow.test',
-        password: 'password123',
-      });
+      await h.app.diContainer.cradle.createUser.execute(
+        {
+          firstName: 'Relay',
+          lastName: 'Target',
+          email: 'relay@finflow.test',
+          password: 'password123',
+        },
+        INTEGRATION_SEED_ACTOR,
+      );
 
       await relay.handle();
 
@@ -168,12 +175,15 @@ describe('outbox (integration)', () => {
       });
 
       try {
-        await h.app.diContainer.cradle.createUser.execute({
-          firstName: 'End',
-          lastName: 'ToEnd',
-          email: 'e2e@finflow.test',
-          password: 'password123',
-        });
+        await h.app.diContainer.cradle.createUser.execute(
+          {
+            firstName: 'End',
+            lastName: 'ToEnd',
+            email: 'e2e@finflow.test',
+            password: 'password123',
+          },
+          INTEGRATION_SEED_ACTOR,
+        );
         await relay.handle();
 
         const event = await handled;

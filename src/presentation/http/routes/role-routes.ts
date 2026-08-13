@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { FastifyPluginCallbackZod } from 'fastify-type-provider-zod';
-import { requirePermission } from '@/presentation/http/guards/authorize';
+import { toRequestActor } from '@/presentation/http/identity/actor-from-token-payload';
 import { errorResponse } from '../schemas/error-schema';
 import { paginatedRoles, roleResponse } from '../schemas/role-response-schema';
 
@@ -38,12 +38,11 @@ export const roleRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
   app.get(
     '/',
     {
-      preHandler: requirePermission('roles.read'),
       schema: { querystring: listRolesQuery, response: { 200: paginatedRoles } },
     },
     async (request, reply) => {
       const { listRoles } = request.diScope.cradle;
-      const page = await listRoles.execute(request.query);
+      const page = await listRoles.execute(request.query, toRequestActor(request.user));
       return reply.status(200).send(page);
     },
   );
@@ -51,12 +50,11 @@ export const roleRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
   app.get(
     '/:id',
     {
-      preHandler: requirePermission('roles.read'),
       schema: { params: roleParams, response: { 200: roleResponse, 404: errorResponse } },
     },
     async (request, reply) => {
       const { getRole } = request.diScope.cradle;
-      const role = await getRole.execute({ id: request.params.id });
+      const role = await getRole.execute({ id: request.params.id }, toRequestActor(request.user));
       return reply.status(200).send(role);
     },
   );
@@ -64,12 +62,11 @@ export const roleRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
   app.post(
     '/',
     {
-      preHandler: requirePermission('roles.create'),
       schema: { body: createRoleBody, response: { 201: roleResponse, 409: errorResponse } },
     },
     async (request, reply) => {
       const { createRole } = request.diScope.cradle;
-      const role = await createRole.execute(request.body);
+      const role = await createRole.execute(request.body, toRequestActor(request.user));
       return reply.status(201).send(role);
     },
   );
@@ -77,7 +74,6 @@ export const roleRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
   app.patch(
     '/:id',
     {
-      preHandler: requirePermission('roles.update'),
       schema: {
         params: roleParams,
         body: editRoleBody,
@@ -86,20 +82,19 @@ export const roleRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
     },
     async (request, reply) => {
       const { editRole } = request.diScope.cradle;
-      const role = await editRole.execute({ id: request.params.id, ...request.body });
+      const role = await editRole.execute(
+        { ...request.body, id: request.params.id },
+        toRequestActor(request.user),
+      );
       return reply.status(200).send(role);
     },
   );
 
-  app.delete(
-    '/:id',
-    { preHandler: requirePermission('roles.delete'), schema: { params: roleParams } },
-    async (request, reply) => {
-      const { deleteRole } = request.diScope.cradle;
-      await deleteRole.execute({ id: request.params.id });
-      return reply.status(204).send();
-    },
-  );
+  app.delete('/:id', { schema: { params: roleParams } }, async (request, reply) => {
+    const { deleteRole } = request.diScope.cradle;
+    await deleteRole.execute({ id: request.params.id }, toRequestActor(request.user));
+    return reply.status(204).send();
+  });
 
   done();
 };

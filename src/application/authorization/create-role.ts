@@ -5,6 +5,9 @@ import type { Clock } from '@/application/shared/ports/clock';
 import type { IdGenerator } from '@/application/shared/ports/id-generator';
 import { Role } from '@/domain/authorization/role-entity';
 import { RoleNameTakenError } from '@/domain/authorization/role-errors';
+import type { Actor } from '@/domain/authorization/actor';
+import { ensurePermission } from '@/domain/authorization/access-policy';
+import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
 
 export interface CreateRoleInput {
   name: string;
@@ -31,7 +34,9 @@ export class CreateRole {
     this.clock = clock;
   }
 
-  async execute(input: CreateRoleInput): Promise<CreateRoleOutput> {
+  async execute(input: CreateRoleInput, actor: Actor): Promise<CreateRoleOutput> {
+    ensurePermission(actor, PERMISSIONS.RolesCreate.key);
+
     const permissions = input.permissions ?? [];
     assertKnownPermissions(permissions);
 

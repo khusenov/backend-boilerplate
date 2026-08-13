@@ -6,6 +6,21 @@ import { Email } from '@/domain/user/email-vo';
 import { User } from '@/domain/user/user-entity';
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { Clock } from '@/application/shared/ports/clock';
+import { createUserActor } from '@/domain/authorization/actor';
+import { PermissionDeniedError } from '@/domain/authorization/access-policy-errors';
+import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
+
+const ACTOR = createUserActor({
+  userId: 'actor-1',
+  systemRoleKeys: [],
+  permissions: [PERMISSIONS.UsersUpdate.key],
+});
+
+const UNPRIVILEGED_ACTOR = createUserActor({
+  userId: 'actor-2',
+  systemRoleKeys: [],
+  permissions: [],
+});
 
 const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
 const NOW = new Date('2026-06-01T12:00:00.000Z');
@@ -62,13 +77,13 @@ describe('EditUser', () => {
     it('throws UserNotFoundError when the user does not exist', async () => {
       ctx.users.findById.mockResolvedValue(null);
 
-      await expect(ctx.sut.execute({ id: 'user-1' })).rejects.toThrow(UserNotFoundError);
+      await expect(ctx.sut.execute({ id: 'user-1' }, ACTOR)).rejects.toThrow(UserNotFoundError);
     });
 
     it('throws InvalidEmailError for a malformed email', async () => {
       ctx.users.findById.mockResolvedValue(makeUser());
 
-      await expect(ctx.sut.execute({ id: 'user-1', email: 'not-an-email' })).rejects.toThrow(
+      await expect(ctx.sut.execute({ id: 'user-1', email: 'not-an-email' }, ACTOR)).rejects.toThrow(
         InvalidEmailError,
       );
     });
@@ -77,15 +92,15 @@ describe('EditUser', () => {
       ctx.users.findById.mockResolvedValue(makeUser());
       ctx.users.findByEmail.mockResolvedValue(makeOtherUser());
 
-      await expect(ctx.sut.execute({ id: 'user-1', email: 'taken@example.com' })).rejects.toThrow(
-        EmailAlreadyTakenError,
-      );
+      await expect(
+        ctx.sut.execute({ id: 'user-1', email: 'taken@example.com' }, ACTOR),
+      ).rejects.toThrow(EmailAlreadyTakenError);
     });
 
     it('does not call findByEmail when the email is unchanged', async () => {
       ctx.users.findById.mockResolvedValue(makeUser());
 
-      await ctx.sut.execute({ id: 'user-1', email: 'jane@example.com' });
+      await ctx.sut.execute({ id: 'user-1', email: 'jane@example.com' }, ACTOR);
 
       expect(ctx.users.findByEmail).not.toHaveBeenCalled();
     });
@@ -94,7 +109,7 @@ describe('EditUser', () => {
       const user = makeUser();
       ctx.users.findById.mockResolvedValue(user);
 
-      const result = await ctx.sut.execute({ id: 'user-1', firstName: 'Janet' });
+      const result = await ctx.sut.execute({ id: 'user-1', firstName: 'Janet' }, ACTOR);
 
       expect(result.firstName).toBe('Janet');
     });
@@ -103,7 +118,7 @@ describe('EditUser', () => {
       const user = makeUser();
       ctx.users.findById.mockResolvedValue(user);
 
-      const result = await ctx.sut.execute({ id: 'user-1', lastName: 'Smith' });
+      const result = await ctx.sut.execute({ id: 'user-1', lastName: 'Smith' }, ACTOR);
 
       expect(result.lastName).toBe('Smith');
     });
@@ -113,7 +128,7 @@ describe('EditUser', () => {
       ctx.users.findById.mockResolvedValue(user);
       ctx.users.findByEmail.mockResolvedValue(null);
 
-      const result = await ctx.sut.execute({ id: 'user-1', email: 'new@example.com' });
+      const result = await ctx.sut.execute({ id: 'user-1', email: 'new@example.com' }, ACTOR);
 
       expect(result.email).toBe('new@example.com');
     });
@@ -122,7 +137,7 @@ describe('EditUser', () => {
       const user = makeUser();
       ctx.users.findById.mockResolvedValue(user);
 
-      await ctx.sut.execute({ id: 'user-1', firstName: 'Janet' });
+      await ctx.sut.execute({ id: 'user-1', firstName: 'Janet' }, ACTOR);
 
       expect(ctx.users.save).toHaveBeenCalledOnce();
       expect(ctx.users.save).toHaveBeenCalledWith(user);
@@ -132,7 +147,10 @@ describe('EditUser', () => {
       const user = makeUser();
       ctx.users.findById.mockResolvedValue(user);
 
-      const result = await ctx.sut.execute({ id: 'user-1', firstName: 'Janet', lastName: 'Smith' });
+      const result = await ctx.sut.execute(
+        { id: 'user-1', firstName: 'Janet', lastName: 'Smith' },
+        ACTOR,
+      );
 
       expect(result.id).toBe('user-1');
       expect(result.firstName).toBe('Janet');
@@ -146,7 +164,7 @@ describe('EditUser', () => {
       ctx.users.findById.mockResolvedValue(user);
       ctx.users.findByEmail.mockResolvedValue(null);
 
-      await ctx.sut.execute({ id: 'user-1', firstName: 'Janet', email: 'new@example.com' });
+      await ctx.sut.execute({ id: 'user-1', firstName: 'Janet', email: 'new@example.com' }, ACTOR);
 
       expect(user.updatedAt).toEqual(NOW);
       expect(ctx.clock.now).toHaveBeenCalledOnce();
@@ -155,9 +173,34 @@ describe('EditUser', () => {
     it('does not read the clock when the user does not exist', async () => {
       ctx.users.findById.mockResolvedValue(null);
 
-      await expect(ctx.sut.execute({ id: 'user-1' })).rejects.toThrow(UserNotFoundError);
+      await expect(ctx.sut.execute({ id: 'user-1' }, ACTOR)).rejects.toThrow(UserNotFoundError);
 
       expect(ctx.clock.now).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('EditUser authorization', () => {
+  it('denies a caller without users.update before touching the repository', async () => {
+    const ctx = makeEditUser();
+
+    await expect(
+      ctx.sut.execute({ id: 'user-1', firstName: 'Renamed' }, UNPRIVILEGED_ACTOR),
+    ).rejects.toThrow(PermissionDeniedError);
+
+    expect(ctx.users.findById).not.toHaveBeenCalled();
+  });
+
+  it('lets a user edit their own record while holding no permissions', async () => {
+    const ctx = makeEditUser();
+    ctx.users.findById.mockResolvedValue(makeUser());
+
+    await ctx.sut.execute(
+      { id: UNPRIVILEGED_ACTOR.userId, firstName: 'Renamed' },
+      UNPRIVILEGED_ACTOR,
+    );
+
+    expect(ctx.users.findById).toHaveBeenCalledWith(UNPRIVILEGED_ACTOR.userId);
+    expect(ctx.users.save).toHaveBeenCalledOnce();
   });
 });

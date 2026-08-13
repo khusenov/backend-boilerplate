@@ -84,6 +84,35 @@ module.exports = {
       },
       to: { path: '^src/container\\.ts$' },
     },
+    {
+      name: 'system-actor-is-entry-point-only',
+      comment:
+        'A SystemActor bypasses every permission check. Only process entry points may build ' +
+        'one: top-level src/*.ts composition roots and src/scripts/**. Co-located *.test.ts ' +
+        'files are exempt via options.exclude, and the integration harness under test/ is not ' +
+        'crawled at all. A layer that mints its own SystemActor grants itself unlimited ' +
+        'privilege — take an Actor as an argument instead.',
+      severity: 'error',
+      from: { path: '^src/', pathNot: '^src/(scripts/|[^/]+\\.ts$)' },
+      to: { path: '^src/domain/authorization/system-actor\\.ts$' },
+    },
+    {
+      name: 'user-actor-is-transport-mapper-only',
+      comment:
+        'createUserActor with SUPERADMIN_ROLE_KEY bypasses every permission check exactly as a ' +
+        'SystemActor does, so its construction is restricted the same way. Only transport ' +
+        'identity mappers build one; everything else takes an Actor as an argument. Type-only ' +
+        'imports are exempt, which is what the 14 use cases need.',
+      severity: 'error',
+      from: {
+        path: '^src/',
+        pathNot: ['^src/(scripts/|[^/]+\\.ts$)', '^src/presentation/[^/]+/identity/'],
+      },
+      to: {
+        path: '^src/domain/authorization/actor\\.ts$',
+        dependencyTypesNot: ['type-only'],
+      },
+    },
 
     // ─── General hygiene ───
     {

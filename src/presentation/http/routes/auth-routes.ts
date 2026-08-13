@@ -6,6 +6,8 @@ import {
   readRefreshCookie,
 } from '@/presentation/http/cookies';
 import { env } from '@/config/env';
+import { toRequestActor } from '@/presentation/http/identity/actor-from-token-payload';
+import { AuthenticationRequiredError } from '@/domain/authorization/access-policy-errors';
 import { userResponse } from '../schemas/user-response-schema';
 import { loginResponse, refreshResponse } from '../schemas/auth-response-schema';
 import { errorResponse } from '../schemas/error-schema';
@@ -122,7 +124,10 @@ export const authRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
     },
     async (request, reply) => {
       const { getUser } = request.diScope.cradle;
-      const user = await getUser.execute({ id: request.user!.sub });
+      const actor = toRequestActor(request.user);
+      if (actor.kind !== 'user') throw new AuthenticationRequiredError();
+
+      const user = await getUser.execute({ id: actor.userId }, actor);
       return reply.status(200).send(user);
     },
   );

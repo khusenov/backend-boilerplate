@@ -9,6 +9,21 @@ import type { UserRoleRepository } from '@/application/shared/ports/user-role-re
 import { UserNotFoundError } from '@/domain/user/user-errors';
 import { RoleNotFoundError, SystemRoleProtectedError } from '@/domain/authorization/role-errors';
 import type { Clock } from '@/application/shared/ports/clock';
+import { createUserActor } from '@/domain/authorization/actor';
+import { PermissionDeniedError } from '@/domain/authorization/access-policy-errors';
+import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
+
+const ACTOR = createUserActor({
+  userId: 'actor-1',
+  systemRoleKeys: [],
+  permissions: [PERMISSIONS.RolesAssign.key],
+});
+
+const UNPRIVILEGED_ACTOR = createUserActor({
+  userId: 'actor-2',
+  systemRoleKeys: [],
+  permissions: [],
+});
 
 const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
 const NOW = new Date('2026-06-01T12:00:00.000Z');
@@ -70,7 +85,7 @@ describe('AssignRole', () => {
   it('throws UserNotFoundError when the user does not exist', async () => {
     ctx.users.findById.mockResolvedValue(null);
 
-    await expect(ctx.sut.execute({ userId: 'user-1', roleId: 'role-1' })).rejects.toThrow(
+    await expect(ctx.sut.execute({ userId: 'user-1', roleId: 'role-1' }, ACTOR)).rejects.toThrow(
       UserNotFoundError,
     );
   });
@@ -79,7 +94,7 @@ describe('AssignRole', () => {
     ctx.users.findById.mockResolvedValue(makeUser());
     ctx.roles.findById.mockResolvedValue(null);
 
-    await expect(ctx.sut.execute({ userId: 'user-1', roleId: 'role-1' })).rejects.toThrow(
+    await expect(ctx.sut.execute({ userId: 'user-1', roleId: 'role-1' }, ACTOR)).rejects.toThrow(
       RoleNotFoundError,
     );
   });
@@ -90,7 +105,7 @@ describe('AssignRole', () => {
       Role.createSystem({ id: 'role-1', key: 'super-admin', name: 'Super Admin' }, CREATED_AT),
     );
 
-    await expect(ctx.sut.execute({ userId: 'user-1', roleId: 'role-1' })).rejects.toThrow(
+    await expect(ctx.sut.execute({ userId: 'user-1', roleId: 'role-1' }, ACTOR)).rejects.toThrow(
       SystemRoleProtectedError,
     );
     expect(ctx.userRoles.assign).not.toHaveBeenCalled();
@@ -101,9 +116,22 @@ describe('AssignRole', () => {
     ctx.users.findById.mockResolvedValue(makeUser());
     ctx.roles.findById.mockResolvedValue(Role.create({ id: 'role-1', name: 'Editor' }, CREATED_AT));
 
-    await ctx.sut.execute({ userId: 'user-1', roleId: 'role-1' });
+    await ctx.sut.execute({ userId: 'user-1', roleId: 'role-1' }, ACTOR);
 
     expect(ctx.userRoles.assign).toHaveBeenCalledOnce();
     expect(ctx.userRoles.assign).toHaveBeenCalledWith('user-1', 'role-1', NOW);
+  });
+});
+
+describe('AssignRole authorization', () => {
+  it('denies a caller without roles.assign before touching any repository', async () => {
+    const ctx = makeAssignRole();
+
+    await expect(
+      ctx.sut.execute({ userId: 'user-1', roleId: 'role-1' }, UNPRIVILEGED_ACTOR),
+    ).rejects.toThrow(PermissionDeniedError);
+
+    expect(ctx.users.findById).not.toHaveBeenCalled();
+    expect(ctx.userRoles.assign).not.toHaveBeenCalled();
   });
 });

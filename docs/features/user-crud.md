@@ -25,15 +25,18 @@ Zod schema validates the querystring / params / body, rejecting malformed input 
 handler resolves the matching use-case from the request's Awilix scope (`request.diScope.cradle`)
 and calls its single `execute()` method.
 
-Two guards from `src/presentation/http/guards/authorize.ts` are used:
+The route maps `request.user` to a domain `Actor` with `toRequestActor`
+(`src/presentation/http/identity/actor-from-token-payload.ts`) and passes it as the last argument of
+`execute`. Each use case then calls one of two policy functions from
+`src/domain/authorization/access-policy.ts` as its first statement:
 
-- `requirePermission(key)` — demands the named `PermissionKey`.
-- `requireSelfOrPermission(getTargetUserId, key)` — allows a caller acting on their **own** record
-  (`user.sub === getTargetUserId(request)`) and otherwise demands the permission.
+- `ensurePermission(actor, key)` — demands the named `PermissionKey`.
+- `ensureSelfOrPermission(actor, targetUserId, key)` — allows a caller acting on their **own** record
+  (`actor.userId === targetUserId`) and otherwise demands the permission.
 
 Both short-circuit for a **superadmin** — a caller whose `systemRoleKeys` include
 `SUPERADMIN_ROLE_KEY` (`'super-admin'`) — who bypasses every permission and self check. A failed
-check throws `ForbiddenError` → `403`.
+check throws `PermissionDeniedError` → `403`.
 
 The happy paths:
 
@@ -123,7 +126,7 @@ the composition root `src/container.ts`.
 | `UserDto` / `toUserDto`                                                                                        | Application        | Outbound shape (no `passwordHash`) and the entity→DTO mapper                                                                                              | `src/application/user/user-dto.ts`                              |
 | `PrismaUserRepository`                                                                                         | Infrastructure     | `UserRepository` adapter over Prisma; filters `deletedAt: null` on identity reads (`findById`, `list`), upserts on `save`                                 | `src/infrastructure/persistence/prisma-user-repository.ts`      |
 | `toDomain` / `toPersistence`                                                                                   | Infrastructure     | Maps a Prisma `User` row ↔ the `User` aggregate                                                                                                           | `src/infrastructure/persistence/prisma-user-mapper.ts`          |
-| `userRoutes`                                                                                                   | Presentation       | Fastify plugin: auth hook, permission guards, Zod schemas, handlers                                                                                       | `src/presentation/http/routes/user-routes.ts`                   |
+| `userRoutes`                                                                                                   | Presentation       | Fastify plugin: auth hook, actor mapping, Zod schemas, handlers                                                                                           | `src/presentation/http/routes/user-routes.ts`                   |
 | `userResponse` / `paginatedUsers`                                                                              | Presentation       | Zod **response** schemas that serialize the DTO on the wire                                                                                               | `src/presentation/http/schemas/user-response-schema.ts`         |
 
 ## Public surface
@@ -278,20 +281,27 @@ The pattern is identical for every use case; follow these steps.
    app.post(
      '/:id/deactivate',
      {
-       preHandler: requirePermission('users.update'),
        schema: { params: deactivateParams, response: { 200: userResponse, 404: errorResponse } },
      },
      async (request, reply) => {
        const { deactivateUser } = request.diScope.cradle;
-       const user = await deactivateUser.execute({ id: request.params.id });
+       const user = await deactivateUser.execute(
+         { id: request.params.id },
+         toRequestActor(request.user),
+       );
        return reply.status(200).send(user);
      },
    );
    ```
 
+   The permission check itself belongs in the use case, as the first statement of `execute`:
+   `ensurePermission(actor, PERMISSIONS.UsersUpdate.key);`
+
 If the operation needs a _new_ permission, add it to `PERMISSIONS` in
-`src/domain/authorization/permission-catalogue.ts` first so `requirePermission(...)` stays type-safe
-against `PermissionKey`.
+`src/domain/authorization/permission-catalogue.ts` first so `ensurePermission(...)` stays type-safe
+against `PermissionKey`. Add the route→permission row to `ROUTE_PERMISSIONS` in
+`test/integration/authorization-enforcement.int.test.ts` as well — that suite enumerates the app's own
+routes and fails on any it cannot account for.
 
 ### Subscribing to `user.created`
 
@@ -370,11 +380,18 @@ lives in [domain-events.md](./domain-events.md).
 - **Response Zod schema as an output contract.** `userResponse` re-declares the shape the endpoint
   returns and is used as the Fastify serializer. It guarantees no accidental field leak (notably
   `passwordHash`) regardless of what the DTO grows to hold, and it feeds the generated OpenAPI docs.
-- **Authorization split: `requirePermission` vs `requireSelfOrPermission`.** Reads and edits of a
-  _single_ user (`GET`/`PATCH /users/:id`) use `requireSelfOrPermission`, so a user can view and edit
+- **Authorization split: `ensurePermission` vs `ensureSelfOrPermission`.** Reads and edits of a
+  _single_ user (`GET`/`PATCH /users/:id`) use `ensureSelfOrPermission`, so a user can view and edit
   their own record without holding an admin permission, while acting on _another_ user requires the
   permission. Collection and destructive operations (`GET`/`POST /users`, `DELETE /users/:id`) require
   the permission outright. Superadmins short-circuit both checks.
+
+- **The trusted route parameter goes last in the input spread.** `PATCH /users/:id` builds its input
+  as `{ ...request.body, id: request.params.id }`, not the reverse. Because `ensureSelfOrPermission`
+  reads `input.id`, a body key named `id` placed after the route parameter would be an IDOR — the
+  caller could point the self-check at their own id while editing someone else's record. Ordering it
+  this way makes the trusted value win regardless of what the body schema does; the integration test
+  "forbids editing another user even when the body spoofs the caller id" pins it.
 
 ## Testing
 

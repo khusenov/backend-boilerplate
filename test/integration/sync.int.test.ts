@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createHarness, resetDb, type TestHarness } from './support/harness';
-import { seedUser } from './support/factories';
+import { INTEGRATION_SYSTEM_ACTOR, seedUser } from './support/factories';
 import { SyncAuthorization } from '@/application/authorization/sync-authorization';
 import { ALL_PERMISSIONS, SUPERADMIN_ROLE_KEY } from '@/domain/authorization/permission-catalogue';
 import type { Env } from '@/config/env';
@@ -33,7 +33,7 @@ describe('SyncAuthorization (integration)', () => {
   it('mirrors the catalogue and seeds the superadmin role, idempotently', async () => {
     const sync = makeSync();
 
-    const first = await sync.execute();
+    const first = await sync.execute(INTEGRATION_SYSTEM_ACTOR);
     expect(first.superadminCreated).toBe(true);
     expect(first.permissionsUpserted).toBe(ALL_PERMISSIONS.length);
 
@@ -42,20 +42,20 @@ describe('SyncAuthorization (integration)', () => {
     expect(role?.isSystem).toBe(true);
 
     // Running again is a no-op: same permission count, superadmin not recreated.
-    const second = await sync.execute();
+    const second = await sync.execute(INTEGRATION_SYSTEM_ACTOR);
     expect(second.superadminCreated).toBe(false);
     expect(await h.prisma.permission.count()).toBe(ALL_PERMISSIONS.length);
     expect(await h.prisma.role.count({ where: { key: SUPERADMIN_ROLE_KEY } })).toBe(1);
   });
 
   it('prunes a stored permission the catalogue no longer defines', async () => {
-    await makeSync().execute();
+    await makeSync().execute(INTEGRATION_SYSTEM_ACTOR);
     const now = new Date();
     await h.prisma.permission.create({
       data: { id: 'legacy-id', key: 'legacy.gone', name: 'Legacy', createdAt: now, updatedAt: now },
     });
 
-    const result = await makeSync().execute();
+    const result = await makeSync().execute(INTEGRATION_SYSTEM_ACTOR);
 
     expect(result.permissionsRemoved).toEqual(['legacy.gone']);
     expect(await h.prisma.permission.findUnique({ where: { key: 'legacy.gone' } })).toBeNull();
@@ -65,7 +65,7 @@ describe('SyncAuthorization (integration)', () => {
     const operator = await seedUser(h.app, { email: 'boot@finflow.test' });
     const sync = makeSync('boot@finflow.test');
 
-    const first = await sync.execute();
+    const first = await sync.execute(INTEGRATION_SYSTEM_ACTOR);
     expect(first.bootstrapPromoted).toBe(true);
 
     const role = await h.prisma.role.findUnique({ where: { key: SUPERADMIN_ROLE_KEY } });
@@ -74,12 +74,12 @@ describe('SyncAuthorization (integration)', () => {
     });
     expect(link).not.toBeNull();
 
-    const second = await sync.execute();
+    const second = await sync.execute(INTEGRATION_SYSTEM_ACTOR);
     expect(second.bootstrapPromoted).toBe(false);
   });
 
   it('does not promote when the operator has not registered yet', async () => {
-    const result = await makeSync('absent@finflow.test').execute();
+    const result = await makeSync('absent@finflow.test').execute(INTEGRATION_SYSTEM_ACTOR);
     expect(result.bootstrapPromoted).toBe(false);
   });
 });

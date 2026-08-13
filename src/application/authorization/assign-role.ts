@@ -4,6 +4,9 @@ import type { UserRoleRepository } from '@/application/shared/ports/user-role-re
 import type { Clock } from '@/application/shared/ports/clock';
 import { UserNotFoundError } from '@/domain/user/user-errors';
 import { RoleNotFoundError, SystemRoleProtectedError } from '@/domain/authorization/role-errors';
+import type { Actor } from '@/domain/authorization/actor';
+import { ensurePermission } from '@/domain/authorization/access-policy';
+import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
 
 export interface AssignRoleInput {
   userId: string;
@@ -32,7 +35,9 @@ export class AssignRole {
     this.clock = clock;
   }
 
-  async execute(input: AssignRoleInput): Promise<AssignRoleOutput> {
+  async execute(input: AssignRoleInput, actor: Actor): Promise<AssignRoleOutput> {
+    ensurePermission(actor, PERMISSIONS.RolesAssign.key);
+
     const user = await this.users.findById(input.userId);
     if (!user) throw new UserNotFoundError(input.userId);
 

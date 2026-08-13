@@ -1,5 +1,5 @@
 import type { FastifyPluginCallbackZod } from 'fastify-type-provider-zod';
-import { requirePermission } from '@/presentation/http/guards/authorize';
+import { toRequestActor } from '@/presentation/http/identity/actor-from-token-payload';
 import { permissionsResponse } from '../schemas/permission-response-schema';
 
 export const permissionRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
@@ -15,12 +15,11 @@ export const permissionRoutes: FastifyPluginCallbackZod = (app, _opts, done) => 
   app.get(
     '/',
     {
-      preHandler: requirePermission('roles.read'),
       schema: { response: { 200: permissionsResponse } },
     },
     async (request, reply) => {
       const { listPermissions } = request.diScope.cradle;
-      return reply.status(200).send(listPermissions.execute());
+      return reply.status(200).send(listPermissions.execute(toRequestActor(request.user)));
     },
   );
 

@@ -11,6 +11,21 @@ import type { UserRepository } from '@/domain/user/user-repository';
 import type { PasswordHasher } from '@/application/shared/ports/password-hasher';
 import type { IdGenerator } from '@/application/shared/ports/id-generator';
 import type { Clock } from '@/application/shared/ports/clock';
+import { createUserActor } from '@/domain/authorization/actor';
+import { PermissionDeniedError } from '@/domain/authorization/access-policy-errors';
+import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
+
+const ACTOR = createUserActor({
+  userId: 'actor-1',
+  systemRoleKeys: [],
+  permissions: [PERMISSIONS.UsersCreate.key],
+});
+
+const UNPRIVILEGED_ACTOR = createUserActor({
+  userId: 'actor-2',
+  systemRoleKeys: [],
+  permissions: [],
+});
 
 const NOW = new Date('2026-01-01T00:00:00.000Z');
 
@@ -73,7 +88,7 @@ describe('CreateUser', () => {
   describe('execute', () => {
     it('throws InvalidEmailError for a malformed email before touching any collaborator', async () => {
       await expect(
-        new CreateUser(ctx.deps).execute({ ...input, email: 'not-an-email' }),
+        new CreateUser(ctx.deps).execute({ ...input, email: 'not-an-email' }, ACTOR),
       ).rejects.toThrow(InvalidEmailError);
 
       expect(ctx.findByEmail).not.toHaveBeenCalled(); // Email.create throws first
@@ -82,7 +97,7 @@ describe('CreateUser', () => {
     it('rejects a duplicate email before hashing the password', async () => {
       ctx.findByEmail.mockResolvedValue(makeExistingUser());
 
-      await expect(new CreateUser(ctx.deps).execute(input)).rejects.toBeInstanceOf(
+      await expect(new CreateUser(ctx.deps).execute(input, ACTOR)).rejects.toBeInstanceOf(
         EmailAlreadyTakenError,
       );
 
@@ -91,20 +106,20 @@ describe('CreateUser', () => {
     });
 
     it('hashes the password before persisting', async () => {
-      await new CreateUser(ctx.deps).execute(input);
+      await new CreateUser(ctx.deps).execute(input, ACTOR);
 
       expect(ctx.hash).toHaveBeenCalledOnce();
       expect(ctx.hash).toHaveBeenCalledWith(input.password);
     });
 
     it('generates an id for the new user', async () => {
-      await new CreateUser(ctx.deps).execute(input);
+      await new CreateUser(ctx.deps).execute(input, ACTOR);
 
       expect(ctx.generate).toHaveBeenCalledOnce();
     });
 
     it('saves the user through the unit of work exactly once', async () => {
-      await new CreateUser(ctx.deps).execute(input);
+      await new CreateUser(ctx.deps).execute(input, ACTOR);
 
       expect(ctx.run).toHaveBeenCalledOnce();
       expect(ctx.txSave).toHaveBeenCalledOnce();
@@ -113,7 +128,7 @@ describe('CreateUser', () => {
     });
 
     it('stamps the user from a single clock reading', async () => {
-      await new CreateUser(ctx.deps).execute(input);
+      await new CreateUser(ctx.deps).execute(input, ACTOR);
 
       const [savedUser] = ctx.txSave.mock.calls[0]!;
       expect(savedUser.createdAt).toEqual(NOW);
@@ -122,7 +137,7 @@ describe('CreateUser', () => {
     });
 
     it('stages the UserCreatedEvent inside the transaction', async () => {
-      await new CreateUser(ctx.deps).execute(input);
+      await new CreateUser(ctx.deps).execute(input, ACTOR);
 
       expect(ctx.stage).toHaveBeenCalledOnce();
       const [stagedEvents] = ctx.stage.mock.calls[0]!;
@@ -134,7 +149,7 @@ describe('CreateUser', () => {
     });
 
     it('stages an event whose occurredAt matches the saved user createdAt', async () => {
-      await new CreateUser(ctx.deps).execute(input);
+      await new CreateUser(ctx.deps).execute(input, ACTOR);
 
       const [savedUser] = ctx.txSave.mock.calls[0]!;
       const [stagedEvents] = ctx.stage.mock.calls[0]!;
@@ -142,7 +157,7 @@ describe('CreateUser', () => {
     });
 
     it('saves before it stages (save precedes stage within the transaction)', async () => {
-      await new CreateUser(ctx.deps).execute(input);
+      await new CreateUser(ctx.deps).execute(input, ACTOR);
 
       const saveOrder = ctx.txSave.mock.invocationCallOrder[0]!;
       const stageOrder = ctx.stage.mock.invocationCallOrder[0]!;
@@ -150,7 +165,7 @@ describe('CreateUser', () => {
     });
 
     it('returns a mapped UserDto on success', async () => {
-      const result = await new CreateUser(ctx.deps).execute(input);
+      const result = await new CreateUser(ctx.deps).execute(input, ACTOR);
 
       expect(result.id).toBe('new-user-id');
       expect(result.firstName).toBe('Jane');
@@ -159,5 +174,18 @@ describe('CreateUser', () => {
       expect(result.email).toBe('jane@example.com');
       expect(result.status).toBe('active');
     });
+  });
+});
+
+describe('CreateUser authorization', () => {
+  it('denies a caller without users.create before touching any collaborator', async () => {
+    const ctx = makeDeps();
+
+    await expect(new CreateUser(ctx.deps).execute(input, UNPRIVILEGED_ACTOR)).rejects.toThrow(
+      PermissionDeniedError,
+    );
+
+    expect(ctx.findByEmail).not.toHaveBeenCalled();
+    expect(ctx.run).not.toHaveBeenCalled();
   });
 });

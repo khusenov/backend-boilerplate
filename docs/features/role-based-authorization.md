@@ -23,13 +23,20 @@ Authorization is split into two phases: **grant computation at login** and **enf
    `permissions` claims. The token therefore carries a self-contained snapshot of the caller's
    authority; no database read is needed to authorize a subsequent request.
 
-2. **Every protected route is fronted by a guard.** The `authenticate` plugin
+2. **Every guarded use case checks its caller.** The `authenticate` plugin
    (`src/presentation/http/plugins/authenticate.ts`) verifies the bearer token and hangs the decoded
-   `AccessTokenPayload` on `request.user`. A `preHandler` produced by `requirePermission(...)`
-   (`src/presentation/http/guards/authorize.ts`) then runs: it asserts a user is present (else
-   `UnauthorizedError` → 401), short-circuits to allow if the user holds the `super-admin` system role
-   key, and otherwise checks that `request.user.permissions` includes the required key (else
-   `ForbiddenError` → 403, with `details.required` naming the missing permission).
+   `AccessTokenPayload` on `request.user`. The route then maps that payload to a domain `Actor` with
+   `toRequestActor` (`src/presentation/http/identity/actor-from-token-payload.ts`) and passes it as
+   the **last argument** of `execute`. The use case's **first statement** is a call to the pure domain
+   policy `ensurePermission(actor, PERMISSIONS.X.key)`
+   (`src/domain/authorization/access-policy.ts`): it throws `AuthenticationRequiredError` → 401 for an
+   anonymous actor, returns immediately for a system actor or a holder of the `super-admin` system role
+   key, and otherwise throws `PermissionDeniedError` → 403 (with `details.required` naming the missing
+   permission) unless the actor's permission list includes the required key.
+
+   Because the actor is a required parameter, a caller that is not HTTP — a job handler, a CLI script,
+   a future transport — cannot invoke a guarded use case without supplying an identity: omitting it is
+   a TypeScript compile error, not a silent bypass.
 
 3. **Roles and assignments are managed through use cases.** The `/roles` endpoints drive
    `CreateRole`, `GetRole`, `ListRoles`, `EditRole`, and `DeleteRole`; assignment lives on the user
@@ -51,19 +58,30 @@ role through the API is likewise refused (403).
 ## Architecture
 
 The feature obeys the dependency rule. The **domain** owns the `Role` aggregate, the `RoleRepository`
-_interface_, the permission `PERMISSIONS` catalogue, and the typed domain errors — it depends on
-nothing outside `domain`. The **application** layer holds the use cases and the ports they need
-(`RoleRepository` from domain, plus `UserRoleRepository`, `PermissionRepository`, `GrantsReader`,
-`UnitOfWork`, `IdGenerator`), and the DTO mappers that keep entities off the wire. The
-**infrastructure** layer supplies the Prisma adapters that implement those ports. The **presentation**
-layer exposes the HTTP routes, the `authorize` guard, and the Zod response schemas. Concretes are
-bound to ports in exactly one place — `src/container.ts`.
+_interface_, the permission `PERMISSIONS` catalogue, the `Actor` union and the `ensurePermission`
+access policy, and the typed domain errors — it depends on nothing outside `domain`. The
+**application** layer holds the use cases and the ports they need (`RoleRepository` from domain, plus
+`UserRoleRepository`, `PermissionRepository`, `GrantsReader`, `UnitOfWork`, `IdGenerator`), and the DTO
+mappers that keep entities off the wire. The **infrastructure** layer supplies the Prisma adapters that
+implement those ports. The **presentation** layer exposes the HTTP routes, the token-payload → `Actor`
+mapper, and the Zod response schemas. Concretes are bound to ports in exactly one place —
+`src/container.ts`.
+
+Two `dependency-cruiser` rules keep privileged actor construction contained:
+`system-actor-is-entry-point-only` restricts `createSystemActor` to process entry points
+(`src/scripts/**` and top-level `src/*.ts`), and `user-actor-is-transport-mapper-only` restricts
+value imports of `actor.ts` to those same entry points plus `src/presentation/*/identity/`. Use cases
+import `Actor` as a **type only**, so they can accept an actor but never mint one.
 
 | Component                                                                                                                                    | Layer              | Responsibility                                                                             | File                                                                                    |
 | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
 | `Role`                                                                                                                                       | Domain             | Aggregate: name/description/permission-set invariants, system-role protection, soft delete | `src/domain/authorization/role-entity.ts`                                               |
 | `RoleRepository`                                                                                                                             | Domain             | Port: list/find/save roles                                                                 | `src/domain/authorization/role-repository.ts`                                           |
 | `PERMISSIONS` / `ALL_PERMISSIONS` / `isKnownPermissionKey` / `SUPERADMIN_ROLE_KEY`                                                           | Domain             | The permission catalogue (source of truth) and the superadmin role key                     | `src/domain/authorization/permission-catalogue.ts`                                      |
+| `Actor` (`UserActor` / `SystemActor` / `AnonymousActor`), `createUserActor`, `ANONYMOUS_ACTOR`                                               | Domain             | Who is acting: an identity plus its frozen grants                                          | `src/domain/authorization/actor.ts`                                                     |
+| `createSystemActor`                                                                                                                          | Domain             | The one construction site for the actor kind that bypasses every check                     | `src/domain/authorization/system-actor.ts`                                              |
+| `ensurePermission` / `ensureSelfOrPermission` / `ensureSystemActor`                                                                          | Domain             | Pure, total access policy — the only place permission rules live                           | `src/domain/authorization/access-policy.ts`                                             |
+| `AuthenticationRequiredError`, `PermissionDeniedError`, `SystemActorRequiredError`                                                           | Domain             | Typed 401/403 errors the existing error handler already maps                               | `src/domain/authorization/access-policy-errors.ts`                                      |
 | `RoleNotFoundError`, `RoleNameTakenError`, `UnknownPermissionError`, `RoleDeletedError`, `SystemRoleProtectedError`, `RoleNameRequiredError` | Domain             | Typed errors mapped to HTTP status by the error handler                                    | `src/domain/authorization/role-errors.ts`                                               |
 | `CreateRole` / `GetRole` / `ListRoles` / `EditRole` / `DeleteRole`                                                                           | Application        | CRUD use cases over the `Role` aggregate                                                   | `src/application/authorization/{create,get,list,edit,delete}-role.ts`                   |
 | `AssignRole` / `RevokeRole`                                                                                                                  | Application        | Grant/withdraw a role to/from a user (refuses system roles on assign)                      | `src/application/authorization/{assign,revoke}-role.ts`                                 |
@@ -78,7 +96,7 @@ bound to ports in exactly one place — `src/container.ts`.
 | `PrismaPermissionRepository`                                                                                                                 | Infrastructure     | `PermissionRepository` adapter                                                             | `src/infrastructure/persistence/prisma-permission-repository.ts`                        |
 | `PrismaUserRoleRepository`                                                                                                                   | Infrastructure     | `UserRoleRepository` adapter (upsert/deleteMany on `userRole`)                             | `src/infrastructure/persistence/prisma-user-role-repository.ts`                         |
 | `PrismaGrantsReader`                                                                                                                         | Infrastructure     | `GrantsReader` adapter (joins `userRole → role → permission`)                              | `src/infrastructure/persistence/prisma-grants-reader.ts`                                |
-| `requirePermission` / `requireSelfOrPermission`                                                                                              | Presentation       | Fastify `preHandler` guards enforcing a permission (superadmin bypasses)                   | `src/presentation/http/guards/authorize.ts`                                             |
+| `toRequestActor` (`RequestActor`)                                                                                                            | Presentation       | Map a verified `AccessTokenPayload` (or its absence) to a domain actor                     | `src/presentation/http/identity/actor-from-token-payload.ts`                            |
 | `roleRoutes` / `permissionRoutes`                                                                                                            | Presentation       | HTTP surface for `/roles` and `/permissions`                                               | `src/presentation/http/routes/{role,permission}-routes.ts`                              |
 | `roleResponse` / `paginatedRoles`, `permissionsResponse`                                                                                     | Presentation       | Zod serialization schemas (fail-closed; strip internal fields)                             | `src/presentation/http/schemas/{role,permission}-response-schema.ts`                    |
 
@@ -86,9 +104,9 @@ bound to ports in exactly one place — `src/container.ts`.
 
 Two protected resource groups expose authorization data (`/roles`, `/permissions`), and role
 **assignment** is modelled as a sub-resource of the user (`/users/:id/roles`). Every endpoint below
-first runs the `authenticate` plugin (missing/invalid bearer token → **401**), then the named
-permission guard (missing permission → **403**, unless the caller holds the `super-admin` system role,
-which bypasses all permission checks).
+first runs the `authenticate` plugin (missing/invalid bearer token → **401**), then the use case's own
+`ensurePermission` check against the named permission (missing permission → **403**, unless the caller
+holds the `super-admin` system role, which bypasses all permission checks).
 
 | Method   | Path                       | Required permission | Purpose                                                                                                                            |
 | -------- | -------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
@@ -106,9 +124,9 @@ which bypasses all permission checks).
 > They are listed here because assignment is part of this feature's public surface.
 
 **The permission catalogue** (`src/domain/authorization/permission-catalogue.ts`) is the exhaustive
-set of permission keys the system understands. `requirePermission(...)` accepts only a
-`PermissionKey` (a union derived from this catalogue), so a route cannot be guarded by a key that does
-not exist.
+set of permission keys the system understands. `ensurePermission(...)` accepts only a
+`PermissionKey` (a union derived from this catalogue), so a use case cannot be guarded by a key that
+does not exist.
 
 | Key            | Name                  | Category |
 | -------------- | --------------------- | -------- |
@@ -122,21 +140,30 @@ not exist.
 | `roles.delete` | Delete roles          | `roles`  |
 | `roles.assign` | Assign roles to users | `roles`  |
 
-**How the guard enforces grants.** `requirePermission(permission)` returns an `async` Fastify
-`preHandler` (async even without an `await` so Fastify treats it as a promise and routes any throw to
-the error handler). It:
+**How the policy enforces grants.** `ensurePermission(actor, permission)` is a pure, synchronous,
+total function — no I/O, no clock, no injection. It switches on the actor's `kind`:
 
-1. `assertAuthenticated(request)` — throws `UnauthorizedError` (401) if `request.user` is absent.
-2. `isSuperadmin(user)` — returns (allows) immediately if `user.systemRoleKeys` includes
-   `SUPERADMIN_ROLE_KEY` (`'super-admin'`).
-3. Otherwise throws `ForbiddenError` (403, `details: { required: permission }`) unless
-   `user.permissions.includes(permission)`.
+1. `'system'` — returns immediately. A `SystemActor` is a trusted process identity and bypasses every
+   permission check.
+2. `'anonymous'` — throws `AuthenticationRequiredError` (401). Unreachable over HTTP, where
+   `app.authenticate` already rejects with `MISSING_ACCESS_TOKEN`, but it means a non-HTTP caller with
+   no identity is denied rather than crashing.
+3. `'user'` — returns immediately if `actor.systemRoleKeys` includes `SUPERADMIN_ROLE_KEY`
+   (`'super-admin'`); otherwise throws `PermissionDeniedError` (403,
+   `details: { required: permission }`) unless `actor.permissions.includes(permission)`.
+4. `default` — throws `PermissionDeniedError`. The parameter is typed `never`, so adding a fourth
+   `Actor` arm is a compile error at exactly this line; at runtime an unrecognized kind arriving
+   through a cast or a deserialization boundary is **denied**, not allowed.
 
-`requireSelfOrPermission(getTargetUserId, permission)` is the same, with one extra allow branch: the
-caller passes if `user.sub` equals the target user id (used on the user resource so a user can act on
-their own record without the broad permission).
+`ensureSelfOrPermission(actor, targetUserId, permission)` delegates to `ensurePermission` after one
+extra allow branch: a `'user'` actor passes if `actor.userId` equals the target id (used on the user
+resource so a user can act on their own record without the broad permission).
 
-**The `UserGrants` contract** the guard's data depends on:
+`ensureSystemActor(actor)` is a TypeScript assertion function that throws `SystemActorRequiredError`
+for anything but a `SystemActor`. It guards `SyncAuthorization`, which rewrites the permission
+catalogue itself — no permission could meaningfully authorize that, and no HTTP caller should reach it.
+
+**The `UserGrants` contract** the policy's data depends on:
 
 ```ts
 export interface UserGrants {
@@ -173,8 +200,8 @@ bootstrapPromoted }`. It is safe to run repeatedly — every step is idempotent.
 
 ## Configuration
 
-Only one env var is read by this feature, and only by `SyncAuthorization`. The guards and use cases
-read no configuration. (Login-time grant computation lives in `SessionService`, whose JWT-related env
+Only one env var is read by this feature, and only by `SyncAuthorization`. The access policy and the
+use cases read no configuration. (Login-time grant computation lives in `SessionService`, whose JWT-related env
 vars belong to the authentication feature, not this one.)
 
 | Variable                | Default      | Meaning                                                                                                                                                 |
@@ -202,7 +229,7 @@ export const PERMISSIONS = {
 } as const satisfies Record<string, PermissionDef>;
 ```
 
-That single edit does four things automatically: it widens the `PermissionKey` union (so the guard
+That single edit does four things automatically: it widens the `PermissionKey` union (so the policy
 will accept `'reports.export'`), adds the entry to `ALL_PERMISSIONS`, makes
 `isKnownPermissionKey('reports.export')` return `true` (so roles may include it and
 `assertKnownPermissions` will stop rejecting it), and makes it appear under a new `reports` group in
@@ -215,32 +242,56 @@ reference it:
 npm run db:sync-auth
 ```
 
-This runs `src/scripts/sync-auth.ts` → `SyncAuthorization.execute()`, which upserts the new permission.
-Skipping this step means `PrismaRoleRepository.save` cannot match the key to a `permission.id`, so the
-permission would silently not be attached to the role.
+This runs `src/scripts/sync-auth.ts` → `SyncAuthorization.execute(actor)` with a system actor, which
+upserts the new permission. Skipping this step means `PrismaRoleRepository.save` cannot match the key
+to a `permission.id`, so the permission would silently not be attached to the role.
 
-**3. Guard the route** with `requirePermission` in the relevant routes file
-(e.g. a new `src/presentation/http/routes/report-routes.ts`):
+**3. Guard the use case.** The check is the **first statement** of `execute`, and the actor is the
+**last parameter** — those two invariants are what make the guard reviewable at a glance:
+
+```ts
+import type { Actor } from '@/domain/authorization/actor';
+import { ensurePermission } from '@/domain/authorization/access-policy';
+import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
+
+export class ExportReports {
+  async execute(input: ExportReportsInput, actor: Actor): Promise<ExportReportsOutput> {
+    ensurePermission(actor, PERMISSIONS.ReportsExport.key);
+
+    // ... the rest of the use case ...
+  }
+}
+```
+
+Import `Actor` as a **type** — a value import of `actor.ts` from the application layer fails
+`npm run arch` under `user-actor-is-transport-mapper-only`.
+
+**4. Pass the actor from the route** (e.g. a new `src/presentation/http/routes/report-routes.ts`):
 
 ```ts
 import type { FastifyPluginCallbackZod } from 'fastify-type-provider-zod';
-import { requirePermission } from '@/presentation/http/guards/authorize';
+import { toRequestActor } from '@/presentation/http/identity/actor-from-token-payload';
 
 export const reportRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
   app.addHook('onRequest', app.authenticate);
 
-  app.post(
-    '/export',
-    { preHandler: requirePermission('reports.export') },
-    async (request, reply) => {
-      // ... handler ...
-      return reply.status(202).send();
-    },
-  );
+  app.post('/export', async (request, reply) => {
+    const { exportReports } = request.diScope.cradle;
+    await exportReports.execute(request.body, toRequestActor(request.user));
+    return reply.status(202).send();
+  });
 
   done();
 };
 ```
+
+If the handler merges a body with a trusted route parameter, put the trusted value **last** —
+`{ ...request.body, id: request.params.id }` — so a body key cannot override the id the policy reads.
+
+**5. Add the route→permission row** to `ROUTE_PERMISSIONS` in
+`test/integration/authorization-enforcement.int.test.ts`. That suite derives its route list from the
+app's own OpenAPI document and fails if the derived and mapped sets differ, so a new route is a test
+failure until it is accounted for.
 
 Register the plugin in `src/presentation/http/app.ts`:
 
@@ -250,7 +301,7 @@ import { reportRoutes } from '@/presentation/http/routes/report-routes';
 await app.register(reportRoutes, { prefix: '/reports' });
 ```
 
-**4. Grant it.** The permission now exists but no one holds it. Add it to a role and assign that role:
+**6. Grant it.** The permission now exists but no one holds it. Add it to a role and assign that role:
 
 ```http
 POST /roles                      { "name": "Analyst", "permissions": ["reports.export"] }
@@ -258,12 +309,12 @@ POST /users/{userId}/roles       { "roleId": "<the-analyst-role-id>" }
 ```
 
 The user must **log in again** for the new permission to appear in their access token. A `super-admin`
-holder needs none of this — the guard's superadmin bypass covers `reports.export` immediately.
+holder needs none of this — the policy's superadmin bypass covers `reports.export` immediately.
 
 ### Add a new authorization use case
 
 Follow the existing pattern: write the class in `src/application/authorization/` with constructor DI
-of the ports it needs and a single `execute(input)` method, register it in `src/container.ts` with
+of the ports it needs and a single `execute(input, actor)` method, register it in `src/container.ts` with
 `asClass(...).singleton()` and add its type to the `Cradle` interface, then call it from a route via
 `request.diScope.cradle`.
 
@@ -271,7 +322,7 @@ of the ports it needs and a single `execute(input)` method, register it in `src/
 
 - **The permission catalogue is the single source of truth, in code.** Permissions are a closed union
   defined in `permission-catalogue.ts`, not free-form rows an admin invents. This makes every
-  authorizable action grep-able and reviewable in one file, lets `requirePermission` be _type-checked_
+  authorizable action grep-able and reviewable in one file, lets `ensurePermission` be _type-checked_
   against real keys (a typo'd guard fails to compile), and lets `assertKnownPermissions` reject unknown
   keys at the API boundary. The cost: adding a permission is a code change plus a `db:sync-auth` run,
   not a runtime admin action — which is the intended trade-off for a security-sensitive vocabulary.
@@ -292,7 +343,7 @@ of the ports it needs and a single `execute(input)` method, register it in `src/
   side, `GrantsReader` the query side.
 
 - **Superadmin is a role _key_, and it bypasses permission checks entirely.** `super-admin` is a system
-  role identified by its stable `key`, and `requirePermission` returns early for anyone holding that
+  role identified by its stable `key`, and `ensurePermission` returns early for anyone holding that
   key. This avoids having to enumerate every permission onto the superadmin role (and re-grant it
   whenever the catalogue grows) — the bypass is checked against `systemRoleKeys`, so a superadmin is
   always fully authorized. The trade-off is that superadmin is an all-or-nothing escape hatch, not a
@@ -331,13 +382,20 @@ tests under `test/integration/` (`*.int.test.ts`).
 
 - **Domain** — `src/domain/authorization/role-entity.test.ts`: `Role` invariants (name normalization,
   permission grant/revoke/set, system-role protection on mutate and soft-delete).
+  `access-policy.test.ts` pins the full decision matrix — anonymous, superadmin, exact holder, wrong
+  permission, empty claims, system actor, and the fail-closed `default` arm — plus
+  `ensureSelfOrPermission` and `ensureSystemActor`. `actor.test.ts` and `system-actor.test.ts` cover
+  the factories, including that the grant arrays are copied before freezing.
 - **Application** — one file per use case:
   `src/application/authorization/{create,get,list,edit,delete,assign,revoke}-role.test.ts`,
   `list-permissions.test.ts`, and `sync-authorization.test.ts` (upsert/prune/seed/promote logic with a
-  fake unit of work).
-- **Presentation** — `src/presentation/http/guards/authorize.test.ts`: `requirePermission` and
-  `requireSelfOrPermission` — unauthenticated → 401, missing permission → 403, holder allowed,
-  superadmin bypass, and the degraded empty-claims token still yielding a clean 403.
+  fake unit of work). Every guarded use case carries a **denial case** asserting that an actor lacking
+  the permission is rejected _and_ that no collaborator was invoked — proof the guard runs before any
+  I/O. For a use case with no HTTP route (today, `SyncAuthorization`) this is the only enforcement
+  test, so it is required rather than optional.
+- **Presentation** — `src/presentation/http/identity/actor-from-token-payload.test.ts`:
+  `toRequestActor` maps `sub` → `userId`, returns `ANONYMOUS_ACTOR` for an absent payload, and is
+  unaffected by later mutation of the payload's arrays.
 - **Integration (real Fastify + Prisma)** —
   - `test/integration/roles.int.test.ts`: the full `/roles` and `/permissions` HTTP surface — create
     (201 / 409 duplicate / 400 unknown permission / 403 non-superadmin), list, get (200 / 404),
@@ -346,6 +404,12 @@ tests under `test/integration/` (`*.int.test.ts`).
   - `test/integration/sync.int.test.ts`: `SyncAuthorization` end-to-end — mirrors the catalogue and
     seeds the superadmin idempotently, prunes a stored permission the catalogue dropped, and promotes
     the bootstrap operator once then no-ops.
+  - `test/integration/authorization-enforcement.int.test.ts`: the gate that covers what the compiler
+    cannot. It derives the versioned route list from the app's own OpenAPI document (rather than a
+    hand-written table), asserts the derived and mapped sets are **equal in both directions**, then
+    checks that a zero-permission caller is denied with the expected `details.required` and that a
+    caller holding exactly the mapped permission is admitted. The two self-access routes are covered
+    by a cross-user case instead, since their owner passes with no permissions at all.
 
 Run them with:
 

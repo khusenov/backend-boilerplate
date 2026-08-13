@@ -5,6 +5,21 @@ import { Email } from '@/domain/user/email-vo';
 import { User } from '@/domain/user/user-entity';
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { Clock } from '@/application/shared/ports/clock';
+import { createUserActor } from '@/domain/authorization/actor';
+import { PermissionDeniedError } from '@/domain/authorization/access-policy-errors';
+import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
+
+const ACTOR = createUserActor({
+  userId: 'actor-1',
+  systemRoleKeys: [],
+  permissions: [PERMISSIONS.UsersDelete.key],
+});
+
+const UNPRIVILEGED_ACTOR = createUserActor({
+  userId: 'actor-2',
+  systemRoleKeys: [],
+  permissions: [],
+});
 
 const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
 const NOW = new Date('2026-06-01T12:00:00.000Z');
@@ -48,14 +63,14 @@ describe('DeleteUser', () => {
     it('throws UserNotFoundError when the user does not exist', async () => {
       ctx.users.findById.mockResolvedValue(null);
 
-      await expect(ctx.sut.execute({ id: 'user-1' })).rejects.toThrow(UserNotFoundError);
+      await expect(ctx.sut.execute({ id: 'user-1' }, ACTOR)).rejects.toThrow(UserNotFoundError);
     });
 
     it('soft-deletes the user entity', async () => {
       const user = makeUser();
       ctx.users.findById.mockResolvedValue(user);
 
-      await ctx.sut.execute({ id: 'user-1' });
+      await ctx.sut.execute({ id: 'user-1' }, ACTOR);
 
       expect(user.isDeleted).toBe(true);
     });
@@ -64,7 +79,7 @@ describe('DeleteUser', () => {
       const user = makeUser();
       ctx.users.findById.mockResolvedValue(user);
 
-      await ctx.sut.execute({ id: 'user-1' });
+      await ctx.sut.execute({ id: 'user-1' }, ACTOR);
 
       expect(ctx.users.save).toHaveBeenCalledOnce();
       expect(ctx.users.save).toHaveBeenCalledWith(user);
@@ -74,11 +89,23 @@ describe('DeleteUser', () => {
       const user = makeUser();
       ctx.users.findById.mockResolvedValue(user);
 
-      await ctx.sut.execute({ id: 'user-1' });
+      await ctx.sut.execute({ id: 'user-1' }, ACTOR);
 
       expect(user.deletedAt).toEqual(NOW);
       expect(user.updatedAt).toEqual(NOW);
       expect(ctx.clock.now).toHaveBeenCalledOnce();
     });
+  });
+});
+
+describe('DeleteUser authorization', () => {
+  it('denies a caller without users.delete before touching the repository', async () => {
+    const ctx = makeDeleteUser();
+
+    await expect(ctx.sut.execute({ id: 'user-1' }, UNPRIVILEGED_ACTOR)).rejects.toThrow(
+      PermissionDeniedError,
+    );
+
+    expect(ctx.users.findById).not.toHaveBeenCalled();
   });
 });

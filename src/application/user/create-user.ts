@@ -7,6 +7,9 @@ import type { Clock } from '@/application/shared/ports/clock';
 import type { IdGenerator } from '@/application/shared/ports/id-generator';
 import type { PasswordHasher } from '@/application/shared/ports/password-hasher';
 import type { UnitOfWork } from '@/application/shared/ports/unit-of-work';
+import type { Actor } from '@/domain/authorization/actor';
+import { ensurePermission } from '@/domain/authorization/access-policy';
+import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
 
 export interface CreateUserInput {
   email: string;
@@ -40,7 +43,9 @@ export class CreateUser {
     this.clock = clock;
   }
 
-  async execute(input: CreateUserInput): Promise<CreateUserOutput> {
+  async execute(input: CreateUserInput, actor: Actor): Promise<CreateUserOutput> {
+    ensurePermission(actor, PERMISSIONS.UsersCreate.key);
+
     const email = Email.create(input.email);
 
     const existingUser = await this.users.findByEmail(email);

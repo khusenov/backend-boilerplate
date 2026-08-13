@@ -3,6 +3,9 @@ import { assertKnownPermissions } from './assert-known-permissions';
 import type { RoleRepository } from '@/domain/authorization/role-repository';
 import type { Clock } from '@/application/shared/ports/clock';
 import { RoleNameTakenError, RoleNotFoundError } from '@/domain/authorization/role-errors';
+import type { Actor } from '@/domain/authorization/actor';
+import { ensurePermission } from '@/domain/authorization/access-policy';
+import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
 
 export interface EditRoleInput {
   id: string;
@@ -27,7 +30,9 @@ export class EditRole {
     this.clock = clock;
   }
 
-  async execute(input: EditRoleInput): Promise<EditRoleOutput> {
+  async execute(input: EditRoleInput, actor: Actor): Promise<EditRoleOutput> {
+    ensurePermission(actor, PERMISSIONS.RolesUpdate.key);
+
     const role = await this.roles.findById(input.id);
     if (!role) throw new RoleNotFoundError(input.id);
 
