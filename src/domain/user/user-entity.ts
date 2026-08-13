@@ -61,6 +61,10 @@ export class User extends AggregateRoot<UserProps> {
     return this.props.status === UserStatus.Active;
   }
 
+  get isPending(): boolean {
+    return this.props.status === UserStatus.Pending;
+  }
+
   private static normalizeName(value: string, field: string): string {
     const trimmed = value.trim();
     if (!trimmed) throw new UserInvalidNameError(field);
@@ -134,6 +138,12 @@ export class User extends AggregateRoot<UserProps> {
     if (this.props.status === UserStatus.Active) {
       this.props.status = UserStatus.Pending;
     }
+    this.touch(now);
+  }
+
+  changePassword(newPasswordHash: string, now: Date): void {
+    if (this.isDeleted) throw new UserDeletedError(this.id);
+    this.props.passwordHash = newPasswordHash;
     this.touch(now);
   }
 

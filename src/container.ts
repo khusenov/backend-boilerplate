@@ -106,6 +106,23 @@ import {
 import type { VerificationCodeService } from '@/application/shared/ports/verification-code-service';
 import type { EmailVerificationCodeRepository } from '@/domain/verification/email-verification-code-repository';
 import type { VerificationConfig } from '@/application/auth/verification-config';
+import type { PasswordResetTokenRepository } from '@/domain/password-reset/password-reset-token-repository';
+import type { PasswordResetConfig } from '@/application/auth/password-reset-config';
+import { PasswordResetTokenIssuer } from '@/application/auth/password-reset-token-issuer';
+import { RequestPasswordReset } from '@/application/auth/request-password-reset';
+import { ResetPassword } from '@/application/auth/reset-password';
+import { SendPasswordResetEmailHandler } from '@/application/jobs/send-password-reset-email-handler';
+import {
+  SEND_PASSWORD_RESET_EMAIL_JOB,
+  type SendPasswordResetEmailPayload,
+} from '@/application/jobs/send-password-reset-email-job';
+import { RevokeUserSessionsHandler } from '@/application/jobs/revoke-user-sessions-handler';
+import {
+  REVOKE_USER_SESSIONS_JOB,
+  type RevokeUserSessionsPayload,
+} from '@/application/jobs/revoke-user-sessions-job';
+import { PrismaPasswordResetTokenRepository } from '@/infrastructure/persistence/prisma-password-reset-token-repository';
+import { PasswordResetTokenRetentionTask } from '@/infrastructure/persistence/password-reset-token-retention-task';
 import { toJobHandlerList } from '@/job-catalogue';
 
 declare module '@fastify/awilix' {
@@ -165,6 +182,11 @@ declare module '@fastify/awilix' {
     verificationCodeIssuer: VerificationCodeIssuer;
     emailVerificationCodeRepository: EmailVerificationCodeRepository;
     verificationConfig: VerificationConfig;
+    passwordResetTokenRepository: PasswordResetTokenRepository;
+    passwordResetConfig: PasswordResetConfig;
+    passwordResetUrlBase: string;
+    passwordResetTokenIssuer: PasswordResetTokenIssuer;
+    passwordResetTokenRetentionTask: RetentionTask;
 
     // use cases
     listUsers: ListUsers;
@@ -187,12 +209,22 @@ declare module '@fastify/awilix' {
     syncAuthorization: SyncAuthorization;
     registerUser: RegisterUser;
     verifyEmail: VerifyEmail;
+    requestPasswordReset: RequestPasswordReset;
+    resetPassword: ResetPassword;
 
     // job handlers
     exampleJobHandler: JobHandler<ExampleJobPayload, typeof EXAMPLE_JOB>;
     sendVerificationEmailHandler: JobHandler<
       SendVerificationEmailPayload,
       typeof SEND_VERIFICATION_EMAIL_JOB
+    >;
+    sendPasswordResetEmailHandler: JobHandler<
+      SendPasswordResetEmailPayload,
+      typeof SEND_PASSWORD_RESET_EMAIL_JOB
+    >;
+    revokeUserSessionsHandler: JobHandler<
+      RevokeUserSessionsPayload,
+      typeof REVOKE_USER_SESSIONS_JOB
     >;
   }
 }
@@ -280,6 +312,8 @@ export function registerDependencies(
         workerConnection,
         exampleJobHandler,
         sendVerificationEmailHandler,
+        sendPasswordResetEmailHandler,
+        revokeUserSessionsHandler,
         outboxRelay,
         dispatchDomainEventJobHandler,
         enforceDataRetentionJob,
@@ -291,6 +325,8 @@ export function registerDependencies(
         | 'workerConnection'
         | 'exampleJobHandler'
         | 'sendVerificationEmailHandler'
+        | 'sendPasswordResetEmailHandler'
+        | 'revokeUserSessionsHandler'
         | 'outboxRelay'
         | 'dispatchDomainEventJobHandler'
         | 'enforceDataRetentionJob'
@@ -305,6 +341,8 @@ export function registerDependencies(
           handlers: toJobHandlerList({
             [EXAMPLE_JOB]: exampleJobHandler,
             [SEND_VERIFICATION_EMAIL_JOB]: sendVerificationEmailHandler,
+            [SEND_PASSWORD_RESET_EMAIL_JOB]: sendPasswordResetEmailHandler,
+            [REVOKE_USER_SESSIONS_JOB]: revokeUserSessionsHandler,
             [DATA_RETENTION_JOB]: enforceDataRetentionJob,
             [OUTBOX_RELAY_JOB]: outboxRelay,
             [DISPATCH_DOMAIN_EVENT_JOB]: dispatchDomainEventJobHandler,
@@ -321,6 +359,7 @@ export function registerDependencies(
       ({
         refreshTokenRetentionTask,
         outboxRetentionTask,
+        passwordResetTokenRetentionTask,
         dataRetentionWindowMs,
         clock,
         logger,
@@ -328,12 +367,17 @@ export function registerDependencies(
         Cradle,
         | 'refreshTokenRetentionTask'
         | 'outboxRetentionTask'
+        | 'passwordResetTokenRetentionTask'
         | 'dataRetentionWindowMs'
         | 'clock'
         | 'logger'
       >) =>
         new EnforceDataRetentionJob({
-          retentionTasks: [refreshTokenRetentionTask, outboxRetentionTask],
+          retentionTasks: [
+            refreshTokenRetentionTask,
+            outboxRetentionTask,
+            passwordResetTokenRetentionTask,
+          ],
           dataRetentionWindowMs,
           clock,
           logger,
@@ -383,6 +427,10 @@ export function registerDependencies(
       ttlSeconds: env.VERIFICATION_CODE_TTL,
       maxAttempts: env.VERIFICATION_MAX_ATTEMPTS,
     }),
+    passwordResetTokenRepository: asClass(PrismaPasswordResetTokenRepository).singleton(),
+    passwordResetConfig: asValue({ ttlSeconds: env.PASSWORD_RESET_TOKEN_TTL }),
+    passwordResetUrlBase: asValue(env.PASSWORD_RESET_URL_BASE),
+    passwordResetTokenRetentionTask: asClass(PasswordResetTokenRetentionTask).singleton(),
 
     listUsers: asClass(ListUsers).singleton(),
     getUser: asClass(GetUser).singleton(),
@@ -405,7 +453,12 @@ export function registerDependencies(
     verificationCodeIssuer: asClass(VerificationCodeIssuer).singleton(),
     registerUser: asClass(RegisterUser).singleton(),
     verifyEmail: asClass(VerifyEmail).singleton(),
+    passwordResetTokenIssuer: asClass(PasswordResetTokenIssuer).singleton(),
+    requestPasswordReset: asClass(RequestPasswordReset).singleton(),
+    resetPassword: asClass(ResetPassword).singleton(),
 
     sendVerificationEmailHandler: asClass(SendVerificationEmailHandler).singleton(),
+    sendPasswordResetEmailHandler: asClass(SendPasswordResetEmailHandler).singleton(),
+    revokeUserSessionsHandler: asClass(RevokeUserSessionsHandler).singleton(),
   });
 }

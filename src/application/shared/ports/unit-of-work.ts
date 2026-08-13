@@ -4,6 +4,7 @@ import type { PermissionRepository } from '@/application/shared/ports/permission
 import type { UserRoleRepository } from '@/application/shared/ports/user-role-repository';
 import type { DomainEvent } from '@/domain/shared/domain-event';
 import type { EmailVerificationCodeRepository } from '@/domain/verification/email-verification-code-repository';
+import type { PasswordResetTokenRepository } from '@/domain/password-reset/password-reset-token-repository';
 
 export interface TransactionalRepositories {
   userRepository: UserRepository;
@@ -11,6 +12,7 @@ export interface TransactionalRepositories {
   permissionRepository: PermissionRepository;
   userRoleRepository: UserRoleRepository;
   emailVerificationCodeRepository: EmailVerificationCodeRepository;
+  passwordResetTokenRepository: PasswordResetTokenRepository;
 }
 
 export interface OutboxStaging {

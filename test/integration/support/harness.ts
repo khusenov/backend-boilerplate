@@ -31,6 +31,7 @@ export async function createHarness(overrides: CradleOverrides = {}): Promise<Te
 export async function resetDb(prisma: PrismaClient): Promise<void> {
   await prisma.outboxMessage.deleteMany();
   await prisma.emailVerificationCode.deleteMany();
+  await prisma.passwordResetToken.deleteMany();
   await prisma.refreshToken.deleteMany();
   await prisma.userRole.deleteMany();
   await prisma.rolePermission.deleteMany();

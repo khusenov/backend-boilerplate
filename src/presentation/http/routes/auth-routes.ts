@@ -12,6 +12,9 @@ import { userResponse } from '../schemas/user-response-schema';
 import { loginResponse, refreshResponse } from '../schemas/auth-response-schema';
 import { errorResponse } from '../schemas/error-schema';
 
+const MIN_PASSWORD_LENGTH = 8;
+const MAX_PASSWORD_LENGTH = 128;
+
 const loginBody = z.object({
   email: z.email(),
   password: z.string().min(1),
@@ -21,7 +24,7 @@ const registerBody = z.object({
   firstName: z.string().min(1).max(100),
   lastName: z.string().min(1).max(100),
   email: z.email(),
-  password: z.string().min(8).max(128),
+  password: z.string().min(MIN_PASSWORD_LENGTH).max(MAX_PASSWORD_LENGTH),
 });
 
 const verifyEmailBody = z.object({
@@ -35,6 +38,15 @@ const refreshBody = z
   })
   .nullish()
   .transform((value) => value ?? {});
+
+const forgotPasswordBody = z.object({
+  email: z.email(),
+});
+
+const resetPasswordBody = z.object({
+  token: z.string().min(1),
+  newPassword: z.string().min(MIN_PASSWORD_LENGTH).max(MAX_PASSWORD_LENGTH),
+});
 
 export const authRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
   app.addHook('onRoute', (route) => {
@@ -147,6 +159,36 @@ export const authRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       const { verifyEmail } = request.diScope.cradle;
       const user = await verifyEmail.execute(request.body);
       return reply.status(200).send(user);
+    },
+  );
+
+  app.post(
+    '/forgot-password',
+    {
+      config: {
+        rateLimit: { max: env.RATE_LIMIT_AUTH_MAX, timeWindow: env.RATE_LIMIT_WINDOW },
+      },
+      schema: { body: forgotPasswordBody },
+    },
+    async (request, reply) => {
+      const { requestPasswordReset } = request.diScope.cradle;
+      await requestPasswordReset.execute(request.body);
+      return reply.status(204).send();
+    },
+  );
+
+  app.post(
+    '/reset-password',
+    {
+      config: {
+        rateLimit: { max: env.RATE_LIMIT_AUTH_MAX, timeWindow: env.RATE_LIMIT_WINDOW },
+      },
+      schema: { body: resetPasswordBody },
+    },
+    async (request, reply) => {
+      const { resetPassword } = request.diScope.cradle;
+      await resetPassword.execute(request.body);
+      return reply.status(204).send();
     },
   );
 

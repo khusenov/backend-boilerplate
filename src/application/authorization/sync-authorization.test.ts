@@ -9,6 +9,7 @@ import type { RoleRepository } from '@/domain/authorization/role-repository';
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { UserRoleRepository } from '@/application/shared/ports/user-role-repository';
 import type { EmailVerificationCodeRepository } from '@/domain/verification/email-verification-code-repository';
+import type { PasswordResetTokenRepository } from '@/domain/password-reset/password-reset-token-repository';
 import type { IdGenerator } from '@/application/shared/ports/id-generator';
 import type { Clock } from '@/application/shared/ports/clock';
 import type { Env } from '@/config/env';
@@ -86,6 +87,14 @@ function makeSync(envOverrides: Partial<Env> = {}) {
     findActiveByUserId: vi.fn<EmailVerificationCodeRepository['findActiveByUserId']>(),
   } satisfies EmailVerificationCodeRepository;
 
+  const passwordResetTokens = {
+    create: vi.fn<PasswordResetTokenRepository['create']>(),
+    update: vi.fn<PasswordResetTokenRepository['update']>(),
+    findByTokenHash: vi.fn<PasswordResetTokenRepository['findByTokenHash']>(),
+    invalidateAllForUser: vi.fn<PasswordResetTokenRepository['invalidateAllForUser']>(),
+    deleteExpired: vi.fn<PasswordResetTokenRepository['deleteExpired']>(),
+  } satisfies PasswordResetTokenRepository;
+
   const ids = {
     generate: vi.fn<IdGenerator['generate']>().mockReturnValue('gen-id'),
   } satisfies IdGenerator;
@@ -98,6 +107,7 @@ function makeSync(envOverrides: Partial<Env> = {}) {
     userRepository: users,
     userRoleRepository: userRoles,
     emailVerificationCodeRepository: verificationCodes,
+    passwordResetTokenRepository: passwordResetTokens,
   } satisfies TransactionalRepositories;
 
   const unitOfWork: UnitOfWork = {

@@ -69,6 +69,11 @@ export const env = cleanEnv(process.env, {
     devDefault: 'dev-verification-code-secret-change-me',
     desc: 'HMAC pepper for verification codes; >= 32 chars in production',
   }),
+  PASSWORD_RESET_TOKEN_TTL: num({ default: 60 * 30 }), // 30 minutes
+  PASSWORD_RESET_URL_BASE: str({
+    devDefault: 'http://localhost:3000/reset-password',
+    desc: 'Frontend URL the reset email links to; the raw token is appended as ?token=',
+  }),
 });
 
 export type Env = typeof env;

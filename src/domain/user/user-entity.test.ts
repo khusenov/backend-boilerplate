@@ -77,6 +77,16 @@ describe('User', () => {
       expect(makeRegisteredUser().isActive).toBe(false);
     });
 
+    it('is pending only while status is pending', () => {
+      const user = makeRegisteredUser();
+
+      expect(user.isPending).toBe(true);
+
+      user.activate(LATER);
+
+      expect(user.isPending).toBe(false);
+    });
+
     it('becomes active through activate, the same transition inactive users use', () => {
       const user = makeRegisteredUser();
 
@@ -358,6 +368,24 @@ describe('User', () => {
       user.changeEmail(Email.create('ADA@example.com'), LATER);
 
       expect(user.status).toBe(UserStatus.Active);
+    });
+  });
+
+  describe('changePassword', () => {
+    it('replaces the password hash and sets updatedAt to the supplied instant', () => {
+      const user = makeUser();
+
+      user.changePassword('new-hashed-password', LATER);
+
+      expect(user.passwordHash).toBe('new-hashed-password');
+      expect(user.updatedAt).toEqual(LATER);
+    });
+
+    it('throws when the user is deleted', () => {
+      const user = makeUser();
+      user.softDelete(BASE_TIME);
+
+      expect(() => user.changePassword('new-hashed-password', LATER)).toThrow(UserDeletedError);
     });
   });
 

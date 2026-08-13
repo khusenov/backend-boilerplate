@@ -3,6 +3,7 @@ import { PrismaRoleRepository } from './prisma-role-repository';
 import { PrismaPermissionRepository } from './prisma-permission-repository';
 import { PrismaUserRoleRepository } from './prisma-user-role-repository';
 import { PrismaEmailVerificationCodeRepository } from './prisma-email-verification-code-repository';
+import { PrismaPasswordResetTokenRepository } from './prisma-password-reset-token-repository';
 import type { PrismaClient } from '@/generated/prisma/client';
 import type {
   TransactionContext,
@@ -35,6 +36,7 @@ export class PrismaUnitOfWork implements UnitOfWork {
         permissionRepository: new PrismaPermissionRepository({ prisma: tx }),
         userRoleRepository: new PrismaUserRoleRepository({ prisma: tx }),
         emailVerificationCodeRepository: new PrismaEmailVerificationCodeRepository({ prisma: tx }),
+        passwordResetTokenRepository: new PrismaPasswordResetTokenRepository({ prisma: tx }),
       };
       const context: TransactionContext = {
         ...repos,

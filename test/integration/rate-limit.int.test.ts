@@ -56,6 +56,34 @@ describe('distributed rate limiting', () => {
       const keys = await app.diContainer.cradle.rateLimitRedis.keys(`${RATE_LIMIT_KEY_NAMESPACE}*`);
       expect(keys.length).toBeGreaterThan(0);
     });
+
+    it('trips the forgot-password bucket at the limit, independently of the login bucket', async () => {
+      const payload = { email: 'nobody@finflow.dev' };
+      let last = await app.inject({ method: 'POST', url: '/v1/auth/forgot-password', payload });
+      const statuses = [last.statusCode];
+      for (let attempt = 1; attempt <= AUTH_LIMIT; attempt += 1) {
+        last = await app.inject({ method: 'POST', url: '/v1/auth/forgot-password', payload });
+        statuses.push(last.statusCode);
+      }
+
+      expect(last.statusCode).toBe(429);
+      expect(last.json<{ error: { code: string } }>().error.code).toBe('RATE_LIMITED');
+      expect(statuses.slice(0, AUTH_LIMIT).every((status) => status !== 429)).toBe(true);
+    });
+
+    it('trips the reset-password bucket at the limit, independently of the other auth buckets', async () => {
+      const payload = { token: 'irrelevant-token', newPassword: 'irrelevant-password' };
+      let last = await app.inject({ method: 'POST', url: '/v1/auth/reset-password', payload });
+      const statuses = [last.statusCode];
+      for (let attempt = 1; attempt <= AUTH_LIMIT; attempt += 1) {
+        last = await app.inject({ method: 'POST', url: '/v1/auth/reset-password', payload });
+        statuses.push(last.statusCode);
+      }
+
+      expect(last.statusCode).toBe(429);
+      expect(last.json<{ error: { code: string } }>().error.code).toBe('RATE_LIMITED');
+      expect(statuses.slice(0, AUTH_LIMIT).every((status) => status !== 429)).toBe(true);
+    });
   });
 
   describe('fail-open when redis is unreachable', () => {

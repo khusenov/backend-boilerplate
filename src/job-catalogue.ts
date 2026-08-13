@@ -1,5 +1,7 @@
 import { EXAMPLE_JOB } from '@/application/jobs/example-job';
 import { SEND_VERIFICATION_EMAIL_JOB } from '@/application/jobs/send-verification-email-job';
+import { SEND_PASSWORD_RESET_EMAIL_JOB } from '@/application/jobs/send-password-reset-email-job';
+import { REVOKE_USER_SESSIONS_JOB } from '@/application/jobs/revoke-user-sessions-job';
 import { DATA_RETENTION_JOB } from '@/application/retention/enforce-data-retention-job';
 import type { JobHandler } from '@/application/shared/ports/job-handler';
 import { DISPATCH_DOMAIN_EVENT_JOB } from '@/infrastructure/events/dispatch-domain-event-job-handler';
@@ -8,6 +10,8 @@ import { OUTBOX_RELAY_JOB } from '@/infrastructure/events/outbox-relay';
 export const JOB_NAMES = [
   EXAMPLE_JOB,
   SEND_VERIFICATION_EMAIL_JOB,
+  SEND_PASSWORD_RESET_EMAIL_JOB,
+  REVOKE_USER_SESSIONS_JOB,
   DATA_RETENTION_JOB,
   OUTBOX_RELAY_JOB,
   DISPATCH_DOMAIN_EVENT_JOB,
