@@ -104,7 +104,7 @@
     "@prisma/client": "^7.8.0",
     "@prisma/instrumentation": "^7.8.0",
     "awilix": "^13.0.5",
-    "bullmq": "^5.80.2",
+    "bullmq": "^6.0.10",
     "close-with-grace": "^2.5.0",
     "dotenv": "^17.4.2",
     "envalid": "^8.2.0",
