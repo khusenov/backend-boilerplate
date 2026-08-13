@@ -96,6 +96,7 @@ import { NodemailerEmailSender } from '@/infrastructure/email/nodemailer-email-s
 import { CryptoVerificationCodeService } from '@/infrastructure/security/crypto-verification-code-service';
 import { PrismaEmailVerificationCodeRepository } from '@/infrastructure/persistence/prisma-email-verification-code-repository';
 import { RegisterUser } from '@/application/auth/register-user';
+import { VerificationCodeIssuer } from '@/application/auth/verification-code-issuer';
 import { VerifyEmail } from '@/application/auth/verify-email';
 import { SendVerificationEmailHandler } from '@/application/jobs/send-verification-email-handler';
 import {
@@ -161,6 +162,7 @@ declare module '@fastify/awilix' {
     idempotencyRedis: Redis;
     idempotencyStore: IdempotencyStore;
     verificationCodeService: VerificationCodeService;
+    verificationCodeIssuer: VerificationCodeIssuer;
     emailVerificationCodeRepository: EmailVerificationCodeRepository;
     verificationConfig: VerificationConfig;
 
@@ -400,6 +402,7 @@ export function registerDependencies(
     revokeRole: asClass(RevokeRole).singleton(),
     listPermissions: asClass(ListPermissions).singleton(),
     syncAuthorization: asClass(SyncAuthorization).singleton(),
+    verificationCodeIssuer: asClass(VerificationCodeIssuer).singleton(),
     registerUser: asClass(RegisterUser).singleton(),
     verifyEmail: asClass(VerifyEmail).singleton(),
 

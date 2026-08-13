@@ -131,6 +131,9 @@ export class User extends AggregateRoot<UserProps> {
     if (this.isDeleted) throw new UserDeletedError(this.id);
     if (this.props.email.equals(email)) return;
     this.props.email = email;
+    if (this.props.status === UserStatus.Active) {
+      this.props.status = UserStatus.Pending;
+    }
     this.touch(now);
   }
 

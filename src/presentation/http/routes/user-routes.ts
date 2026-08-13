@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { FastifyPluginCallbackZod } from 'fastify-type-provider-zod';
+import { env } from '@/config/env';
 import { toRequestActor } from '@/presentation/http/identity/actor-from-token-payload';
 import { errorResponse } from '../schemas/error-schema';
 import { paginatedUsers, userResponse } from '../schemas/user-response-schema';
@@ -96,6 +97,7 @@ export const userRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
   app.patch(
     '/:id',
     {
+      config: { rateLimit: { max: env.RATE_LIMIT_AUTH_MAX, timeWindow: env.RATE_LIMIT_WINDOW } },
       schema: {
         params: editUserParams,
         body: editUserBody,

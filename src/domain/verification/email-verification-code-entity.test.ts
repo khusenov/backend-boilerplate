@@ -154,6 +154,42 @@ describe('EmailVerificationCode', () => {
     });
   });
 
+  describe('reissue', () => {
+    const REISSUED_AT = new Date('2026-01-01T00:10:00.000Z');
+    const NEW_EXPIRY = new Date('2026-01-01T01:00:00.000Z');
+    const NEW_HASH = 'hmac-of-654321';
+
+    it('replaces the hash and expiry', () => {
+      const code = issue();
+
+      code.reissue(NEW_HASH, NEW_EXPIRY, REISSUED_AT);
+
+      expect(code.codeHash).toBe(NEW_HASH);
+      expect(code.expiresAt).toEqual(NEW_EXPIRY);
+      expect(code.updatedAt).toEqual(REISSUED_AT);
+    });
+
+    it('resets attempts back to zero', () => {
+      const code = issue();
+      expect(() => code.verify(WRONG_HASH, ISSUED_AT)).toThrow();
+      expect(code.attempts).toBe(1);
+
+      code.reissue(NEW_HASH, NEW_EXPIRY, REISSUED_AT);
+
+      expect(code.attempts).toBe(0);
+    });
+
+    it('clears a consumed state so the code becomes usable again', () => {
+      const code = issue();
+      code.verify(CODE_HASH, ISSUED_AT);
+      expect(code.isConsumed).toBe(true);
+
+      code.reissue(NEW_HASH, NEW_EXPIRY, REISSUED_AT);
+
+      expect(code.isConsumed).toBe(false);
+    });
+  });
+
   // The verify use case persists the entity only when `attempts` moved, so the
   // guard order below is load-bearing, not cosmetic.
   describe('guard order (consumed -> expired -> cap -> mismatch)', () => {

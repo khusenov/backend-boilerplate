@@ -326,6 +326,39 @@ describe('User', () => {
         UserDeletedError,
       );
     });
+
+    it('demotes an active user to pending', () => {
+      const user = makeUser();
+
+      user.changeEmail(Email.create('new@example.com'), LATER);
+
+      expect(user.status).toBe(UserStatus.Pending);
+    });
+
+    it('leaves status untouched for a user that is already pending', () => {
+      const user = makeRegisteredUser();
+
+      user.changeEmail(Email.create('new@example.com'), LATER);
+
+      expect(user.status).toBe(UserStatus.Pending);
+    });
+
+    it('leaves status untouched for a user that is already inactive', () => {
+      const user = makeUser();
+      user.deactivate(BASE_TIME);
+
+      user.changeEmail(Email.create('new@example.com'), LATER);
+
+      expect(user.status).toBe(UserStatus.Inactive);
+    });
+
+    it('does not change status when the email resolves to the same value', () => {
+      const user = makeUser();
+
+      user.changeEmail(Email.create('ADA@example.com'), LATER);
+
+      expect(user.status).toBe(UserStatus.Active);
+    });
   });
 
   describe('softDelete', () => {

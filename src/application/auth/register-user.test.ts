@@ -3,6 +3,7 @@ import { RegisterUser } from './register-user';
 import { Email, InvalidEmailError } from '@/domain/user/email-vo';
 import { User, UserStatus } from '@/domain/user/user-entity';
 import { EmailAlreadyTakenError } from '@/domain/user/user-errors';
+import { EmailVerificationCode } from '@/domain/verification/email-verification-code-entity';
 import { UserCreatedEvent } from '@/domain/user/events/user-created-event';
 import { SEND_VERIFICATION_EMAIL_JOB } from '@/application/jobs/send-verification-email-job';
 import type { DomainEvent } from '@/domain/shared/domain-event';
@@ -12,7 +13,7 @@ import type { UserRepository } from '@/domain/user/user-repository';
 import type { PasswordHasher } from '@/application/shared/ports/password-hasher';
 import type { IdGenerator } from '@/application/shared/ports/id-generator';
 import type { JobQueue } from '@/application/shared/ports/job-queue';
-import type { VerificationCodeService } from '@/application/shared/ports/verification-code-service';
+import type { VerificationCodeIssuer } from '@/application/auth/verification-code-issuer';
 import type { Clock } from '@/application/shared/ports/clock';
 
 const NOW = new Date('2026-01-01T00:00:00.000Z');
@@ -52,27 +53,33 @@ function makeDeps() {
 
   const findByEmail = vi.fn<UserRepository['findByEmail']>().mockResolvedValue(null);
   const hash = vi.fn<PasswordHasher['hash']>().mockResolvedValue('hashed-secret');
-  // Called twice per registration: once for the user, once for the code.
-  const generateId = vi
-    .fn<IdGenerator['generate']>()
-    .mockReturnValueOnce('new-user-id')
-    .mockReturnValueOnce('new-code-id');
+  const generateId = vi.fn<IdGenerator['generate']>().mockReturnValue('new-user-id');
   const clock = { now: vi.fn<Clock['now']>().mockReturnValue(NOW) } satisfies Clock;
   const enqueue = vi.fn<JobQueue['enqueue']>().mockResolvedValue(undefined);
-  const codeService = {
-    generate: vi.fn<VerificationCodeService['generate']>().mockReturnValue(RAW_CODE),
-    hash: vi.fn<VerificationCodeService['hash']>().mockReturnValue(CODE_HASH),
-  } satisfies VerificationCodeService;
+
+  const issuedCode = EmailVerificationCode.issue(
+    {
+      id: 'new-code-id',
+      userId: 'new-user-id',
+      codeHash: CODE_HASH,
+      expiresAt: new Date(NOW.getTime() + TTL_SECONDS * 1000),
+      maxAttempts: MAX_ATTEMPTS,
+    },
+    NOW,
+  );
+  const issue = vi
+    .fn<VerificationCodeIssuer['issue']>()
+    .mockReturnValue({ code: issuedCode, rawCode: RAW_CODE });
+  const verificationCodeIssuer = { issue } as unknown as VerificationCodeIssuer;
 
   const deps = {
     unitOfWork,
     userRepository: { findByEmail } as unknown as UserRepository,
     passwordHasher: { hash } as unknown as PasswordHasher,
-    verificationCodeService: codeService,
+    verificationCodeIssuer,
     jobQueue: { enqueue } as unknown as JobQueue,
     idGenerator: { generate: generateId } as unknown as IdGenerator,
     clock,
-    verificationConfig: { ttlSeconds: TTL_SECONDS, maxAttempts: MAX_ATTEMPTS },
   };
 
   return {
@@ -82,7 +89,8 @@ function makeDeps() {
     hash,
     generateId,
     enqueue,
-    codeService,
+    issue,
+    issuedCode,
     clock,
     stage,
     txSave,
@@ -132,7 +140,7 @@ describe('RegisterUser', () => {
       );
 
       expect(ctx.enqueue).not.toHaveBeenCalled();
-      expect(ctx.codeService.generate).not.toHaveBeenCalled();
+      expect(ctx.issue).not.toHaveBeenCalled();
     });
 
     it('hashes the password before persisting', async () => {
@@ -162,35 +170,17 @@ describe('RegisterUser', () => {
       expect((stagedEvents[0] as UserCreatedEvent).aggregateId).toBe('new-user-id');
     });
 
-    it('issues one code bound to the new user in the same transaction', async () => {
+    it('issues a code for the new user and persists exactly what the issuer returned', async () => {
       await new RegisterUser(ctx.deps).execute(input);
 
+      expect(ctx.issue).toHaveBeenCalledWith('new-user-id', NOW);
       expect(ctx.run).toHaveBeenCalledOnce();
-      expect(ctx.txCreateCode).toHaveBeenCalledOnce();
-      const [savedCode] = ctx.txCreateCode.mock.calls[0]!;
-      expect(savedCode.id).toBe('new-code-id');
-      expect(savedCode.userId).toBe('new-user-id');
-      expect(savedCode.attempts).toBe(0);
-      expect(savedCode.maxAttempts).toBe(MAX_ATTEMPTS);
-      expect(savedCode.consumedAt).toBeNull();
+      expect(ctx.txCreateCode).toHaveBeenCalledWith(ctx.issuedCode);
     });
 
-    // The plaintext code must exist only in the job payload and the email.
-    it('persists only the HMAC, never the plaintext code', async () => {
+    it('reads the clock once and reuses it for the user and the code', async () => {
       await new RegisterUser(ctx.deps).execute(input);
 
-      const [savedCode] = ctx.txCreateCode.mock.calls[0]!;
-      expect(savedCode.codeHash).toBe(CODE_HASH);
-      expect(savedCode.codeHash).not.toBe(RAW_CODE);
-      expect(ctx.codeService.hash).toHaveBeenCalledWith(RAW_CODE);
-    });
-
-    it('derives expiry from the configured TTL and one clock reading', async () => {
-      await new RegisterUser(ctx.deps).execute(input);
-
-      const [savedCode] = ctx.txCreateCode.mock.calls[0]!;
-      expect(savedCode.createdAt).toEqual(NOW);
-      expect(savedCode.expiresAt).toEqual(new Date(NOW.getTime() + TTL_SECONDS * 1000));
       expect(ctx.clock.now).toHaveBeenCalledOnce();
     });
 

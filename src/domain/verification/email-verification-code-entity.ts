@@ -88,4 +88,12 @@ export class EmailVerificationCode extends Entity<EmailVerificationCodeProps> {
     this.props.consumedAt = now;
     this.touch(now);
   }
+
+  reissue(codeHash: string, expiresAt: Date, now: Date): void {
+    this.props.codeHash = codeHash;
+    this.props.expiresAt = expiresAt;
+    this.props.attempts = 0;
+    this.props.consumedAt = null;
+    this.touch(now);
+  }
 }
