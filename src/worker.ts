@@ -17,7 +17,12 @@ async function bootstrap(): Promise<void> {
   const container = createContainer<Cradle>({ injectionMode: InjectionMode.PROXY, strict: true });
   registerDependencies(container, logger);
 
-  const healthApp = await buildHealthApp({ healthCheck: container.cradle.healthCheck, logger });
+  const healthApp = await buildHealthApp({
+    healthCheck: container.cradle.healthCheck,
+    metricsExposition: container.cradle.metricsExposition,
+    metricsEnabled: env.METRICS_ENABLED,
+    logger,
+  });
 
   registerGracefulShutdown({
     logger,
