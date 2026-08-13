@@ -296,7 +296,7 @@ The new dependency is now part of readiness: `Promise.all` rejects on the first 
 ## Testing
 
 Unit tests run with `npm test` (Vitest); the integration tests run with `npm run test:integration`;
-`npm run audit` runs the full gate (lockfile check, format, lint, typecheck, coverage, integration).
+`npm run audit` runs the full gate (lockfile check, dependency audit, format, lint, typecheck, coverage, architecture boundaries, integration).
 
 - **Unit — `src/infrastructure/health/composite-health-check.test.ts`.** Covers the aggregation
   contract: construction throws when given zero checks; `check()` resolves when every member resolves;
