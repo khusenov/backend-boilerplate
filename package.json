@@ -110,7 +110,7 @@
     "envalid": "^8.2.0",
     "fastify": "^5.8.5",
     "fastify-plugin": "^6.0.0",
-    "fastify-type-provider-zod": "^6.1.0",
+    "fastify-type-provider-zod": "^7.0.0",
     "ioredis": "^5.10.1",
     "jose": "^6.2.3",
     "nodemailer": "^9.0.3",
