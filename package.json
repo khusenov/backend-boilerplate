@@ -62,7 +62,7 @@
     "@opentelemetry/core": "^2.9.0",
     "@testcontainers/mariadb": "^12.0.3",
     "@testcontainers/redis": "^12.0.4",
-    "@types/node": "^25.9.3",
+    "@types/node": "^26.2.0",
     "@types/nodemailer": "^8.0.1",
     "@vitest/coverage-v8": "^4.1.9",
     "concurrently": "^10.0.4",
