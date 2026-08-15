@@ -1,44 +1,68 @@
 # Health Checks
 
-> **Status:** Complete · **Layers:** application, infrastructure, presentation · **Verified against:** `9044a23`
+> **Status:** Complete · **Layers:** application, infrastructure, presentation · **Verified against:** `5156995`
 
 ## Purpose
 
 Container orchestrators (Kubernetes, ECS, Nomad) and load balancers need machine-readable signals to
-decide two independent things: _is this process alive?_ and _is this process ready to serve traffic?_
-This feature exposes those signals as two separate, unauthenticated HTTP endpoints. **Liveness**
-(`/health/live`) reports only that the Node process is up and its event loop can answer; failing it
-tells the orchestrator to **restart** the pod. **Readiness** (`/health/ready`) additionally verifies
+decide two independent things: _is this process alive?_ and _is this process ready to serve?_ This
+feature answers both questions for **both deployable processes**. **Liveness** (`GET /health/live`)
+reports only that the Node process is up and its event loop can answer; failing it tells the
+orchestrator to **restart** the instance. **Readiness** (`GET /health/ready`) additionally verifies
 that every critical downstream dependency — the database _and_ the Redis instance that backs
-[BullMQ](./background-jobs.md) — is reachable; failing it tells the orchestrator to **drain this
-instance from rotation** without
-killing it, so it can recover while a restart would only prolong the outage.
+[BullMQ](./background-jobs.md) — is reachable; failing it tells the orchestrator to **drain the
+instance from rotation** without killing it, so it rejoins automatically once the dependency
+recovers. The API process serves the probes from its main Fastify app; the worker process — a queue
+consumer with no business HTTP surface of its own — runs a dedicated minimal probe app on
+`WORKER_PORT` so it can be probed at all.
 
 ## How it works
 
-Both endpoints are registered by the `healthRoutes` Fastify plugin under the `/health` prefix (see
-[HTTP Infrastructure](./http-infrastructure.md)'s `app.ts`,
-`app.register(healthRoutes, { prefix: '/health' })`). An `onRoute` hook inside the plugin tags every
-route it registers with the `Health` OpenAPI tag and sets `rateLimit: false`, so the probes (the
-health endpoints an orchestrator polls periodically) are never throttled even while the global rate
-limiter is active.
+**One plugin, two hosts.** `healthRoutes` is a Fastify plugin
+(`FastifyPluginCallbackZod<HealthRoutesOptions>`) that receives its single dependency — a
+`HealthCheck` — through its registration options, not by resolving a DI scope itself. That makes the
+plugin host-agnostic, and it is mounted on two separate probe surfaces:
 
-- **`GET /health/live`** — the handler is synchronous and returns `{ status: 'ok' }` with HTTP `200`.
-  It performs no I/O and never touches a dependency; a response at all proves the process is up and
-  the event loop is servicing requests. The co-located unit test asserts the readiness dependency is
-  _not_ invoked on this path.
+- **API process** (`src/main.ts` → `buildApp` in `src/presentation/http/app.ts`). Registered on the
+  root app with `app.register(healthRoutes, { prefix: '/health', healthCheck: diContainer.cradle.healthCheck })`;
+  the app listens on `HOST`:`PORT` (default `8000`). The prefix sits at the **root**, outside
+  `API_V1_PREFIX` (`'/v1'`, `src/presentation/http/api-version.ts`), so the probe paths are
+  **unversioned**: `/health/live`, not `/v1/health/live`.
+- **Worker process** (`src/worker.ts`). The worker builds its own Awilix container
+  (`createContainer<Cradle>({ injectionMode: InjectionMode.PROXY, strict: true })`), runs the same
+  `registerDependencies`, and passes `container.cradle.healthCheck` into `buildHealthApp`
+  (`src/presentation/http/health-app.ts`) — so worker readiness verifies **exactly the same
+  dependencies** as API readiness. `buildHealthApp` constructs a bare Fastify instance
+  (`disableRequestLogging: true`, so frequent probe polling does not spam logs), installs the Zod
+  validator/serializer compilers, registers `healthRoutes` under `/health`, and — only when
+  `metricsEnabled` — `workerMetricsRoutes` under `/metrics` (that endpoint belongs to
+  [Metrics](./metrics.md)). `worker.ts` starts listening on `HOST`:`WORKER_PORT` (default `8001`)
+  only **after** `startWorker(container)` has resolved, so a responding probe implies the queue
+  consumer and its repeatable-job schedules actually started. On shutdown, `createWorkerShutdown`
+  (`src/worker-shutdown.ts`) closes the health app first and disposes the container in a `finally` —
+  probes stop being served before the connections they depend on are torn down.
 
-- **`GET /health/ready`** — the handler resolves the `healthCheck` port from the request's Awilix
-  scope (`request.diScope.cradle`) and awaits `healthCheck.check()`.
-  - On success it returns `{ status: 'ready' }` with HTTP `200`.
-  - On failure (the promise rejects) it logs the error via `request.log.error({ err }, 'readiness
-check failed')`, then replies `503` with body `{ status: 'unavailable' }`. That body is sent
-    directly by the handler via `reply.status(503).send(...)`, so it bypasses the application error
-    handler entirely.
+Inside the plugin, an `onRoute` hook tags every route with the `Health` OpenAPI tag and sets
+`rateLimit: false`. In the API app — where [HTTP Infrastructure](./http-infrastructure.md) registers
+a global rate limiter — that flag exempts the probes from throttling; the worker's probe app
+registers no rate limiter, so the flag is inert there.
+
+The two endpoints behave differently by design:
+
+- **`GET /health/live`** — the handler is synchronous and returns `{ status: 'ok' }` with HTTP
+  `200`. It performs no I/O and never touches the `HealthCheck`; a response at all proves the
+  process is up and the event loop is servicing requests. The co-located unit test asserts the
+  readiness dependency is _not_ invoked on this path.
+- **`GET /health/ready`** — the handler awaits `healthCheck.check()`. On success it returns
+  `{ status: 'ready' }` with `200`. On failure (the promise rejects) it logs the error via
+  `request.log.error({ err }, 'readiness check failed')`, then replies `503` with
+  `{ status: 'unavailable' }` — sent directly via `reply.status(503).send(...)`, bypassing the
+  application error handler entirely.
 
 The `healthCheck` bound in the container is a **`CompositeHealthCheck`**, not a single probe. Its
-constructor takes a read-only array of `HealthCheck` members and its `check()` fans them out
-concurrently with `Promise.all`:
+constructor takes a read-only array of `HealthCheck` members (and throws
+`CompositeHealthCheck requires at least one health check` when given none); its `check()` fans the
+members out concurrently:
 
 ```ts
 async check(): Promise<void> {
@@ -48,20 +72,20 @@ async check(): Promise<void> {
 
 The container composes it from two members — `databaseHealthCheck` (`PrismaHealthCheck`) and
 `redisHealthCheck` (`RedisHealthCheck`). The **aggregation rule is all-or-nothing**: `Promise.all`
-resolves only if _every_ member resolves, and rejects with the _first_ member that rejects. So
-overall readiness is healthy only when all component checks pass, and the moment any one fails the
-composite rejects and the route returns `503`. The composite does **not** merge or expose per-member
-status in the response body — the caller always sees the same fixed `{ status: 'unavailable' }`
-literal; _which_ dependency failed is captured only in the `readiness check failed` server log line
-(the first rejecting member's `Error`). The two members:
+resolves only if _every_ member resolves and rejects with the _first_ member that rejects, so
+readiness is healthy only when all component checks pass. The composite does **not** expose
+per-member status in the response body — the caller always sees the fixed
+`{ status: 'unavailable' }` literal; _which_ dependency failed appears only in the
+`readiness check failed` log line. The two members:
 
-- **`PrismaHealthCheck`** runs the raw query `SELECT 1` through the shared Prisma client. It confirms
-  the connection pool can acquire a working connection without depending on any table or row; if the
-  database is unreachable the query rejects.
-- **`RedisHealthCheck`** issues `PING` on a dedicated Redis connection and expects the reply `PONG`
-  (any other reply throws `unexpected Redis PING reply: <reply>`). The call is wrapped in a
-  `Promise.race` against a timer, so a hung Redis rejects with `Redis health check timed out after
-<ms>ms` rather than stalling the request; the timer is always cleared in a `finally`.
+- **`PrismaHealthCheck`** runs the raw query `SELECT 1` through the shared Prisma client
+  (`this.prisma.$queryRaw`). It confirms the pool can acquire a working connection without
+  depending on any table or row; if the database is unreachable, the query rejects.
+- **`RedisHealthCheck`** issues `PING` on a dedicated Redis connection and expects the reply
+  `PONG` (the `HEALTHY_PING_REPLY` constant); any other reply throws
+  `unexpected Redis PING reply: <reply>`. The call is raced against a `healthCheckTimeoutMs` timer,
+  so a hung Redis rejects with `Redis health check timed out after <ms>ms` instead of stalling the
+  request; the timer is always cleared in a `finally`.
 
 ## Architecture
 
@@ -69,35 +93,56 @@ The application layer owns the abstraction — the `HealthCheck` **port**, a one
 says nothing about _which_ dependency is probed or _how_. The infrastructure layer supplies the
 **adapters**: `PrismaHealthCheck` and `RedisHealthCheck` each probe one dependency, and
 `CompositeHealthCheck` is itself a `HealthCheck` that composes other `HealthCheck`s (the Composite
-pattern). The presentation layer (the route) depends only on the port; it is unaware that readiness
-is backed by a database _and_ Redis, or that there is more than one probe at all. Concretes bind to
-the port in exactly one place — `container.ts` — preserving the inward dependency direction:
-presentation and infrastructure both point toward the application-layer abstraction, never at each
-other. Adding or removing a dependency from readiness is a `container.ts` edit; the route and schemas
-never change.
+pattern). The presentation layer — `healthRoutes` and the worker's `buildHealthApp` — depends only
+on the port; it is unaware that readiness is backed by a database _and_ Redis, or that there is more
+than one probe at all. Concretes bind to the port in exactly one place — `src/container.ts` —
+preserving the inward dependency direction, and because both processes wire themselves through the
+same `registerDependencies`, adding or removing a dependency from readiness is a single
+`container.ts` edit that updates **both** probe surfaces; the routes and schemas never change.
 
-| Component                                                               | Layer          | Responsibility                                                                                                                                                 | File                                                      |
-| ----------------------------------------------------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `HealthCheck`                                                           | Application    | Port: `check(): Promise<void>` — resolves if a critical dependency is healthy, rejects if not                                                                  | `src/application/shared/ports/health-check.ts`            |
-| `CompositeHealthCheck`                                                  | Infrastructure | Adapter: fans out to its member checks with `Promise.all`; resolves only if all resolve, rejects on the first failure; throws if constructed with zero members | `src/infrastructure/health/composite-health-check.ts`     |
-| `PrismaHealthCheck`                                                     | Infrastructure | Adapter: probes the database with `` $queryRaw`SELECT 1` ``                                                                                                    | `src/infrastructure/persistence/prisma-health-check.ts`   |
-| `RedisHealthCheck`                                                      | Infrastructure | Adapter: probes the BullMQ Redis with `PING`/`PONG`, bounded by a `HEALTHCHECK_TIMEOUT_MS` timeout                                                             | `src/infrastructure/jobs/redis-health-check.ts`           |
-| `createRedisConnection`                                                 | Infrastructure | Generic Redis connection factory; used here to create the dedicated `healthCheckRedisConnection`                                                               | `src/infrastructure/jobs/redis-connection.ts`             |
-| `healthRoutes`                                                          | Presentation   | Registers `GET /health/live` and `GET /health/ready`; disables rate limiting and tags routes `Health`                                                          | `src/presentation/http/routes/health-routes.ts`           |
-| `livenessResponse`, `readinessResponse`, `readinessUnavailableResponse` | Presentation   | Zod response schemas fixing each body to a single literal status for the OpenAPI contract                                                                      | `src/presentation/http/schemas/health-response-schema.ts` |
+| Component                                                               | Layer            | Responsibility                                                                                                                                                 | File                                                      |
+| ----------------------------------------------------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `HealthCheck`                                                           | Application      | Port: `check(): Promise<void>` — resolves if a critical dependency is healthy, rejects if not                                                                  | `src/application/shared/ports/health-check.ts`            |
+| `CompositeHealthCheck`                                                  | Infrastructure   | Adapter: fans out to its member checks with `Promise.all`; resolves only if all resolve, rejects on the first failure; throws if constructed with zero members | `src/infrastructure/health/composite-health-check.ts`     |
+| `PrismaHealthCheck`                                                     | Infrastructure   | Adapter: probes the database with `` $queryRaw`SELECT 1` ``                                                                                                    | `src/infrastructure/persistence/prisma-health-check.ts`   |
+| `RedisHealthCheck`                                                      | Infrastructure   | Adapter: probes the BullMQ Redis with `PING`/`PONG`, bounded by the `healthCheckTimeoutMs` timeout                                                             | `src/infrastructure/jobs/redis-health-check.ts`           |
+| `createRedisConnection`                                                 | Infrastructure   | Generic Redis connection factory (`maxRetriesPerRequest: null`); used here to create the dedicated `healthCheckRedisConnection`                                | `src/infrastructure/jobs/redis-connection.ts`             |
+| `healthRoutes`                                                          | Presentation     | Registers `GET /live` and `GET /ready` under its mount prefix; disables rate limiting and tags routes `Health`; takes the `HealthCheck` via options            | `src/presentation/http/routes/health-routes.ts`           |
+| `livenessResponse`, `readinessResponse`, `readinessUnavailableResponse` | Presentation     | Zod response schemas fixing each body to a single literal status for the OpenAPI contract                                                                      | `src/presentation/http/schemas/health-response-schema.ts` |
+| `buildHealthApp`                                                        | Presentation     | Builds the worker's minimal probe app: `healthRoutes` at `/health`, plus `workerMetricsRoutes` at `/metrics` when metrics are enabled                          | `src/presentation/http/health-app.ts`                     |
+| `createWorkerShutdown`                                                  | Composition root | Shutdown ordering for the worker: close the probe app first, then dispose the container                                                                        | `src/worker-shutdown.ts`                                  |
+
+The container registrations (`src/container.ts`): `databaseHealthCheck` is
+`asClass(PrismaHealthCheck).singleton()`; `healthCheckRedisConnection` is a singleton
+`createRedisConnection({ redisUrl: env.REDIS_URL })` with a disposer that disconnects it;
+`redisHealthCheck` is `asClass(RedisHealthCheck).singleton()`; `healthCheckTimeoutMs` is
+`asValue(env.HEALTHCHECK_TIMEOUT_MS)`; and `healthCheck` is an `asFunction` singleton building
+`new CompositeHealthCheck([databaseHealthCheck, redisHealthCheck])`.
 
 ## Public surface
 
-Both endpoints are **public**: they are not guarded by the `authenticate` preHandler, require no
-bearer token or permission, and are exempt from rate limiting (`rateLimit: false`). They are mounted
-under the `/health` prefix in `app.ts`.
+All probe endpoints are **public**: no `authenticate` preHandler, no bearer token or permission, and
+rate-limit-exempt (`rateLimit: false`).
+
+**API process** — listens on `HOST`:`PORT` (default `8000`); routes mounted at the root, outside
+`/v1`:
 
 | Method | Path            | Auth          | Purpose                                                                              |
 | ------ | --------------- | ------------- | ------------------------------------------------------------------------------------ |
-| `GET`  | `/health/live`  | None (public) | Liveness — is the process up?                                                        |
+| `GET`  | `/health/live`  | None (public) | Liveness — is the API process up?                                                    |
 | `GET`  | `/health/ready` | None (public) | Readiness — is the process able to serve, i.e. are the database and Redis reachable? |
 
-Responses by state:
+**Worker process** — the `buildHealthApp` instance listens on `HOST`:`WORKER_PORT` (default `8001`):
+
+| Method | Path            | Auth          | Purpose                                                                                 |
+| ------ | --------------- | ------------- | --------------------------------------------------------------------------------------- |
+| `GET`  | `/health/live`  | None (public) | Liveness — is the worker process up?                                                    |
+| `GET`  | `/health/ready` | None (public) | Readiness — same composite check: are the database and Redis reachable from the worker? |
+
+(The same worker app also serves `GET /metrics` when `METRICS_ENABLED` is true — see
+[Metrics](./metrics.md).)
+
+Responses by state — identical on both surfaces, pinned by the Zod literal schemas:
 
 | Endpoint            | State                      | Status | Body                          |
 | ------------------- | -------------------------- | ------ | ----------------------------- |
@@ -105,8 +150,8 @@ Responses by state:
 | `GET /health/ready` | all dependencies healthy   | `200`  | `{ "status": "ready" }`       |
 | `GET /health/ready` | any dependency unreachable | `503`  | `{ "status": "unavailable" }` |
 
-The liveness endpoint has no failure body: if the process cannot respond at all, the orchestrator's
-own connection timeout is the failure signal.
+The liveness endpoint has no failure body: if the process cannot respond at all, the prober's own
+connection timeout is the failure signal.
 
 The `HealthCheck` port that the readiness route — and every adapter — programs against:
 
@@ -121,19 +166,23 @@ return value. A resolved promise means healthy; any rejection means unhealthy an
 
 ## Configuration
 
-The readiness probe reads two variables directly and one transitively (through the shared Prisma
-client). All are parsed in `src/config/env.ts` and mirrored in `.env.example`.
+All variables are parsed by `envalid` in `src/config/env.ts` and mirrored in `.env.example`.
 
-| Variable                 | Default                                                                              | Meaning                                                                                                                                                         |
-| ------------------------ | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `HEALTHCHECK_TIMEOUT_MS` | `2000`                                                                               | Milliseconds the Redis `PING` may take before `RedisHealthCheck` rejects with a timeout. Bound into the container as `healthCheckTimeoutMs`.                    |
-| `REDIS_URL`              | `redis://127.0.0.1:6379` (dev default; **required in production** — no prod default) | Connection string for the dedicated `healthCheckRedisConnection` that `RedisHealthCheck` pings.                                                                 |
-| `DATABASE_URL`           | (required, no default)                                                               | Connection string for the Prisma client that `PrismaHealthCheck` probes with `SELECT 1`. Read transitively via the shared client, not by this feature directly. |
+| Variable                 | Default                                                                              | Meaning                                                                                                                                                           |
+| ------------------------ | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HEALTHCHECK_TIMEOUT_MS` | `2000`                                                                               | Milliseconds the Redis `PING` may take before `RedisHealthCheck` rejects with a timeout. Bound into the container as `healthCheckTimeoutMs`.                      |
+| `WORKER_PORT`            | `8001`                                                                               | Port the worker's `buildHealthApp` probe app listens on (`healthApp.listen` in `src/worker.ts`).                                                                  |
+| `PORT`                   | `8000`                                                                               | Port the API process listens on — and therefore where its `/health/*` endpoints live.                                                                             |
+| `HOST`                   | `0.0.0.0`                                                                            | Bind address for both processes' listeners.                                                                                                                       |
+| `METRICS_ENABLED`        | `true`                                                                               | Passed to `buildHealthApp` as `metricsEnabled`: gates whether the worker probe app also mounts `/metrics` ([Metrics](./metrics.md)). Health routes are always on. |
+| `REDIS_URL`              | `redis://127.0.0.1:6379` (dev default; **required in production** — no prod default) | Connection string for the dedicated `healthCheckRedisConnection` that `RedisHealthCheck` pings.                                                                   |
+| `DATABASE_URL`           | (required, no default)                                                               | Connection string for the Prisma client that `PrismaHealthCheck` probes with `SELECT 1`. Read transitively via the shared client, not by this feature directly.   |
 
 ## Usage & extension
 
-**Calling the probes.** Point your orchestrator's liveness probe at `GET /health/live` and its
-readiness probe at `GET /health/ready`. A Kubernetes example:
+**Calling the probes.** Point liveness at `GET /health/live` and readiness at `GET /health/ready` —
+on the API port for the API deployment and on the worker port for the worker deployment. A
+Kubernetes example for the API pod:
 
 ```yaml
 livenessProbe:
@@ -150,20 +199,23 @@ readinessProbe:
   periodSeconds: 5
 ```
 
-The `port` above must match the port the service actually listens on (`PORT`, default `8000`) — set
-it to whatever `PORT` is configured to in the target environment rather than copying `8000` blindly.
-Kubernetes treats any `2xx`/`3xx` as pass and anything else as fail, so the explicit `503` on
-`/health/ready` reliably pulls the pod out of the Service's endpoints until the dependencies recover.
+For the worker pod, use the same paths with `port: 8001` (or whatever `WORKER_PORT` is set to in
+that environment; likewise substitute the configured `PORT` above rather than copying `8000`
+blindly). Kubernetes treats any `2xx`/`3xx` as pass and anything else as fail, so the explicit
+`503` on `/health/ready` reliably pulls the instance out of rotation until the dependencies recover.
+The repo's own `docker-compose.yml` already wires the worker container's `healthcheck` to
+`http://127.0.0.1:8001/health/live` via a `node -e "fetch(...)"` one-liner.
 
-**Adding a new component health check.** Because the route depends only on the `HealthCheck` port and
-the container composes the readiness probe from a `CompositeHealthCheck`, you extend readiness by
-writing one more adapter and adding it to the composite — the route and schemas never change. To also
-require, say, an external HTTP dependency to be reachable:
+**Adding a new component health check.** Because the routes depend only on the `HealthCheck` port
+and the container composes readiness from a `CompositeHealthCheck`, you extend readiness by writing
+one more adapter and adding it to the composite — the change reaches both probe surfaces
+automatically, and the routes and schemas never change. To also require, say, an external HTTP
+dependency to be reachable:
 
 1. **Write the adapter** in the infrastructure layer, implementing `HealthCheck`. Constructor
-   parameters are destructured from the Awilix cradle by name (the app uses `injectionMode: 'PROXY'`),
-   so each parameter name must match a registered cradle key. Reuse the existing
-   `healthCheckTimeoutMs` cradle value to keep every probe on the same timeout budget:
+   parameters are destructured from the Awilix cradle by name (both processes use
+   `injectionMode: 'PROXY'`), so each parameter name must match a registered cradle key. Reuse the
+   existing `healthCheckTimeoutMs` cradle value to keep every probe on the same timeout budget:
 
    ```ts
    // src/infrastructure/health/http-dependency-health-check.ts
@@ -225,69 +277,83 @@ require, say, an external HTTP dependency to be reachable:
    ).singleton(),
    ```
 
-The new dependency is now part of readiness: `Promise.all` rejects on the first failing member, so
-`GET /health/ready` returns `503` the moment any probe — including the new one — fails.
+The new dependency is now part of readiness on both the API and the worker: `Promise.all` rejects on
+the first failing member, so `GET /health/ready` returns `503` the moment any probe — including the
+new one — fails.
 
 ## Design decisions & trade-offs
 
-- **Readiness aggregates dependencies; liveness does not.** The two probes answer different questions
-  and drive different orchestrator actions. A failed **liveness** probe means _restart the pod_, so
-  liveness stays cheap and dependency-free — its handler does no I/O and fails only when _this
-  process_ is broken. A failed **readiness** probe means _stop routing traffic here but leave the
-  process running_, which is exactly the right response to a dependency outage: the pod is drained
-  from the load balancer / Service endpoints and rejoins automatically once the dependency recovers.
-  Folding the dependency checks into liveness would let a transient database or Redis blip trigger a
-  restart storm across every replica — a restart cannot fix an _external_ dependency and only
-  amplifies the outage.
+- **Readiness aggregates dependencies; liveness does not.** The two probes drive different
+  orchestrator actions. A failed **liveness** probe means _restart the process_, so liveness stays
+  cheap and dependency-free — its handler does no I/O and fails only when _this process_ is broken.
+  A failed **readiness** probe means _stop routing traffic here but leave the process running_ —
+  exactly right for a dependency outage, since a restart cannot fix an external dependency. Folding
+  dependency checks into liveness would let a transient database or Redis blip trigger a restart
+  storm across every replica.
 
-- **Both the database and Redis gate readiness.** The service cannot do useful work if its primary
-  datastore is down, and — because BullMQ background processing and the Redis-backed rate limiter run
-  on Redis — it also cannot function normally if Redis is unreachable. Aggregating both into
-  readiness means an instance is pulled from rotation whenever _either_ is down, rather than serving
-  requests it cannot complete.
+- **A dedicated probe app for the worker instead of reusing `buildApp`.** The worker's only job is
+  consuming BullMQ queues; without an HTTP listener it would be unprobeable — an orchestrator could
+  never restart a wedged worker or gate rollouts on its readiness. `buildHealthApp` gives it the
+  smallest possible surface: `healthRoutes` (plus optionally `/metrics`) and nothing else — no auth,
+  no CORS, no cookies, no rate limiter, no Swagger. Reusing `buildApp` would drag the entire API
+  surface (and its middleware and secrets requirements) into a process that must never serve it.
 
-- **`CompositeHealthCheck` with `Promise.all` (fail-fast, all-or-nothing, concurrent).** Readiness is
-  binary for a load balancer, so the aggregation is a boolean AND: any critical dependency down means
-  not ready. Running the members concurrently makes the probe's latency the _slowest single_ check
-  rather than the sum of all checks. The trade-off is that the composite surfaces only the first
-  failing member and does not report a per-dependency breakdown in the response — acceptable because
-  the orchestrator only needs pass/fail, and operators get the specific failure from the logs.
+- **The plugin takes its `HealthCheck` via registration options.** `healthRoutes` declares
+  `HealthRoutesOptions` rather than resolving from a request DI scope, which is what lets the same
+  plugin serve two very different hosts: the DI-integrated API app passes
+  `diContainer.cradle.healthCheck`, the worker passes its own container's cradle value. The route
+  code stays identical, so probe semantics cannot drift between processes.
 
-- **The response body never names the failing dependency.** On failure the body is a fixed
-  `{ status: 'unavailable' }` literal; the underlying `Error` is written to the log line
-  `readiness check failed` instead. Health endpoints are unauthenticated and internet-reachable, so
-  the body intentionally leaks nothing — no dependency name, version, or error detail — while
-  operators retain full visibility through structured logs.
+- **The worker runs the same composite — database included.** Worker job handlers write to the
+  database and BullMQ runs on Redis, so the worker is not "ready" unless both are reachable, same
+  as the API. Reusing one `registerDependencies` guarantees the two readiness definitions never
+  diverge silently.
 
-- **The Redis probe has an explicit timeout; the Prisma probe relies on the driver.** `RedisHealthCheck`
-  races `redis.ping()` against a `HEALTHCHECK_TIMEOUT_MS` timer because the health connection is
-  created with `maxRetriesPerRequest: null`, on which a command against an unreachable server can wait
-  indefinitely — the timeout converts a stall into a prompt `503`. `PrismaHealthCheck` leans on the
-  database driver's own connection/query timeouts, so `SELECT 1` needs no extra guard.
+- **Health endpoints live outside `/v1`.** Probe URLs are wired into orchestrator manifests and
+  load-balancer configs, which should not need editing when the API version bumps; `healthRoutes`
+  is registered at the root while business routes mount under `API_V1_PREFIX`.
 
-- **A dedicated `healthCheckRedisConnection`, separate from the queue and worker connections.** The
-  probe pings its own Redis connection rather than reusing `redisConnection` or `workerConnection`.
+- **`CompositeHealthCheck` with `Promise.all` (fail-fast, all-or-nothing, concurrent).** Readiness
+  is binary for a load balancer, so aggregation is a boolean AND: any critical dependency down
+  means not ready. Running members concurrently makes probe latency the _slowest single_ check
+  rather than the sum. The trade-off is that the composite surfaces only the first failing member
+  and no per-dependency breakdown — acceptable because the orchestrator only needs pass/fail, and
+  operators get the specific failure from the logs.
+
+- **The response body never names the failing dependency.** On failure the body is the fixed
+  `{ status: 'unavailable' }` literal; the underlying `Error` goes to the
+  `readiness check failed` log line. Health endpoints are unauthenticated, so the body
+  intentionally leaks nothing — no dependency name, version, or error detail — while operators
+  retain full visibility through structured logs.
+
+- **The Redis probe has an explicit timeout; the Prisma probe relies on the driver.**
+  `RedisHealthCheck` races `redis.ping()` against a `healthCheckTimeoutMs` timer because the health
+  connection is created with `maxRetriesPerRequest: null`, on which a command against an
+  unreachable server can wait indefinitely — the timeout converts a stall into a prompt `503`.
+  `PrismaHealthCheck` leans on the database driver's own connection/query timeouts, so `SELECT 1`
+  needs no extra guard.
+
+- **A dedicated `healthCheckRedisConnection`, separate from the queue and worker connections.**
   BullMQ's worker runs blocking commands and ioredis serializes commands over a single socket, so
-  sharing a connection risks head-of-line blocking that could delay the `PING` reply past the timeout
-  and report a false _unavailable_ under heavy queue load. A dedicated connection keeps probe latency
-  independent of job traffic; the cost is one extra Redis connection, disposed on container teardown.
+  sharing a connection risks head-of-line blocking that could delay the `PING` reply past the
+  timeout and report a false _unavailable_ under heavy queue load. A dedicated connection keeps
+  probe latency independent of job traffic; the cost is one extra Redis connection, disposed on
+  container teardown.
 
-- **`SELECT 1` rather than a table/row query.** The database probe only needs to confirm the pool can
-  reach the server and get a working connection, not to validate schema or data. `SELECT 1` is the
-  cheapest query that exercises the full connection path and stays valid across migrations because it
-  references nothing schema-specific.
+- **`SELECT 1` rather than a table/row query.** The database probe only needs to confirm the pool
+  can reach the server and get a working connection, not to validate schema or data. `SELECT 1` is
+  the cheapest query that exercises the full connection path and stays valid across migrations.
 
 - **The `503` is sent directly by the handler, not routed through the error handler.** Readiness
   failure is an _expected_, well-defined outcome (a dependency is down), not an application error.
   Returning a fixed `{ status: 'unavailable' }` payload keeps the probe response stable and
-  independent of the global error-response shape — which is why `readinessUnavailableResponse` exists
-  as its own schema rather than reusing the shared `errorResponse`.
+  independent of the global error-response shape — which is why `readinessUnavailableResponse`
+  exists as its own schema rather than reusing the shared `errorResponse`.
 
 - **Both probes are public and rate-limit-exempt.** Orchestrator probes are unauthenticated by
-  necessity — the kubelet has no credentials — and poll frequently (often every few seconds per
-  replica). Setting `rateLimit: false` in the plugin's `onRoute` hook prevents the global rate limiter
-  registered by [HTTP Infrastructure](./http-infrastructure.md) from ever returning `429` to a probe,
-  which would otherwise be misread as an outage.
+  necessity — the kubelet has no credentials — and poll frequently. Setting `rateLimit: false` in
+  the plugin's `onRoute` hook prevents the API app's global rate limiter from ever returning `429`
+  to a probe, which would be misread as an outage.
 
 - **Fixed single-literal Zod schemas.** Each response body is pinned with `z.literal(...)`
   (`ok` / `ready` / `unavailable`). This documents the exact contract in the generated OpenAPI spec
@@ -295,30 +361,46 @@ The new dependency is now part of readiness: `Promise.all` rejects on the first 
 
 ## Testing
 
-Unit tests run with `npm test` (Vitest); the integration tests run with `npm run test:integration`;
-`npm run audit` runs the full gate (lockfile check, dependency audit, format, lint, typecheck, coverage, architecture boundaries, integration).
+Unit tests run with `npm test` (Vitest); integration tests with `npm run test:integration`;
+`npm run audit` runs the full gate (lockfile check, dependency audit, format, lint, typecheck,
+coverage, architecture boundaries, integration).
 
-- **Unit — `src/infrastructure/health/composite-health-check.test.ts`.** Covers the aggregation
-  contract: construction throws when given zero checks; `check()` resolves when every member resolves;
-  every member is invoked; and `check()` rejects with the failure when _any_ member rejects.
+- **Unit — `src/infrastructure/health/composite-health-check.test.ts`.** The aggregation contract:
+  construction throws when given zero checks; `check()` resolves when every member resolves; every
+  member is invoked; and `check()` rejects with the failure when _any_ member rejects.
 
-- **Unit — `src/infrastructure/jobs/redis-health-check.test.ts`.** Drives the Redis probe against a
-  fake `Redis`: resolves when `PING` replies `PONG`; rejects on any other reply
-  (`unexpected Redis PING reply`); rejects when the connection fails (`ECONNREFUSED`); and rejects on
-  timeout using Vitest fake timers (`timed out`).
+- **Unit — `src/infrastructure/jobs/redis-health-check.test.ts`.** The Redis probe against a fake
+  `Redis`: resolves when `PING` replies `PONG`; rejects on any other reply
+  (`unexpected Redis PING reply`); rejects when the connection fails (`ECONNREFUSED`); and rejects
+  on timeout using Vitest fake timers (`timed out`).
 
-- **Unit — `src/presentation/http/routes/health-routes.test.ts`.** Builds a minimal Fastify app with
-  the Zod serializer and a mocked `HealthCheck` registered into the Awilix container, then drives the
-  routes via `app.inject`. Asserts that `GET /health/live` returns `200` / `{ status: 'ok' }` and
-  **never** calls `healthCheck.check()`; that `GET /health/ready` returns `200` / `{ status: 'ready' }`
-  and invokes `check()` exactly once; and that it returns `503` / `{ status: 'unavailable' }` when
-  `check()` rejects.
+- **Unit — `src/presentation/http/routes/health-routes.test.ts`.** Builds a minimal Fastify app
+  with the Zod compilers, registers `healthRoutes` with a mocked `HealthCheck` passed through the
+  plugin options, and drives it via `app.inject`. Asserts `GET /health/live` returns `200` /
+  `{ status: 'ok' }` and **never** calls `healthCheck.check()`; `GET /health/ready` returns `200` /
+  `{ status: 'ready' }` when the check resolves; and `503` / `{ status: 'unavailable' }` when it
+  rejects.
+
+- **Unit — `src/presentation/http/health-app.test.ts`.** The worker probe surface via
+  `buildHealthApp`: serves `GET /health/live` (`200`); maps a failing dependency to `503` on
+  `GET /health/ready`; mounts `GET /metrics` when `metricsEnabled` is true (correct content type
+  and body); and omits it — `404` — when metrics are disabled while `/health/live` keeps serving.
 
 - **Integration — `test/integration/health.int.test.ts`.** Starts a real Redis via Testcontainers
-  (`redis:7.4-alpine`), wraps a `RedisHealthCheck` in a `CompositeHealthCheck`, and asserts the probe
-  resolves while Redis is reachable and rejects once the container is stopped — exercising the real
+  (`redis:7.4-alpine`), wraps a `RedisHealthCheck` in a `CompositeHealthCheck`, and asserts the
+  probe resolves while Redis is reachable and rejects once the container is stopped — the real
   `PING`/`PONG` path against a live server.
 
 - **Integration — `test/integration/app-bootstrap.int.test.ts`.** Boots the real application via
-  `buildApp(...)` and asserts both `GET /health/live` and `GET /health/ready` are wired and served
-  (`200` with the expected bodies) through the fully assembled app.
+  `buildApp(...)` and asserts both `GET /health/live` and `GET /health/ready` return `200` with the
+  expected bodies through the fully assembled app.
+
+Run only this feature's unit suites:
+
+```bash
+npx vitest run \
+  src/infrastructure/health/composite-health-check.test.ts \
+  src/infrastructure/jobs/redis-health-check.test.ts \
+  src/presentation/http/routes/health-routes.test.ts \
+  src/presentation/http/health-app.test.ts
+```
