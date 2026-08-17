@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+import Fastify, { LogController } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type { HealthCheck } from '@/application/shared/ports/health-check';
@@ -19,7 +19,10 @@ export async function buildHealthApp({
   metricsEnabled,
   logger,
 }: HealthAppOptions): Promise<FastifyInstance> {
-  const app = Fastify({ loggerInstance: logger, disableRequestLogging: true });
+  const app = Fastify({
+    loggerInstance: logger,
+    logController: new LogController({ disableRequestLogging: true }),
+  });
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   await app.register(healthRoutes, { prefix: '/health', healthCheck });

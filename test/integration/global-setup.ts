@@ -14,8 +14,8 @@ let container: StartedMariaDbContainer;
 let redisContainer: StartedRedisContainer;
 
 export async function setup({ provide }: TestProject) {
-  container = await new MariaDbContainer('mariadb:11.4').withDatabase('app_test').start();
-  redisContainer = await new RedisContainer('redis:7.4-alpine').start();
+  container = await new MariaDbContainer('mariadb:12.3').withDatabase('app_test').start();
+  redisContainer = await new RedisContainer('redis:8.10-alpine').start();
 
   const username = container.getUsername();
   const password = container.getUserPassword();

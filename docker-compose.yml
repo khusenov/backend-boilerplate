@@ -29,7 +29,7 @@ x-app-environment: &app-environment
 
 services:
   mariadb:
-    image: mariadb:11.4
+    image: mariadb:12.3
     restart: unless-stopped
     environment:
       MARIADB_DATABASE: app
@@ -48,7 +48,7 @@ services:
       start_period: 20s
 
   redis:
-    image: redis:7.4-alpine
+    image: redis:8.10-alpine
     restart: unless-stopped
     command: ['redis-server', '--appendonly', 'yes']
     ports:
@@ -75,7 +75,7 @@ services:
     restart: 'no'
 
   tempo:
-    image: grafana/tempo:2.6.1
+    image: grafana/tempo:3.0.2
     restart: unless-stopped
     command: ['-config.file=/etc/tempo.yaml']
     volumes:
@@ -86,7 +86,7 @@ services:
       - '4318:4318'
 
   loki:
-    image: grafana/loki:3.3.0
+    image: grafana/loki:3.7.6
     container_name: app-loki
     command: -config.file=/etc/loki/loki-config.yaml
     volumes:
@@ -94,14 +94,12 @@ services:
       - loki-data:/loki
     ports:
       - '3100:3100'
-    healthcheck:
-      test: ['CMD-SHELL', 'wget -q --spider http://localhost:3100/ready || exit 1']
-      interval: 10s
-      timeout: 5s
-      retries: 5
+    # No healthcheck: the Loki image is distroless from 3.4 onward, so it has no
+    # shell and no wget/curl for a probe to use. Any CMD-SHELL check fails forever
+    # and marks a working container unhealthy.
 
   alloy:
-    image: grafana/alloy:v1.5.0
+    image: grafana/alloy:v1.18.1
     container_name: app-alloy
     command:
       - run
