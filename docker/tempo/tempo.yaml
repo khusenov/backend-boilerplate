@@ -8,10 +8,19 @@ distributor:
         http:
           endpoint: 0.0.0.0:4318
 
-ingester:
+# Tempo 3.0 replaced the ingester and compactor components with live_store,
+# block_builder and the backend scheduler/worker pair. These two keys are the
+# 2.x `ingester.max_block_duration` and `compactor.compaction.block_retention`.
+live_store:
   max_block_duration: 5m
 
-compactor:
+backend_scheduler:
+  provider:
+    compaction:
+      compaction:
+        block_retention: 48h
+
+backend_worker:
   compaction:
     block_retention: 48h
 
