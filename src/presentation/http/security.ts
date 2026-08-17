@@ -1,8 +1,9 @@
 import type { FastifyHelmetOptions } from '@fastify/helmet';
 import type { errorResponseBuilderContext, RateLimitPluginOptions } from '@fastify/rate-limit';
 import type { FastifyError, FastifyRequest } from 'fastify';
+import { appIdentity } from '@/config/app-identity';
 
-export const RATE_LIMIT_KEY_NAMESPACE = 'finflow-rate-limit-';
+export const RATE_LIMIT_KEY_NAMESPACE = appIdentity.rateLimitNamespace;
 
 export function helmetOptions(cspEnabled: boolean): FastifyHelmetOptions {
   return cspEnabled ? {} : { contentSecurityPolicy: false };

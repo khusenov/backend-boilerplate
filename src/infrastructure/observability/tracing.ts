@@ -1,3 +1,4 @@
+import { appIdentity } from '@/config/app-identity';
 import { env } from '@/config/env';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
@@ -9,7 +10,7 @@ import { PrismaInstrumentation } from '@prisma/instrumentation';
 const DEPLOYMENT_ENVIRONMENT_ATTRIBUTE = 'deployment.environment.name';
 const OTLP_TRACES_PATH = '/v1/traces';
 
-const TRACING_REGISTRY_KEY = Symbol.for('finflow.observability.tracing');
+const TRACING_REGISTRY_KEY = Symbol.for(appIdentity.tracingRegistryKey);
 
 interface TracingRegistry {
   sdk: NodeSDK | undefined;

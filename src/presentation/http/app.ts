@@ -11,6 +11,7 @@ import {
   validatorCompiler,
 } from 'fastify-type-provider-zod';
 import { fastifyCors } from '@fastify/cors';
+import { appIdentity } from '@/config/app-identity';
 import { env } from '@/config/env';
 import { fastifyCookie } from '@fastify/cookie';
 import { authPlugin } from '@/presentation/http/plugins/authenticate';
@@ -70,7 +71,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   if (!env.isProduction) {
     await app.register(fastifySwagger, {
       openapi: {
-        info: { title: 'Finflow API', version: '1.0.0' },
+        info: { title: appIdentity.swaggerTitle, version: '1.0.0' },
         components: {
           securitySchemes: {
             bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },

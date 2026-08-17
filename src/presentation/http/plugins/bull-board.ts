@@ -5,9 +5,10 @@ import { FastifyAdapter } from '@bull-board/fastify';
 import { diContainer } from '@fastify/awilix';
 import fastifyBasicAuth from '@fastify/basic-auth';
 import type { FastifyInstance } from 'fastify';
+import { appIdentity } from '@/config/app-identity';
 import { env } from '@/config/env';
 
-const BULL_BOARD_REALM = 'Finflow Queues';
+const BULL_BOARD_REALM = appIdentity.bullBoardRealm;
 
 const DASHBOARD_CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
