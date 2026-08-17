@@ -10,3 +10,4 @@ CLAUDE.md
 .claude
 /src/generated/prisma
 coverage
+.vitest-reports

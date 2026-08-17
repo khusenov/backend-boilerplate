@@ -46,7 +46,7 @@ function bootstrapUser(): User {
       id: 'admin-user',
       firstName: 'Boot',
       lastName: 'Strap',
-      email: Email.create('admin@finflow.com'),
+      email: Email.create('admin@example.com'),
       passwordHash: 'hash',
     },
     CREATED_AT,
@@ -205,7 +205,7 @@ describe('SyncAuthorization', () => {
     });
 
     it('no-ops when the configured operator has not registered yet', async () => {
-      const ctx = makeSync({ BOOTSTRAP_ADMIN_EMAIL: 'admin@finflow.com' });
+      const ctx = makeSync({ BOOTSTRAP_ADMIN_EMAIL: 'admin@example.com' });
       ctx.roles.findByKey.mockResolvedValue(existingSuperadmin());
       ctx.users.findByEmail.mockResolvedValue(null);
 
@@ -216,7 +216,7 @@ describe('SyncAuthorization', () => {
     });
 
     it('promotes the operator once they exist and lack the role', async () => {
-      const ctx = makeSync({ BOOTSTRAP_ADMIN_EMAIL: 'admin@finflow.com' });
+      const ctx = makeSync({ BOOTSTRAP_ADMIN_EMAIL: 'admin@example.com' });
       ctx.roles.findByKey.mockResolvedValue(existingSuperadmin());
       ctx.users.findByEmail.mockResolvedValue(bootstrapUser());
       ctx.userRoles.listRoleIdsForUser.mockResolvedValue([]);
@@ -231,7 +231,7 @@ describe('SyncAuthorization', () => {
     });
 
     it('stamps upserts, the superadmin role and the promotion with one shared instant', async () => {
-      const ctx = makeSync({ BOOTSTRAP_ADMIN_EMAIL: 'admin@finflow.com' });
+      const ctx = makeSync({ BOOTSTRAP_ADMIN_EMAIL: 'admin@example.com' });
       ctx.users.findByEmail.mockResolvedValue(bootstrapUser());
 
       await ctx.sut.execute(ACTOR);
@@ -247,7 +247,7 @@ describe('SyncAuthorization', () => {
     });
 
     it('is idempotent when the operator already holds the role', async () => {
-      const ctx = makeSync({ BOOTSTRAP_ADMIN_EMAIL: 'admin@finflow.com' });
+      const ctx = makeSync({ BOOTSTRAP_ADMIN_EMAIL: 'admin@example.com' });
       ctx.roles.findByKey.mockResolvedValue(existingSuperadmin());
       ctx.users.findByEmail.mockResolvedValue(bootstrapUser());
       ctx.userRoles.listRoleIdsForUser.mockResolvedValue([SUPERADMIN_ID]);

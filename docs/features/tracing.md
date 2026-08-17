@@ -34,7 +34,7 @@ configured value is replaced, not appended to), and an instrumentation set of
 disabled — plus `new PrismaInstrumentation()`. It then calls `sdk.start()`, which monkey-patches the
 relevant Node modules so that subsequent HTTP requests and Prisma queries emit spans automatically.
 The started SDK is stashed in a process-global registry keyed by
-`Symbol.for('finflow.observability.tracing')` so a second call is a no-op.
+`Symbol.for('app.observability.tracing')` so a second call is a no-op.
 
 **Log correlation (every log line).** `createLoggerOptions(level, identity?)` in
 `src/infrastructure/logging/logger-options.ts` sets `traceCorrelationMixin` as the Pino `mixin`. Pino
@@ -144,7 +144,7 @@ through `env.ts`.
 | Variable                      | Default                 | Meaning                                                                                                                                                                                                                                                                                                                                    |
 | ----------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `OTEL_ENABLED`                | `false`                 | Master switch. When false, `startTracing()` returns early and no SDK is created. Parsed in `env.ts`.                                                                                                                                                                                                                                       |
-| `OTEL_SERVICE_NAME`           | `finflow-api`           | Value of the `service.name` resource attribute on every span; also the `service` field on log lines. Parsed in `env.ts`.                                                                                                                                                                                                                   |
+| `OTEL_SERVICE_NAME`           | `app-api`               | Value of the `service.name` resource attribute on every span; also the `service` field on log lines. Parsed in `env.ts`.                                                                                                                                                                                                                   |
 | `OTEL_SERVICE_VERSION`        | `0.0.0`                 | Value of the `service.version` resource attribute. Parsed in `env.ts`.                                                                                                                                                                                                                                                                     |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | OTLP/HTTP collector endpoint. Only its **origin** is used: the exporter resolves `new URL('/v1/traces', endpoint)`, an absolute-path join, so `/v1/traces` replaces any path on the value (`http://collector:4318/otlp` → `http://collector:4318/v1/traces`). Set it to a bare origin such as `http://localhost:4318`. Parsed in `env.ts`. |
 | `OTEL_TRACES_SAMPLER`         | _none in this repo_     | Sampler selection, read directly by the OTEL SDK from the environment. Absent from `env.ts`; `.env.example` ships `parentbased_traceidratio`, but nothing in this repo defaults it — left unset, the SDK applies its own spec default, `parentbased_always_on`.                                                                            |
@@ -162,7 +162,7 @@ runs.
 ```bash
 OTEL_ENABLED=true
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-OTEL_SERVICE_NAME=finflow-api
+OTEL_SERVICE_NAME=app-api
 OTEL_SERVICE_VERSION=1.4.0
 OTEL_TRACES_SAMPLER=parentbased_traceidratio
 OTEL_TRACES_SAMPLER_ARG=1.0
@@ -179,7 +179,7 @@ calls are captured as child spans automatically:
 ```ts
 import { trace } from '@opentelemetry/api';
 
-const tracer = trace.getTracer('finflow');
+const tracer = trace.getTracer('app');
 
 export async function reconcileLedger(runReconciliation: () => Promise<void>): Promise<void> {
   await tracer.startActiveSpan('reconcileLedger', async (span) => {
@@ -243,7 +243,7 @@ start it in production with `node --import ./dist/instrumentation.js`, and pass
   import evaluation order inside the compiled bundle. The cost is a bare, side-effecting import that
   must be kept first; the benefit is correct instrumentation.
 - **Idempotent process-global registry, keyed by a global symbol.** The started SDK is stored under
-  `Symbol.for('finflow.observability.tracing')` on `globalThis` rather than in a module-level
+  `Symbol.for('app.observability.tracing')` on `globalThis` rather than in a module-level
   variable. This matters because the module can be evaluated more than once per process — the
   production `--import` preload and the bundle each carry their own copy of the module, and
   `tsx watch` reloads modules in dev — and separate module instances would each have their own

@@ -21,7 +21,7 @@ function makeDeps(overrides: Partial<NodemailerEmailSenderDeps> = {}): Nodemaile
     requireTls: true,
     user: '',
     password: '',
-    from: 'no-reply@finflow.local',
+    from: 'no-reply@app.local',
     ...overrides,
   };
 }
@@ -66,7 +66,7 @@ describe('NodemailerEmailSender', () => {
 
   describe('send', () => {
     it('maps the message and From address onto sendMail', async () => {
-      const sut = new NodemailerEmailSender(makeDeps({ from: 'hello@finflow.io' }));
+      const sut = new NodemailerEmailSender(makeDeps({ from: 'hello@example.com' }));
 
       await sut.send({
         to: 'user@example.com',
@@ -76,7 +76,7 @@ describe('NodemailerEmailSender', () => {
       });
 
       expect(mockSendMail).toHaveBeenCalledWith({
-        from: 'hello@finflow.io',
+        from: 'hello@example.com',
         to: 'user@example.com',
         subject: 'Your code',
         text: 'Code: 123456',

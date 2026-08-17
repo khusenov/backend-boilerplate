@@ -9,7 +9,7 @@ distribution, error rates, and process health (CPU, memory, event-loop lag, garb
 and they need it as time-series data a monitoring system can scrape on a schedule, not as log noise
 or a bespoke dashboard. This feature publishes those signals in the **Prometheus text exposition
 format** — a line-oriented plain-text encoding with one metric sample per line
-(`name{label="v"} value`) — so any Prometheus-compatible collector can poll them. Because Finflow
+(`name{label="v"} value`) — so any Prometheus-compatible collector can poll them. Because the app
 runs as **two OS processes** — the HTTP API (`src/main.ts`) and the [background-jobs
 worker](./background-jobs.md) (`src/worker.ts`) — there are **two scrape surfaces**: `GET /metrics`
 on the API process and `GET /metrics` on the worker process. The API additionally records a latency
@@ -170,16 +170,16 @@ The metric name, label set, and histogram buckets are code constants in
 
 ```yaml
 scrape_configs:
-  - job_name: finflow-api
+  - job_name: app-api
     metrics_path: /metrics
     scheme: http
     static_configs:
-      - targets: ['finflow-api:8000'] # host:PORT of the API process
-  - job_name: finflow-worker
+      - targets: ['app-api:8000'] # host:PORT of the API process
+  - job_name: app-worker
     metrics_path: /metrics
     scheme: http
     static_configs:
-      - targets: ['finflow-worker:8001'] # host:WORKER_PORT of the worker process
+      - targets: ['app-worker:8001'] # host:WORKER_PORT of the worker process
 ```
 
 Because both endpoints are unauthenticated, keep them reachable only from the monitoring network

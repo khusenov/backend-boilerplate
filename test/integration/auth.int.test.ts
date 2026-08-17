@@ -23,7 +23,7 @@ describe('/auth (integration)', () => {
 
   describe('POST /auth/login', () => {
     it('returns { user, accessToken } and sets the refresh cookie (200)', async () => {
-      const user = await seedUser(h.app, { email: 'ada@finflow.test' });
+      const user = await seedUser(h.app, { email: 'ada@example.test' });
 
       const res = await h.app.inject({
         method: 'POST',
@@ -33,7 +33,7 @@ describe('/auth (integration)', () => {
 
       expect(res.statusCode).toBe(200);
       const body = res.json<{ user: { id: string; email: string }; accessToken: string }>();
-      expect(body.user).toMatchObject({ id: user.id, email: 'ada@finflow.test' });
+      expect(body.user).toMatchObject({ id: user.id, email: 'ada@example.test' });
       expect(body.user).not.toHaveProperty('passwordHash');
       // The nested user carries exactly the public contract — `userResponse` strips
       // everything else at the serialization boundary, not just via the DTO mapper.
@@ -81,7 +81,7 @@ describe('/auth (integration)', () => {
       const res = await h.app.inject({
         method: 'POST',
         url: '/v1/auth/login',
-        payload: { email: 'nobody@finflow.test', password: 'whatever-123' },
+        payload: { email: 'nobody@example.test', password: 'whatever-123' },
       });
       expect(res.statusCode).toBe(401);
     });
@@ -118,14 +118,14 @@ describe('/auth (integration)', () => {
         payload: {
           firstName: 'Self',
           lastName: 'Service',
-          email: 'signup@finflow.test',
+          email: 'signup@example.test',
           password: 'password123',
         },
       });
 
       expect(res.statusCode).toBe(201);
       const body = res.json<{ id: string; email: string; status: string }>();
-      expect(body).toMatchObject({ email: 'signup@finflow.test', status: 'pending' });
+      expect(body).toMatchObject({ email: 'signup@example.test', status: 'pending' });
       expect(body).not.toHaveProperty('passwordHash');
 
       const persisted = await h.prisma.user.findUnique({ where: { id: body.id } });
@@ -142,7 +142,7 @@ describe('/auth (integration)', () => {
         payload: {
           firstName: 'Code',
           lastName: 'Owner',
-          email: 'coded@finflow.test',
+          email: 'coded@example.test',
           password: 'password123',
         },
       });
@@ -167,7 +167,7 @@ describe('/auth (integration)', () => {
         payload: {
           firstName: 'Not',
           lastName: 'Verified',
-          email: 'unverified@finflow.test',
+          email: 'unverified@example.test',
           password: 'password123',
         },
       });
@@ -176,7 +176,7 @@ describe('/auth (integration)', () => {
       const loginRes = await h.app.inject({
         method: 'POST',
         url: '/v1/auth/login',
-        payload: { email: 'unverified@finflow.test', password: 'password123' },
+        payload: { email: 'unverified@example.test', password: 'password123' },
       });
       expect(loginRes.statusCode).toBe(401);
     });
@@ -188,7 +188,7 @@ describe('/auth (integration)', () => {
         payload: {
           firstName: 'No',
           lastName: 'Login',
-          email: 'nologin@finflow.test',
+          email: 'nologin@example.test',
           password: 'password123',
         },
       });
@@ -197,7 +197,7 @@ describe('/auth (integration)', () => {
     });
 
     it('rejects a duplicate email (409)', async () => {
-      await seedUser(h.app, { email: 'taken@finflow.test' });
+      await seedUser(h.app, { email: 'taken@example.test' });
 
       const res = await h.app.inject({
         method: 'POST',
@@ -205,7 +205,7 @@ describe('/auth (integration)', () => {
         payload: {
           firstName: 'A',
           lastName: 'B',
-          email: 'taken@finflow.test',
+          email: 'taken@example.test',
           password: 'password123',
         },
       });
@@ -330,7 +330,7 @@ describe('/auth (integration)', () => {
 
   describe('GET /auth/me', () => {
     it('returns the authenticated user (200)', async () => {
-      const user = await seedUser(h.app, { email: 'me@finflow.test' });
+      const user = await seedUser(h.app, { email: 'me@example.test' });
       const session = await login(h.app, user);
 
       const res = await h.app.inject({
@@ -341,7 +341,7 @@ describe('/auth (integration)', () => {
 
       expect(res.statusCode).toBe(200);
       const body = res.json<{ id: string; email: string }>();
-      expect(body).toMatchObject({ id: user.id, email: 'me@finflow.test' });
+      expect(body).toMatchObject({ id: user.id, email: 'me@example.test' });
       expect(body).not.toHaveProperty('passwordHash');
     });
 
@@ -364,7 +364,7 @@ describe('/auth (integration)', () => {
   // interoperate (e.g. a refreshed access token really does authenticate /me).
   describe('full lifecycle', () => {
     it('login -> me -> refresh -> me(new token) -> logout -> refresh fails', async () => {
-      const user = await seedUser(h.app, { email: 'flow@finflow.test' });
+      const user = await seedUser(h.app, { email: 'flow@example.test' });
 
       const session = await login(h.app, user);
 
@@ -374,7 +374,7 @@ describe('/auth (integration)', () => {
         headers: session.authHeader,
       });
       expect(me1.statusCode).toBe(200);
-      expect(me1.json<{ email: string }>().email).toBe('flow@finflow.test');
+      expect(me1.json<{ email: string }>().email).toBe('flow@example.test');
 
       const refreshed = await h.app.inject({
         method: 'POST',

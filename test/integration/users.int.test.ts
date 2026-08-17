@@ -42,17 +42,17 @@ describe('/users (integration)', () => {
         payload: {
           firstName: 'John',
           lastName: 'Doe',
-          email: 'john@finflow.test',
+          email: 'john@example.test',
           password: 'password123',
         },
       });
 
       expect(res.statusCode).toBe(201);
       const body = res.json<{ id: string; firstName: string; email: string }>();
-      expect(body).toMatchObject({ firstName: 'John', email: 'john@finflow.test' });
+      expect(body).toMatchObject({ firstName: 'John', email: 'john@example.test' });
       expect(body).not.toHaveProperty('passwordHash');
 
-      const inDb = await h.prisma.user.findUnique({ where: { email: 'john@finflow.test' } });
+      const inDb = await h.prisma.user.findUnique({ where: { email: 'john@example.test' } });
       expect(inDb).not.toBeNull();
     });
 
@@ -67,7 +67,7 @@ describe('/users (integration)', () => {
           payload: {
             firstName: 'Eve',
             lastName: 'Online',
-            email: 'eve@finflow.test',
+            email: 'eve@example.test',
             password: 'password123',
           },
         });
@@ -97,7 +97,7 @@ describe('/users (integration)', () => {
         payload: {
           firstName: 'John',
           lastName: 'Doe',
-          email: 'john@finflow.test',
+          email: 'john@example.test',
           password: 'password123',
         },
       });
@@ -195,7 +195,7 @@ describe('/users (integration)', () => {
 
   describe('GET /users/:id', () => {
     it('returns a user by id (200)', async () => {
-      const target = await seedUser(h.app, { email: 'target@finflow.test' });
+      const target = await seedUser(h.app, { email: 'target@example.test' });
 
       const res = await h.app.inject({
         method: 'GET',
@@ -205,7 +205,7 @@ describe('/users (integration)', () => {
 
       expect(res.statusCode).toBe(200);
       const body = res.json<{ id: string; email: string }>();
-      expect(body).toMatchObject({ id: target.id, email: 'target@finflow.test' });
+      expect(body).toMatchObject({ id: target.id, email: 'target@example.test' });
       expect(body).not.toHaveProperty('passwordHash');
     });
 
@@ -236,7 +236,7 @@ describe('/users (integration)', () => {
         payload: {
           firstName: 'Grace',
           lastName: 'Hopper',
-          email: 'grace@finflow.test',
+          email: 'grace@example.test',
           password: 'password123',
         },
       });
@@ -283,20 +283,20 @@ describe('/users (integration)', () => {
     });
 
     it('updates the email (200)', async () => {
-      const target = await seedUser(h.app, { email: 'before@finflow.test' });
+      const target = await seedUser(h.app, { email: 'before@example.test' });
 
       const res = await h.app.inject({
         method: 'PATCH',
         url: `/v1/users/${target.id}`,
         headers: auth,
-        payload: { email: 'after@finflow.test' },
+        payload: { email: 'after@example.test' },
       });
 
       expect(res.statusCode).toBe(200);
-      expect(res.json<{ email: string }>().email).toBe('after@finflow.test');
+      expect(res.json<{ email: string }>().email).toBe('after@example.test');
 
       const inDb = await h.prisma.user.findUnique({ where: { id: target.id } });
-      expect(inDb?.email).toBe('after@finflow.test');
+      expect(inDb?.email).toBe('after@example.test');
     });
 
     it('rejects an email already taken by another user (409)', async () => {
@@ -437,7 +437,7 @@ describe('/users (integration)', () => {
         payload: {
           firstName: 'A',
           lastName: 'B',
-          email: 'new@finflow.test',
+          email: 'new@example.test',
           password: 'password123',
         },
       });

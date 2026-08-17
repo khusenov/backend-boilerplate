@@ -396,7 +396,7 @@ Consumed directly in `buildApp`, its plugins, `security.ts`, `cookies.ts`, `heal
 | `REFRESH_TOKEN_TTL`        | `1209600`                                                 | Refresh-token lifetime in seconds (14 days); also the refresh-cookie `Max-Age` set by `cookies.ts`.                                                                                                                               |
 | `COOKIE_SECRET`            | `''` (empty)                                              | When non-empty, cookies are signed; passed to `@fastify/cookie` in `buildApp` and read by the cookie helpers. The boot-time guard demands ≥ 32 chars in production.                                                               |
 | `COOKIE_SECURE`            | `true` (devDefault `false`)                               | Sets the `Secure` flag on the refresh cookie.                                                                                                                                                                                     |
-| `WEB_ORIGIN`               | `—` (devDefault `http://127.0.0.1:3000`)                  | Allowed CORS origin; passed to `@fastify/cors` with `credentials: true`.                                                                                                                                                          |
+| `WEB_ORIGIN`               | `—` (devDefault `http://localhost:5173`)                  | Allowed CORS origin; passed to `@fastify/cors` with `credentials: true`.                                                                                                                                                          |
 | `RATE_LIMIT_MAX`           | `100`                                                     | Global rate-limit ceiling per window; passed to `@fastify/rate-limit`.                                                                                                                                                            |
 | `RATE_LIMIT_WINDOW`        | `1 minute`                                                | Global rate-limit window; also reused by the per-route auth buckets.                                                                                                                                                              |
 | `REDIS_URL`                | `—` (devDefault `redis://127.0.0.1:6379`)                 | Redis connection; backs the distributed rate-limit store (and BullMQ, idempotency, health checks).                                                                                                                                |
@@ -416,19 +416,19 @@ here only so the boot-time contract is complete in one place.
 | Variable                      | Default                                                 | Owning doc                                                                                                                 |
 | ----------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `DATABASE_URL`                | `—`                                                     | Prisma connection string (required). See [User CRUD](./user-crud.md).                                                      |
-| `JWT_ISSUER`                  | `finflow`                                               | JWT `iss` claim. See [Authentication](./authentication.md).                                                                |
-| `JWT_AUDIENCE`                | `finflow-api`                                           | JWT `aud` claim. See [Authentication](./authentication.md).                                                                |
+| `JWT_ISSUER`                  | `app`                                                   | JWT `iss` claim. See [Authentication](./authentication.md).                                                                |
+| `JWT_AUDIENCE`                | `app-api`                                               | JWT `aud` claim. See [Authentication](./authentication.md).                                                                |
 | `ACCESS_TOKEN_TTL`            | `900`                                                   | Access-token lifetime in seconds (15 min). See [Authentication](./authentication.md).                                      |
 | `BOOTSTRAP_ADMIN_EMAIL`       | `''` (empty)                                            | Email of the admin seeded at bootstrap. See [Role-Based Authorization](./role-based-authorization.md).                     |
 | `RATE_LIMIT_AUTH_MAX`         | `5`                                                     | Stricter per-route ceiling the auth endpoints set via route `config.rateLimit`. See [Authentication](./authentication.md). |
-| `QUEUE_PREFIX`                | `finflow`                                               | BullMQ key prefix. See [Background Jobs](./background-jobs.md).                                                            |
+| `QUEUE_PREFIX`                | `app`                                                   | BullMQ key prefix. See [Background Jobs](./background-jobs.md).                                                            |
 | `QUEUE_CONCURRENCY`           | `5`                                                     | BullMQ worker concurrency. See [Background Jobs](./background-jobs.md).                                                    |
 | `DATA_RETENTION_TTL`          | `2592000`                                               | Retention window in seconds (30 days). See [Data Retention](./data-retention.md).                                          |
 | `IDEMPOTENCY_RESULT_TTL`      | `86400`                                                 | Replay window in seconds for stored idempotent responses (24 h). See [Idempotency](./idempotency.md).                      |
 | `IDEMPOTENCY_LOCK_TTL`        | `30`                                                    | In-flight claim guard in seconds for an idempotency key. See [Idempotency](./idempotency.md).                              |
 | `HEALTHCHECK_TIMEOUT_MS`      | `2000`                                                  | Per-dependency timeout for health probes. See [Health Checks](./health-checks.md).                                         |
 | `OTEL_ENABLED`                | `false`                                                 | Toggles OpenTelemetry tracing. See [Tracing](./tracing.md).                                                                |
-| `OTEL_SERVICE_NAME`           | `finflow-api`                                           | Service name; also the `service` field `toServiceIdentity` stamps onto logs. See [Tracing](./tracing.md).                  |
+| `OTEL_SERVICE_NAME`           | `app-api`                                               | Service name; also the `service` field `toServiceIdentity` stamps onto logs. See [Tracing](./tracing.md).                  |
 | `OTEL_SERVICE_VERSION`        | `0.0.0`                                                 | Service version; also the `version` field on log/trace identity. See [Tracing](./tracing.md).                              |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318`                                 | OTLP exporter endpoint. See [Tracing](./tracing.md).                                                                       |
 | `SMTP_HOST`                   | `—` (devDefault `localhost`)                            | Outbound SMTP host. See [Email Sending](./email-sending.md).                                                               |
@@ -437,11 +437,11 @@ here only so the boot-time contract is complete in one place.
 | `SMTP_REQUIRE_TLS`            | `true` (devDefault `false`)                             | Refuse to send if STARTTLS cannot be negotiated. See [Email Sending](./email-sending.md).                                  |
 | `SMTP_USER`                   | `''` (empty)                                            | SMTP auth user; empty means no auth. See [Email Sending](./email-sending.md).                                              |
 | `SMTP_PASSWORD`               | `''` (empty)                                            | SMTP auth password. See [Email Sending](./email-sending.md).                                                               |
-| `EMAIL_FROM`                  | `—` (devDefault `no-reply@finflow.local`)               | Default `From` address. See [Email Sending](./email-sending.md).                                                           |
+| `EMAIL_FROM`                  | `—` (devDefault `no-reply@app.local`)                   | Default `From` address. See [Email Sending](./email-sending.md).                                                           |
 | `VERIFICATION_CODE_TTL`       | `900`                                                   | Verification-code lifetime in seconds (15 min). See [Email Verification](./email-verification.md).                         |
 | `VERIFICATION_MAX_ATTEMPTS`   | `5`                                                     | Allowed attempts per verification code. See [Email Verification](./email-verification.md).                                 |
 | `PASSWORD_RESET_TOKEN_TTL`    | `1800`                                                  | Password-reset token lifetime in seconds (30 min). See [Password Reset](./password-reset.md).                              |
-| `PASSWORD_RESET_URL_BASE`     | `—` (devDefault `http://localhost:3000/reset-password`) | Frontend URL the reset email links to; the raw token is appended as `?token=`. See [Password Reset](./password-reset.md).  |
+| `PASSWORD_RESET_URL_BASE`     | `—` (devDefault `http://localhost:5173/reset-password`) | Frontend URL the reset email links to; the raw token is appended as `?token=`. See [Password Reset](./password-reset.md).  |
 
 ### Code-level options and derived security defaults
 
@@ -457,7 +457,7 @@ and the optional `rateLimit` (default `true`, disabled by unit tests). `main.ts`
   and `{ contentSecurityPolicy: false }` elsewhere — CSP is deliberately relaxed outside production
   so the Swagger UI at `/docs` loads.
 - `rateLimitOptions(max, timeWindow)` sets `skipOnError: true` (fail-open — allow the request when
-  Redis is unreachable), a `nameSpace` of `RATE_LIMIT_KEY_NAMESPACE` (`'finflow-rate-limit-'`) for
+  Redis is unreachable), a `nameSpace` of `RATE_LIMIT_KEY_NAMESPACE` (`'app-rate-limit-'`) for
   its Redis keys, and an `errorResponseBuilder` that emits a `FastifyError` with `code:
 'RATE_LIMITED'` and the window's `statusCode`, so a throttled request flows through the same error
   envelope as everything else.
@@ -776,7 +776,7 @@ app.post(
   tight `connectTimeout` / `commandTimeout` and `enableOfflineQueue: false`) so the counter is
   shared across every process/replica rather than living in each instance's memory — a per-process
   store would let N replicas each grant the full quota, silently multiplying the real limit by N.
-  The keys are namespaced with `finflow-rate-limit-`, and `skipOnError: true` makes the limiter
+  The keys are namespaced with `app-rate-limit-`, and `skipOnError: true` makes the limiter
   **fail open**: if Redis is unreachable the request is allowed rather than blocked, trading strict
   enforcement for availability so a Redis blip cannot take the API down. Sensitive endpoints layer
   stricter per-route buckets on top via route `config.rateLimit` (`RATE_LIMIT_AUTH_MAX`), each

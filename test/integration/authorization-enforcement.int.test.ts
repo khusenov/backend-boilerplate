@@ -71,7 +71,7 @@ const ROUTE_BODIES: Record<string, Record<string, unknown>> = {
   'POST /v1/users': {
     firstName: 'Probe',
     lastName: 'User',
-    email: 'probe@finflow.test',
+    email: 'probe@example.test',
     password: 'super-secret-password',
   },
   'POST /v1/users/{id}/roles': { roleId: '00000000-0000-4000-8000-000000000000' },

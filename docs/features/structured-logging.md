@@ -61,7 +61,7 @@ of who emitted it:
 
 - **`base` (service identity)** — when a `ServiceIdentity` is supplied, `{ service, env, version }` is
   stamped onto every line as base fields. Both real entry points supply one, so lines always carry
-  `service` (e.g. `finflow-api`), `env` (e.g. `development`), and `version` (e.g. `0.0.0`). This is what
+  `service` (e.g. `app-api`), `env` (e.g. `development`), and `version` (e.g. `0.0.0`). This is what
   lets Loki tell one service's logs apart and lets an operator filter by environment or release.
 - **`formatters.level`** returns `{ level: label }`, overriding Pino's default numeric level (`30`,
   `40`, …) with the string label (`"info"`, `"warn"`, …). Emitting the level as a string is what lets
@@ -80,7 +80,7 @@ of who emitted it:
 there is no Pino transport or `pino-loki` target. It only writes newline-delimited JSON to stdout, and
 Docker captures that stream. A **Grafana Alloy** collector (`docker/alloy/config.alloy`) does the rest:
 it discovers every container over the Docker socket (`unix:///var/run/docker.sock`), keeps only this
-compose project's containers (`com.docker.compose.project == finflow`) while dropping the observability
+compose project's containers (`com.docker.compose.project == app`) while dropping the observability
 tools' own logs (`alloy|loki|grafana|tempo`, to avoid a self-feeding loop). That same
 `discovery.relabel` stage also promotes each container's Docker compose service name to a
 `compose_service` label and its container name to a `container` label — Docker-metadata labels, distinct
@@ -96,7 +96,7 @@ Finally, Grafana provisioning wires **bidirectional correlation**: the Loki data
 derived field `TraceID` (regex `"trace_id":"(\w+)"`) that links a log line out to its Tempo trace, and
 the Tempo datasource's `tracesToLogsV2` links a trace back to its logs via the LogQL query
 `{compose_service="app"} | trace_id = <traceId>` — selecting the app container by the Docker-derived
-`compose_service` label (distinct from the `service="finflow-api"` label parsed from the JSON), then
+`compose_service` label (distinct from the `service="app-api"` label parsed from the JSON), then
 filtering on the `trace_id` structured metadata.
 
 Outside an HTTP request (for example the `sync-auth` CLI script), there is no active request context:
@@ -235,7 +235,7 @@ Loki-specific env var** — the collector's Docker socket and Loki's push endpoi
 | Variable               | Default       | Meaning                                                                                                               |
 | ---------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `LOG_LEVEL`            | `info`        | Minimum level Pino emits. One of `fatal`, `error`, `warn`, `info`, `debug`, `trace`.                                  |
-| `OTEL_SERVICE_NAME`    | `finflow-api` | Stamped as `service` on every line (and promoted to Loki's indexed `service` label). Shared with the tracing feature. |
+| `OTEL_SERVICE_NAME`    | `app-api`     | Stamped as `service` on every line (and promoted to Loki's indexed `service` label). Shared with the tracing feature. |
 | `NODE_ENV`             | `development` | Stamped as `env` on every line. One of `development`, `test`, `production`.                                           |
 | `OTEL_SERVICE_VERSION` | `0.0.0`       | Stamped as `version` on every line.                                                                                   |
 
@@ -272,7 +272,7 @@ Two related knobs are code options rather than env vars:
 **Enabling / disabling Loki aggregation.** The app is unconditional: it always writes structured,
 identity-stamped JSON to stdout, whether or not anything is collecting it. Aggregation is "on" when the
 observability stack is running — `docker compose up` starts the `loki` and `alloy` services, and Alloy
-auto-discovers the `finflow` containers over the Docker socket. It is "off" when those services are not
+auto-discovers the `app` containers over the Docker socket. It is "off" when those services are not
 running (e.g. `npm run dev` on the host); the application is entirely unaffected and keeps logging to
 stdout. Nothing in the app process needs to change to toggle it.
 
@@ -317,7 +317,7 @@ ambient identity, level string, correlation id, and trace ids automatically:
 ```json
 {
   "level": "info",
-  "service": "finflow-api",
+  "service": "app-api",
   "env": "development",
   "version": "0.0.0",
   "msg": "User created",
@@ -334,7 +334,7 @@ ambient identity, level string, correlation id, and trace ids automatically:
 filter on the `trace_id` structured metadata — this is the same shape the Tempo→logs link uses:
 
 ```logql
-{service="finflow-api", level="error"}
+{service="app-api", level="error"}
 {compose_service="app"} | trace_id = `0af7651916cd43dd8448eb211c80319c`
 ```
 

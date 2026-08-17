@@ -147,7 +147,7 @@ Two more variables shape how long a `POST /v1/auth/register` replay stays valid,
 ```bash
 curl -X POST http://localhost:8000/v1/auth/register \
   -H 'Content-Type: application/json' \
-  -d '{"firstName":"Ada","lastName":"Lovelace","email":"ada@finflow.test","password":"password123"}'
+  -d '{"firstName":"Ada","lastName":"Lovelace","email":"ada@example.test","password":"password123"}'
 ```
 
 The response is `201` with `"status": "pending"`. The worker delivers the code by email — in development the Mailpit catcher on `:1025` (see `.env.example`) shows it. Then:
@@ -155,7 +155,7 @@ The response is `201` with `"status": "pending"`. The worker delivers the code b
 ```bash
 curl -X POST http://localhost:8000/v1/auth/verify-email \
   -H 'Content-Type: application/json' \
-  -d '{"email":"ada@finflow.test","code":"123456"}'
+  -d '{"email":"ada@example.test","code":"123456"}'
 ```
 
 `200` with `"status": "active"` — the user can now log in.

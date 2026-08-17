@@ -6,7 +6,7 @@ import { env } from '@/config/env';
 import { RATE_LIMIT_KEY_NAMESPACE } from '@/presentation/http/security';
 
 const AUTH_LIMIT = env.RATE_LIMIT_AUTH_MAX;
-const badCredentials = { email: 'nobody@finflow.dev', password: 'wrong-password' };
+const badCredentials = { email: 'nobody@example.test', password: 'wrong-password' };
 
 async function startRateLimitedApp(): Promise<FastifyInstance> {
   const app = await buildApp({
@@ -58,7 +58,7 @@ describe('distributed rate limiting', () => {
     });
 
     it('trips the forgot-password bucket at the limit, independently of the login bucket', async () => {
-      const payload = { email: 'nobody@finflow.dev' };
+      const payload = { email: 'nobody@example.test' };
       let last = await app.inject({ method: 'POST', url: '/v1/auth/forgot-password', payload });
       const statuses = [last.statusCode];
       for (let attempt = 1; attempt <= AUTH_LIMIT; attempt += 1) {

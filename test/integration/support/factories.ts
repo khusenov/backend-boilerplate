@@ -79,7 +79,7 @@ export async function seedUser(
 ): Promise<SeededUser> {
   const firstName = overrides.firstName ?? 'Test';
   const lastName = overrides.lastName ?? 'User';
-  const email = overrides.email ?? `user${++counter}@finflow.test`;
+  const email = overrides.email ?? `user${++counter}@example.test`;
   const password = overrides.password ?? 'super-secret-password';
 
   const { createUser } = app.diContainer.cradle;

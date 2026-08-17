@@ -25,14 +25,14 @@ describe('PATCH /users/:id email re-verification (integration)', () => {
   });
 
   it('demotes the user to pending and enqueues a fresh verification code', async () => {
-    const actor = await seedUser(h.app, { email: 'before@finflow.test' });
+    const actor = await seedUser(h.app, { email: 'before@example.test' });
     const auth = await authHeader(h.app, actor);
 
     const res = await h.app.inject({
       method: 'PATCH',
       url: `/v1/users/${actor.id}`,
       headers: auth,
-      payload: { email: 'after@finflow.test' },
+      payload: { email: 'after@example.test' },
     });
 
     expect(res.statusCode).toBe(200);
@@ -40,24 +40,24 @@ describe('PATCH /users/:id email re-verification (integration)', () => {
 
     const job = queue.enqueued.at(-1);
     expect(job?.jobName).toBe(SEND_VERIFICATION_EMAIL_JOB);
-    expect((job?.payload as SendVerificationEmailPayload).email).toBe('after@finflow.test');
+    expect((job?.payload as SendVerificationEmailPayload).email).toBe('after@example.test');
   });
 
   it('reissues the same code row on a second email change before verifying', async () => {
-    const actor = await seedUser(h.app, { email: 'before@finflow.test' });
+    const actor = await seedUser(h.app, { email: 'before@example.test' });
     const auth = await authHeader(h.app, actor);
 
     await h.app.inject({
       method: 'PATCH',
       url: `/v1/users/${actor.id}`,
       headers: auth,
-      payload: { email: 'middle@finflow.test' },
+      payload: { email: 'middle@example.test' },
     });
     await h.app.inject({
       method: 'PATCH',
       url: `/v1/users/${actor.id}`,
       headers: auth,
-      payload: { email: 'after@finflow.test' },
+      payload: { email: 'after@example.test' },
     });
 
     const rows = await h.prisma.emailVerificationCode.findMany({ where: { userId: actor.id } });
@@ -65,14 +65,14 @@ describe('PATCH /users/:id email re-verification (integration)', () => {
   });
 
   it('lets the user complete verification with the code issued after an email change', async () => {
-    const actor = await seedUser(h.app, { email: 'before@finflow.test' });
+    const actor = await seedUser(h.app, { email: 'before@example.test' });
     const auth = await authHeader(h.app, actor);
 
     await h.app.inject({
       method: 'PATCH',
       url: `/v1/users/${actor.id}`,
       headers: auth,
-      payload: { email: 'after@finflow.test' },
+      payload: { email: 'after@example.test' },
     });
 
     const job = queue.enqueued.at(-1);
@@ -81,7 +81,7 @@ describe('PATCH /users/:id email re-verification (integration)', () => {
     const res = await h.app.inject({
       method: 'POST',
       url: '/v1/auth/verify-email',
-      payload: { email: 'after@finflow.test', code },
+      payload: { email: 'after@example.test', code },
     });
 
     expect(res.statusCode).toBe(200);

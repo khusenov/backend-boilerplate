@@ -84,7 +84,7 @@ describe('bullBoardPlugin', () => {
       injectionMode: 'PROXY',
     });
     diContainer.register({
-      dashboardQueue: asValue({ name: 'finflow', metaValues: { version: 'bullmq' } }),
+      dashboardQueue: asValue({ name: 'app', metaValues: { version: 'bullmq' } }),
     });
     await app.register(bullBoardPlugin);
 

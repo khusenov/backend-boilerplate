@@ -135,7 +135,7 @@ Read from `src/config/env.ts`; `.env.example` mirrors the two password-reset key
 | Variable                   | Default                                                                        | Meaning                                                                                                                                                                                                                            |
 | -------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PASSWORD_RESET_TOKEN_TTL` | `1800` (`60 * 30`, 30 minutes, in seconds)                                     | Token lifetime. Bound to `passwordResetConfig.ttlSeconds` in `container.ts`; the issuer computes `expiresAt = now + ttlSeconds × 1000`, and `consume` treats the expiry instant itself as already expired.                         |
-| `PASSWORD_RESET_URL_BASE`  | `http://localhost:3000/reset-password` (dev/test only; required in production) | The frontend URL the reset email links to; `SendPasswordResetEmailHandler` appends the raw token as `?token=<url-encoded>`. Bound to `passwordResetUrlBase` in `container.ts` and consumed in [email sending](./email-sending.md). |
+| `PASSWORD_RESET_URL_BASE`  | `http://localhost:5173/reset-password` (dev/test only; required in production) | The frontend URL the reset email links to; `SendPasswordResetEmailHandler` appends the raw token as `?token=<url-encoded>`. Bound to `passwordResetUrlBase` in `container.ts` and consumed in [email sending](./email-sending.md). |
 | `RATE_LIMIT_AUTH_MAX`      | `5`                                                                            | Per-route request cap applied to both endpoints; the stricter budget shared with the other `/auth` routes ([authentication](./authentication.md)).                                                                                 |
 | `RATE_LIMIT_WINDOW`        | `1 minute`                                                                     | Length of that window; also the global limiter's window, and shared with the other `/auth` routes.                                                                                                                                 |
 
@@ -151,7 +151,7 @@ curl -i -X POST http://localhost:8000/v1/auth/forgot-password \
   -d '{"email":"user@example.com"}'
 ```
 
-The reply is `204` either way. If the account exists, an email arrives (with the dev SMTP defaults it lands in the local Mailpit catcher on port 1025) linking to `http://localhost:3000/reset-password?token=<raw-token>`. The frontend page reads the `token` query parameter, collects the new password, and redeems it:
+The reply is `204` either way. If the account exists, an email arrives (with the dev SMTP defaults it lands in the local Mailpit catcher on port 1025) linking to `http://localhost:5173/reset-password?token=<raw-token>`. The frontend page reads the `token` query parameter, collects the new password, and redeems it:
 
 ```bash
 curl -i -X POST http://localhost:8000/v1/auth/reset-password \

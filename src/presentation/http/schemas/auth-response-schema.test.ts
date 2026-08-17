@@ -8,7 +8,7 @@ describe('auth response schemas', () => {
     firstName: 'Ada',
     lastName: 'Lovelace',
     fullName: 'Ada Lovelace',
-    email: 'ada@finflow.test',
+    email: 'ada@example.test',
     status: 'active' as const,
     createdAt: new Date('2024-01-01T00:00:00.000Z'),
     updatedAt: new Date('2024-01-02T00:00:00.000Z'),

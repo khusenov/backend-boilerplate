@@ -16,7 +16,7 @@ function registrationPayload(overrides: RegistrationOverrides = {}) {
   return {
     firstName: 'Ida',
     lastName: 'Potent',
-    email: `idem-${randomUUID()}@finflow.test`,
+    email: `idem-${randomUUID()}@example.test`,
     password: 'password123',
     ...overrides,
   };
@@ -114,7 +114,7 @@ describe('/v1/auth/register idempotency (integration)', () => {
       method: 'POST',
       url: REGISTER_URL,
       headers: { 'idempotency-key': key },
-      payload: registrationPayload({ email: `first-${randomUUID()}@finflow.test` }),
+      payload: registrationPayload({ email: `first-${randomUUID()}@example.test` }),
     });
     expect(first.statusCode).toBe(201);
 
@@ -122,7 +122,7 @@ describe('/v1/auth/register idempotency (integration)', () => {
       method: 'POST',
       url: REGISTER_URL,
       headers: { 'idempotency-key': key },
-      payload: registrationPayload({ email: `second-${randomUUID()}@finflow.test` }),
+      payload: registrationPayload({ email: `second-${randomUUID()}@example.test` }),
     });
 
     expect(mismatch.statusCode).toBe(400);
@@ -144,7 +144,7 @@ describe('/v1/auth/register idempotency (integration)', () => {
   });
 
   it('replays a cached client error (4xx) for the same key', async () => {
-    const existing = await seedUser(h.app, { email: `dupe-${randomUUID()}@finflow.test` });
+    const existing = await seedUser(h.app, { email: `dupe-${randomUUID()}@example.test` });
     const key = randomUUID();
     const payload = registrationPayload({ email: existing.email });
 

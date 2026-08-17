@@ -1,21 +1,22 @@
-name: finflow
+name: app
 x-app-environment: &app-environment
+  APP_NAME: ${APP_NAME:-app}
   NODE_ENV: production
   HOST: 0.0.0.0
   PORT: '8000'
-  DATABASE_URL: mysql://finflow:finflow@mariadb:3306/finflow
+  DATABASE_URL: mysql://app:app@mariadb:3306/app
   REDIS_URL: redis://redis:6379
   JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev-only-secret-change-me-min-32-characters}
   COOKIE_SECRET: ${COOKIE_SECRET:-dev-only-cookie-secret-change-me}
   WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
-  EMAIL_FROM: ${EMAIL_FROM:-no-reply@finflow.local}
+  EMAIL_FROM: ${EMAIL_FROM:-no-reply@app.local}
   SMTP_HOST: ${SMTP_HOST:-localhost}
   VERIFICATION_CODE_SECRET: ${VERIFICATION_CODE_SECRET:-dev-only-verification-secret-change-me-32chars}
-  PASSWORD_RESET_URL_BASE: ${PASSWORD_RESET_URL_BASE:-http://localhost:3000/reset-password}
+  PASSWORD_RESET_URL_BASE: ${PASSWORD_RESET_URL_BASE:-http://localhost:5173/reset-password}
   COOKIE_SECURE: 'false'
   METRICS_ENABLED: 'true'
   OTEL_ENABLED: 'true'
-  OTEL_SERVICE_NAME: finflow-api
+  OTEL_SERVICE_NAME: app-api
   OTEL_SERVICE_VERSION: '1.0.0'
   OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
   BULL_BOARD_ENABLED: true
@@ -29,9 +30,9 @@ services:
     image: mariadb:11.4
     restart: unless-stopped
     environment:
-      MARIADB_DATABASE: finflow
-      MARIADB_USER: finflow
-      MARIADB_PASSWORD: finflow
+      MARIADB_DATABASE: app
+      MARIADB_USER: app
+      MARIADB_PASSWORD: app
       MARIADB_ROOT_PASSWORD: root
     ports:
       - '3306:3306'
@@ -62,10 +63,10 @@ services:
     build:
       context: .
       target: build
-    image: finflow-migrate
+    image: app-migrate
     command: ['npm', 'run', 'db:migrate:deploy']
     environment:
-      DATABASE_URL: mysql://finflow:finflow@mariadb:3306/finflow
+      DATABASE_URL: mysql://app:app@mariadb:3306/app
     depends_on:
       mariadb:
         condition: service_healthy
@@ -84,7 +85,7 @@ services:
 
   loki:
     image: grafana/loki:3.3.0
-    container_name: finflow-loki
+    container_name: app-loki
     command: -config.file=/etc/loki/loki-config.yaml
     volumes:
       - ./docker/loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
@@ -99,7 +100,7 @@ services:
 
   alloy:
     image: grafana/alloy:v1.5.0
-    container_name: finflow-alloy
+    container_name: app-alloy
     command:
       - run
       - --server.http.listen-addr=0.0.0.0:12345
@@ -134,7 +135,7 @@ services:
     build:
       context: .
       target: runtime
-    image: finflow-app
+    image: app-app
     restart: unless-stopped
     init: true
     stop_grace_period: 15s
@@ -147,14 +148,14 @@ services:
     build:
       context: .
       target: runtime
-    image: finflow-app
+    image: app-app
     restart: unless-stopped
     init: true
     stop_grace_period: 15s
     command: ['node', '--import', './dist/instrumentation.js', 'dist/worker.js']
     environment:
       <<: *app-environment
-      OTEL_SERVICE_NAME: finflow-worker
+      OTEL_SERVICE_NAME: app-worker
       WORKER_PORT: '8001'
     ports:
       - '127.0.0.1:8001:8001'

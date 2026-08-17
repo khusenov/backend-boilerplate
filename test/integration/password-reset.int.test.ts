@@ -81,7 +81,7 @@ describe('/auth/forgot-password + /auth/reset-password (integration)', () => {
 
   describe('POST /forgot-password', () => {
     it('enqueues a token that is not what the database stores', async () => {
-      const user = await seedUser(h.app, { email: 'forgot@finflow.test' });
+      const user = await seedUser(h.app, { email: 'forgot@example.test' });
 
       const token = await requestResetToken(user.email);
 
@@ -90,14 +90,14 @@ describe('/auth/forgot-password + /auth/reset-password (integration)', () => {
     });
 
     it('is a silent 204 for an unregistered email, with no job captured', async () => {
-      const res = await forgotPassword('nobody@finflow.test');
+      const res = await forgotPassword('nobody@example.test');
 
       expect(res.statusCode).toBe(204);
       expect(queue.enqueued).toHaveLength(0);
     });
 
     it('is a silent 204 for a soft-deleted user, with no job captured', async () => {
-      const user = await seedUser(h.app, { email: 'deleted@finflow.test' });
+      const user = await seedUser(h.app, { email: 'deleted@example.test' });
       await h.prisma.user.update({ where: { id: user.id }, data: { deletedAt: new Date() } });
 
       const res = await forgotPassword(user.email);
@@ -112,7 +112,7 @@ describe('/auth/forgot-password + /auth/reset-password (integration)', () => {
     });
 
     it('a repeat request supersedes the first token (invalidateAllForUser end-to-end)', async () => {
-      const user = await seedUser(h.app, { email: 'repeat@finflow.test' });
+      const user = await seedUser(h.app, { email: 'repeat@example.test' });
 
       const firstToken = await requestResetToken(user.email);
       const secondToken = await requestResetToken(user.email);
@@ -129,7 +129,7 @@ describe('/auth/forgot-password + /auth/reset-password (integration)', () => {
 
   describe('POST /reset-password', () => {
     it('resets an active user’s password, revokes sessions, and swaps which password logs in (204)', async () => {
-      const user = await seedUser(h.app, { email: 'active-reset@finflow.test' });
+      const user = await seedUser(h.app, { email: 'active-reset@example.test' });
       const token = await requestResetToken(user.email);
 
       const res = await resetPassword(token, NEW_PASSWORD);
@@ -144,7 +144,7 @@ describe('/auth/forgot-password + /auth/reset-password (integration)', () => {
     });
 
     it('activates a pending (never-verified) user on a successful reset', async () => {
-      const email = 'pending-reset@finflow.test';
+      const email = 'pending-reset@example.test';
       await registerPendingUser(email);
       const token = await requestResetToken(email);
 
@@ -155,7 +155,7 @@ describe('/auth/forgot-password + /auth/reset-password (integration)', () => {
     });
 
     it('rejects an expired token (400)', async () => {
-      const user = await seedUser(h.app, { email: 'expired-reset@finflow.test' });
+      const user = await seedUser(h.app, { email: 'expired-reset@example.test' });
       const { idGenerator, opaqueTokenService } = h.app.diContainer.cradle;
       const rawToken = opaqueTokenService.generate();
       const now = new Date();
@@ -178,7 +178,7 @@ describe('/auth/forgot-password + /auth/reset-password (integration)', () => {
     });
 
     it('rejects a replay of an already-used token (400)', async () => {
-      const user = await seedUser(h.app, { email: 'replay-reset@finflow.test' });
+      const user = await seedUser(h.app, { email: 'replay-reset@example.test' });
       const token = await requestResetToken(user.email);
       expect((await resetPassword(token, NEW_PASSWORD)).statusCode).toBe(204);
 
@@ -196,7 +196,7 @@ describe('/auth/forgot-password + /auth/reset-password (integration)', () => {
     });
 
     it('rejects a valid token whose user was soft-deleted after the token was issued (400)', async () => {
-      const user = await seedUser(h.app, { email: 'deleted-after-issue@finflow.test' });
+      const user = await seedUser(h.app, { email: 'deleted-after-issue@example.test' });
       const token = await requestResetToken(user.email);
       await h.prisma.user.update({ where: { id: user.id }, data: { deletedAt: new Date() } });
 

@@ -1,15 +1,15 @@
 // Discover every container the Docker daemon knows about.
-discovery.docker "finflow" {
+discovery.docker "app" {
   host = "unix:///var/run/docker.sock"
 }
 
 // Keep only this compose project's containers and shape their labels.
-discovery.relabel "finflow" {
-  targets = discovery.docker.finflow.targets
+discovery.relabel "app" {
+  targets = discovery.docker.app.targets
 
   rule {
     source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
-    regex         = "finflow"
+    regex         = "app"
     action        = "keep"
   }
   // Don't ingest the observability tools' own logs (avoids a self-feeding loop).
@@ -30,15 +30,15 @@ discovery.relabel "finflow" {
 }
 
 // Read the stdout/stderr of the discovered containers.
-loki.source.docker "finflow" {
+loki.source.docker "app" {
   host          = "unix:///var/run/docker.sock"
-  targets       = discovery.docker.finflow.targets
-  relabel_rules = discovery.relabel.finflow.rules
-  forward_to    = [loki.process.finflow.receiver]
+  targets       = discovery.docker.app.targets
+  relabel_rules = discovery.relabel.app.rules
+  forward_to    = [loki.process.app.receiver]
 }
 
 // Parse the app's JSON lines; non-JSON lines (mariadb, redis) pass through untouched.
-loki.process "finflow" {
+loki.process "app" {
   stage.json {
     expressions = {
       level    = "level",
@@ -62,10 +62,10 @@ loki.process "finflow" {
     }
   }
 
-  forward_to = [loki.write.finflow.receiver]
+  forward_to = [loki.write.app.receiver]
 }
 
-loki.write "finflow" {
+loki.write "app" {
   endpoint {
     url = "http://loki:3100/loki/api/v1/push"
   }

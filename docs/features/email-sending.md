@@ -90,18 +90,18 @@ Read from `src/config/env.ts`. Keys declared with `devDefault` only are **requir
 | `SMTP_REQUIRE_TLS`        | `true` (production); `false` in dev/test                                       | Refuse to send if STARTTLS cannot be negotiated. Keep on in prod; off for a plaintext dev catcher.                                                                                                                    |
 | `SMTP_USER`               | `''` (empty)                                                                   | SMTP auth user. **Empty means no auth** — the adapter passes `auth: undefined`, so no authentication is attempted (the local-catcher case).                                                                           |
 | `SMTP_PASSWORD`           | `''` (empty)                                                                   | SMTP auth password; unused when `SMTP_USER` is empty.                                                                                                                                                                 |
-| `EMAIL_FROM`              | `no-reply@finflow.local` (dev/test only; required in production)               | Default From address the adapter stamps on every outbound message.                                                                                                                                                    |
-| `PASSWORD_RESET_URL_BASE` | `http://localhost:3000/reset-password` (dev/test only; required in production) | Frontend URL the reset email links to; `SendPasswordResetEmailHandler` appends the raw token as `?token=`. Owned by the [password-reset.md](./password-reset.md) flow, consumed here to build the link.               |
+| `EMAIL_FROM`              | `no-reply@app.local` (dev/test only; required in production)                   | Default From address the adapter stamps on every outbound message.                                                                                                                                                    |
+| `PASSWORD_RESET_URL_BASE` | `http://localhost:5173/reset-password` (dev/test only; required in production) | Frontend URL the reset email links to; `SendPasswordResetEmailHandler` appends the raw token as `?token=`. Owned by the [password-reset.md](./password-reset.md) flow, consumed here to build the link.               |
 | `REDIS_URL`               | `redis://127.0.0.1:6379` (dev/test only; required in production)               | Redis instance backing BullMQ. Read here by `src/scripts/purge-verification-jobs.ts` to open the queue whose failed set it sweeps. Owned by [background-jobs.md](./background-jobs.md).                               |
-| `QUEUE_PREFIX`            | `finflow`                                                                      | Key prefix BullMQ applies to every queue key in Redis. The purge script must run with the same value the producing app used, or it inspects an empty failed set. Owned by [background-jobs.md](./background-jobs.md). |
+| `QUEUE_PREFIX`            | `app`                                                                          | Key prefix BullMQ applies to every queue key in Redis. The purge script must run with the same value the producing app used, or it inspects an empty failed set. Owned by [background-jobs.md](./background-jobs.md). |
 
 `.env.example` mirrors the SMTP keys with the dev-catcher values (`SMTP_HOST=localhost`, `SMTP_PORT=1025`, `SMTP_SECURE=false`, `SMTP_REQUIRE_TLS=false`, empty credentials). Its comment names the intended local setup: _"Dev defaults target a local Mailpit catcher on :1025."_ Note that `docker-compose.yml` does **not** provision a mail service — Mailpit is something you run yourself alongside `npm run dev`:
 
 ```bash
-docker run -d --name finflow-mailpit -p 1025:1025 -p 8025:8025 axllent/mailpit
+docker run -d --name mailpit -p 1025:1025 -p 8025:8025 axllent/mailpit
 ```
 
-SMTP listens on `1025`, matching the `SMTP_PORT` dev default, and the web inbox is at `http://localhost:8025`. The compose stack only forwards `SMTP_HOST` and `EMAIL_FROM` from the host environment (falling back to `localhost` / `no-reply@finflow.local`), and because it runs with `NODE_ENV: production`, the production defaults apply inside it: port `587`, `SMTP_REQUIRE_TLS=true`. A real SMTP host must therefore be supplied to the compose stack for mail to leave it; the `localhost` fallback points at the app container itself.
+SMTP listens on `1025`, matching the `SMTP_PORT` dev default, and the web inbox is at `http://localhost:8025`. The compose stack only forwards `SMTP_HOST` and `EMAIL_FROM` from the host environment (falling back to `localhost` / `no-reply@app.local`), and because it runs with `NODE_ENV: production`, the production defaults apply inside it: port `587`, `SMTP_REQUIRE_TLS=true`. A real SMTP host must therefore be supplied to the compose stack for mail to leave it; the `localhost` fallback points at the app container itself.
 
 ## Usage & extension
 
@@ -131,9 +131,9 @@ export interface WelcomeEmailContent {
 }
 
 export function renderWelcomeEmail(recipient: string): WelcomeEmailContent {
-  const subject = 'Welcome to Finflow';
-  const text = `Your Finflow account for ${recipient} is ready. You can sign in now.`;
-  const html = `<p>Your Finflow account for <strong>${recipient}</strong> is ready. You can sign in now.</p>`;
+  const subject = 'Welcome';
+  const text = `Your account for ${recipient} is ready. You can sign in now.`;
+  const html = `<p>Your account for <strong>${recipient}</strong> is ready. You can sign in now.</p>`;
   return { subject, text, html };
 }
 ```

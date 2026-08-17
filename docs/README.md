@@ -1,4 +1,4 @@
-# Finflow Backend — Documentation
+# Backend Boilerplate — Documentation
 
 A TypeScript clean-architecture backend boilerplate built on **Fastify** (HTTP), **Awilix** (dependency injection), **Prisma** (persistence), and **BullMQ** (background jobs). This directory is the documentation index; every feature is explained in its own document under [`features/`](./features/).
 
@@ -6,7 +6,7 @@ A TypeScript clean-architecture backend boilerplate built on **Fastify** (HTTP),
 
 ## API reference
 
-The interactive API reference (Swagger UI) is served at **`/docs`**. It is mounted in `buildApp` (`src/presentation/http/app.ts`) behind an `if (!env.isProduction)` guard, so it exists in **non-production environments only**: `@fastify/swagger` builds the OpenAPI document (title `Finflow API`, bearer-JWT security scheme) from the routes' Zod schemas via `jsonSchemaTransform`, and `@fastify/swagger-ui` registers the UI with `routePrefix: '/docs'`. Because the spec is generated from the route schemas rather than maintained by hand, it tracks the code. Go there for endpoint-level request and response detail; the per-feature docs below explain the _why_ and _how_.
+The interactive API reference (Swagger UI) is served at **`/docs`**. It is mounted in `buildApp` (`src/presentation/http/app.ts`) behind an `if (!env.isProduction)` guard, so it exists in **non-production environments only**: `@fastify/swagger` builds the OpenAPI document (title `app API`, bearer-JWT security scheme) from the routes' Zod schemas via `jsonSchemaTransform`, and `@fastify/swagger-ui` registers the UI with `routePrefix: '/docs'`. Because the spec is generated from the route schemas rather than maintained by hand, it tracks the code. Go there for endpoint-level request and response detail; the per-feature docs below explain the _why_ and _how_.
 
 ## Architecture at a glance
 

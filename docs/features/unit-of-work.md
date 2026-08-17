@@ -164,9 +164,9 @@ writes; `PrismaUserRepository`, `PrismaRoleRepository`, `PrismaPermissionReposit
 
 ## Configuration
 
-| Variable       | Default                                          | Meaning                                                                                                                                         |
-| -------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL` | none — required (`str()` in `src/config/env.ts`) | MariaDB/MySQL connection string passed to `new PrismaMariaDb(...)` in `createPrismaClient`; e.g. `mysql://user:password@localhost:3306/finflow` |
+| Variable       | Default                                          | Meaning                                                                                                                                     |
+| -------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL` | none — required (`str()` in `src/config/env.ts`) | MariaDB/MySQL connection string passed to `new PrismaMariaDb(...)` in `createPrismaClient`; e.g. `mysql://user:password@localhost:3306/app` |
 
 Transaction behaviour itself is not configurable: `run` calls `$transaction` without a `maxWait`,
 `timeout`, or `isolationLevel` option, so Prisma's defaults apply.

@@ -41,7 +41,7 @@ describe('outbox (integration)', () => {
         {
           firstName: 'Jane',
           lastName: 'Doe',
-          email: 'jane@finflow.test',
+          email: 'jane@example.test',
           password: 'password123',
         },
         INTEGRATION_SEED_ACTOR,
@@ -63,7 +63,7 @@ describe('outbox (integration)', () => {
           id: idGenerator.generate(),
           firstName: 'Rollback',
           lastName: 'User',
-          email: Email.create('rollback@finflow.test'),
+          email: Email.create('rollback@example.test'),
           passwordHash: 'hashed',
         },
         clock.now(),
@@ -110,7 +110,7 @@ describe('outbox (integration)', () => {
         {
           firstName: 'Relay',
           lastName: 'Target',
-          email: 'relay@finflow.test',
+          email: 'relay@example.test',
           password: 'password123',
         },
         INTEGRATION_SEED_ACTOR,
@@ -179,7 +179,7 @@ describe('outbox (integration)', () => {
           {
             firstName: 'End',
             lastName: 'ToEnd',
-            email: 'e2e@finflow.test',
+            email: 'e2e@example.test',
             password: 'password123',
           },
           INTEGRATION_SEED_ACTOR,
@@ -188,7 +188,7 @@ describe('outbox (integration)', () => {
 
         const event = await handled;
         expect(event).toBeInstanceOf(UserCreatedEvent);
-        expect(event.email).toBe('e2e@finflow.test');
+        expect(event.email).toBe('e2e@example.test');
       } finally {
         handleSpy.mockRestore();
         await worker.close();

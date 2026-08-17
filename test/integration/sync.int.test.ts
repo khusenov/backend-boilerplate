@@ -62,8 +62,8 @@ describe('SyncAuthorization (integration)', () => {
   });
 
   it('promotes the bootstrap operator once they exist, then no-ops', async () => {
-    const operator = await seedUser(h.app, { email: 'boot@finflow.test' });
-    const sync = makeSync('boot@finflow.test');
+    const operator = await seedUser(h.app, { email: 'boot@example.test' });
+    const sync = makeSync('boot@example.test');
 
     const first = await sync.execute(INTEGRATION_SYSTEM_ACTOR);
     expect(first.bootstrapPromoted).toBe(true);
@@ -79,7 +79,7 @@ describe('SyncAuthorization (integration)', () => {
   });
 
   it('does not promote when the operator has not registered yet', async () => {
-    const result = await makeSync('absent@finflow.test').execute(INTEGRATION_SYSTEM_ACTOR);
+    const result = await makeSync('absent@example.test').execute(INTEGRATION_SYSTEM_ACTOR);
     expect(result.bootstrapPromoted).toBe(false);
   });
 });
