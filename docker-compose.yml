@@ -10,7 +10,9 @@ x-app-environment: &app-environment
   COOKIE_SECRET: ${COOKIE_SECRET:-dev-only-cookie-secret-change-me}
   WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
   EMAIL_FROM: ${EMAIL_FROM:-no-reply@app.local}
-  SMTP_HOST: ${SMTP_HOST:-localhost}
+  SMTP_HOST: ${SMTP_HOST:-mailpit}
+  SMTP_PORT: ${SMTP_PORT:-1025}
+  SMTP_REQUIRE_TLS: 'false'
   VERIFICATION_CODE_SECRET: ${VERIFICATION_CODE_SECRET:-dev-only-verification-secret-change-me-32chars}
   PASSWORD_RESET_URL_BASE: ${PASSWORD_RESET_URL_BASE:-http://localhost:5173/reset-password}
   COOKIE_SECURE: 'false'
@@ -22,7 +24,7 @@ x-app-environment: &app-environment
   BULL_BOARD_ENABLED: true
   BULL_BOARD_PATH: /admin/queues
   BULL_BOARD_USERNAME: admin
-  BULL_BOARD_PASSWORD: getfux-bywRi4-gevkor
+  BULL_BOARD_PASSWORD: ${BULL_BOARD_PASSWORD:-dev-only-bull-board-password}
   BULL_BOARD_READONLY: true
 
 services:
@@ -131,6 +133,21 @@ services:
       - tempo
       - loki
 
+  mailpit:
+    image: axllent/mailpit:v1.21
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 'true'
+      MP_SMTP_AUTH_ALLOW_INSECURE: 'true'
+    ports:
+      - '1025:1025'
+      - '8025:8025'
+    healthcheck:
+      test: ['CMD', '/mailpit', 'readyz']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   app:
     build:
       context: .
@@ -143,6 +160,17 @@ services:
       - '8000:8000'
     environment:
       <<: *app-environment
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      tempo:
+        condition: service_started
+      mailpit:
+        condition: service_healthy
 
   worker:
     build:
@@ -178,6 +206,8 @@ services:
         condition: service_completed_successfully
       tempo:
         condition: service_started
+      mailpit:
+        condition: service_healthy
 
 volumes:
   tempo-data:
