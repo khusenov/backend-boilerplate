@@ -1,5 +1,10 @@
 # Backend Boilerplate
 
+[![CI](https://github.com/khusenov/backend-boilerplate/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/khusenov/backend-boilerplate/actions/workflows/ci.yaml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg)](./.nvmrc)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](./tsconfig.json)
+
 A production-shaped TypeScript backend starter built on **Fastify**, **Awilix**, **Prisma** and
 **BullMQ**, organised as strict clean architecture — with the layer boundaries enforced in CI rather
 than left to discipline.
