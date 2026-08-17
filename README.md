@@ -246,6 +246,15 @@ Mailpit. Either unset `SMTP_HOST` in `.env` (the compose default `mailpit` then 
 docker compose config
 ```
 
+## Contributing
+
+Pull requests are welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md) for the setup, the four build
+gates, and the commit convention. Run `npm run audit` before opening one; it runs exactly what CI
+runs.
+
+For anything security related, follow [SECURITY.md](./SECURITY.md) and report privately rather than
+opening an issue.
+
 ## License
 
 [MIT](./LICENSE)

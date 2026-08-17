@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest a capability this template should ship with
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is a starting point for other projects, so the bar is whether most teams building on it
+        would need the capability — not whether one project does.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What is hard or impossible today, and who hits it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      description: |
+        Which layer would own it? If it needs a new port, say which use cases would depend on it and
+        what the adapter would be.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including doing nothing, or leaving it for each project to add itself.
