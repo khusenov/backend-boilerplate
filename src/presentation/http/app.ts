@@ -1,4 +1,4 @@
-import { fastify, type FastifyInstance } from 'fastify';
+import { fastify, LogController, type FastifyInstance } from 'fastify';
 import { fastifySensible } from '@fastify/sensible';
 import { diContainer, fastifyAwilixPlugin } from '@fastify/awilix';
 import { registerDependencies } from '@/container';
@@ -44,7 +44,9 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     requestIdHeader: CORRELATION_ID_HEADER,
     genReqId: () => randomUUID(),
     forceCloseConnections: true,
-    disableRequestLogging: opts.disableRequestLogging ?? false,
+    logController: new LogController({
+      disableRequestLogging: opts.disableRequestLogging ?? false,
+    }),
   });
 
   app.setValidatorCompiler(validatorCompiler);
