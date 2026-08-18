@@ -14,9 +14,13 @@ does not typecheck until you run it.
 npm run audit
 ```
 
-That single command runs everything CI runs: lockfile verification, dependency audit, formatting,
-lint, typecheck, unit tests with coverage, architecture rules, and the integration suite. If it
-passes locally it will pass in CI.
+That single command runs lockfile verification, dependency audit, formatting, lint, typecheck,
+architecture rules, the production build, unit tests with coverage, and the integration suite —
+every CI check except the Docker image build and smoke test. Cover that one with
+`docker compose up --wait` when you touch the Dockerfile or the compose file.
+
+It checks formatting rather than rewriting it, so it fails on drift the way CI does. The pre-commit
+hook is what formats your staged files.
 
 If the integration suite hangs, run it with a credentials-store-free Docker config:
 

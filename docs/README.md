@@ -2,11 +2,30 @@
 
 A TypeScript clean-architecture backend boilerplate built on **Fastify** (HTTP), **Awilix** (dependency injection), **Prisma** (persistence), and **BullMQ** (background jobs). This directory is the documentation index; every feature is explained in its own document under [`features/`](./features/).
 
-> **Verified against:** `5156995`
+> **Verified against:** `v1.0.0`
 
 ## API reference
 
-The interactive API reference (Swagger UI) is served at **`/docs`**. It is mounted in `buildApp` (`src/presentation/http/app.ts`) behind an `if (!env.isProduction)` guard, so it exists in **non-production environments only**: `@fastify/swagger` builds the OpenAPI document (title `app API`, bearer-JWT security scheme) from the routes' Zod schemas via `jsonSchemaTransform`, and `@fastify/swagger-ui` registers the UI with `routePrefix: '/docs'`. Because the spec is generated from the route schemas rather than maintained by hand, it tracks the code. Go there for endpoint-level request and response detail; the per-feature docs below explain the _why_ and _how_.
+The interactive API reference (Swagger UI) is served at **`/docs`**. It is mounted in `buildApp` (`src/presentation/http/app.ts`) behind an `if (!env.isProduction)` guard, so it exists in **non-production environments only** — note that the compose stack runs `NODE_ENV=production`, so `/docs` returns 404 there. `@fastify/swagger` builds the OpenAPI document (title `<APP_NAME> API`, bearer-JWT security scheme) from the routes' Zod schemas via `jsonSchemaTransform`, and `@fastify/swagger-ui` registers the UI with `routePrefix: '/docs'`. Because the spec is generated from the route schemas rather than maintained by hand, it tracks the code. Go there for endpoint-level request and response detail; the per-feature docs below explain the _why_ and _how_.
+
+## Application identity
+
+Names throughout the system derive from a single environment variable, **`APP_NAME`** (default `app`). `src/config/app-identity.ts` reads it once and exports the derived identity; `src/config/env.ts` uses those values as the defaults for the individual variables. Every default below is still overridable by setting its own variable explicitly.
+
+| Derived value        | Default                     | Where it surfaces                                                                                                               |
+| -------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `JWT_ISSUER`         | `<APP_NAME>`                | `iss` claim on access tokens — [authentication](./features/authentication.md)                                                   |
+| `JWT_AUDIENCE`       | `<APP_NAME>-api`            | `aud` claim on access tokens — [authentication](./features/authentication.md)                                                   |
+| `QUEUE_PREFIX`       | `<APP_NAME>`                | Redis key namespace for every queue — [background jobs](./features/background-jobs.md)                                          |
+| `OTEL_SERVICE_NAME`  | `<APP_NAME>-api`            | `service` on logs, spans and metrics — [tracing](./features/tracing.md), [structured logging](./features/structured-logging.md) |
+| `EMAIL_FROM`         | `no-reply@<APP_NAME>.local` | Envelope sender outside production — [email sending](./features/email-sending.md)                                               |
+| `swaggerTitle`       | `<APP_NAME> API`            | OpenAPI document title                                                                                                          |
+| `bullBoardRealm`     | `<APP_NAME> Queues`         | HTTP Basic realm on the queue dashboard — [background jobs](./features/background-jobs.md)                                      |
+| `rateLimitNamespace` | `<APP_NAME>-rate-limit-`    | Rate-limit key prefix — [HTTP infrastructure](./features/http-infrastructure.md)                                                |
+
+The worker process is the one exception to the `-api` suffix: `docker-compose.yml` sets its `OTEL_SERVICE_NAME` to `<APP_NAME>-worker` so the two deployables are distinguishable in Grafana.
+
+**Two places `APP_NAME` cannot reach**, because they are read before any application code runs, and they must agree with each other: the compose project name (`name:` on line 1 of `docker-compose.yml`) and the container-matching `regex` in `docker/alloy/config.alloy`. Alloy keeps only containers whose compose-project label matches that regex, so changing one without the other stops log shipping silently. See [Renaming the project](../README.md#renaming-the-project).
 
 ## Architecture at a glance
 

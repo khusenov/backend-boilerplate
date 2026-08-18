@@ -232,12 +232,12 @@ This feature reads four env vars, validated by `envalid` in `src/config/env.ts`.
 Loki-specific env var** — the collector's Docker socket and Loki's push endpoint
 (`http://loki:3100/loki/api/v1/push`) are configured in the `docker/` infra files, not the app.
 
-| Variable               | Default       | Meaning                                                                                                               |
-| ---------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `LOG_LEVEL`            | `info`        | Minimum level Pino emits. One of `fatal`, `error`, `warn`, `info`, `debug`, `trace`.                                  |
-| `OTEL_SERVICE_NAME`    | `app-api`     | Stamped as `service` on every line (and promoted to Loki's indexed `service` label). Shared with the tracing feature. |
-| `NODE_ENV`             | `development` | Stamped as `env` on every line. One of `development`, `test`, `production`.                                           |
-| `OTEL_SERVICE_VERSION` | `0.0.0`       | Stamped as `version` on every line.                                                                                   |
+| Variable               | Default                     | Meaning                                                                                                               |
+| ---------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `LOG_LEVEL`            | `info`                      | Minimum level Pino emits. One of `fatal`, `error`, `warn`, `info`, `debug`, `trace`.                                  |
+| `OTEL_SERVICE_NAME`    | `app-api` (from `APP_NAME`) | Stamped as `service` on every line (and promoted to Loki's indexed `service` label). Shared with the tracing feature. |
+| `NODE_ENV`             | `development`               | Stamped as `env` on every line. One of `development`, `test`, `production`.                                           |
+| `OTEL_SERVICE_VERSION` | `0.0.0`                     | Stamped as `version` on every line.                                                                                   |
 
 `LOG_LEVEL` accepts all six values — including `fatal` and `trace` — and sets the minimum threshold on
 the underlying Pino instance. The `Logger` port itself intentionally exposes only the four middle levels
