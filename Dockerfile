@@ -19,7 +19,11 @@ RUN npm run db:generate \
 FROM node:24-bookworm-slim AS prod-deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts
+# `prisma` is an optional peer of `@prisma/client`, so npm resolves it as a
+# production dependency and `--omit=dev` keeps it. The runtime never calls the
+# CLI — migrations run from the `build` stage — so drop it from the image.
+RUN npm ci --omit=dev --ignore-scripts \
+ && rm -rf node_modules/prisma node_modules/@prisma/config
 
 # ---------- Stage 3: runtime (lean, non-root) ----------
 FROM node:24-bookworm-slim AS runtime

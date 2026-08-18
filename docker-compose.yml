@@ -9,7 +9,7 @@ x-app-environment: &app-environment
   JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev-only-secret-change-me-min-32-characters}
   COOKIE_SECRET: ${COOKIE_SECRET:-dev-only-cookie-secret-change-me}
   WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
-  EMAIL_FROM: ${EMAIL_FROM:-no-reply@app.local}
+  EMAIL_FROM: ${EMAIL_FROM:-no-reply@${APP_NAME:-app}.local}
   SMTP_HOST: ${SMTP_HOST:-mailpit}
   SMTP_PORT: ${SMTP_PORT:-1025}
   SMTP_REQUIRE_TLS: 'false'
@@ -18,7 +18,7 @@ x-app-environment: &app-environment
   COOKIE_SECURE: 'false'
   METRICS_ENABLED: 'true'
   OTEL_ENABLED: 'true'
-  OTEL_SERVICE_NAME: app-api
+  OTEL_SERVICE_NAME: ${APP_NAME:-app}-api
   OTEL_SERVICE_VERSION: '1.0.0'
   OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
   BULL_BOARD_ENABLED: true
@@ -40,6 +40,7 @@ services:
       - '3306:3306'
     volumes:
       - mariadb-data:/var/lib/mysql
+      - ./docker/mariadb/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
       interval: 10s
@@ -87,7 +88,7 @@ services:
 
   loki:
     image: grafana/loki:3.7.6
-    container_name: app-loki
+    container_name: ${APP_NAME:-app}-loki
     command: -config.file=/etc/loki/loki-config.yaml
     volumes:
       - ./docker/loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
@@ -100,7 +101,7 @@ services:
 
   alloy:
     image: grafana/alloy:v1.18.1
-    container_name: app-alloy
+    container_name: ${APP_NAME:-app}-alloy
     command:
       - run
       - --server.http.listen-addr=0.0.0.0:12345
@@ -181,7 +182,7 @@ services:
     command: ['node', '--import', './dist/instrumentation.js', 'dist/worker.js']
     environment:
       <<: *app-environment
-      OTEL_SERVICE_NAME: app-worker
+      OTEL_SERVICE_NAME: ${APP_NAME:-app}-worker
       WORKER_PORT: '8001'
     ports:
       - '127.0.0.1:8001:8001'

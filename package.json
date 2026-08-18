@@ -36,7 +36,7 @@
     "arch:graph": "{ echo '```mermaid'; depcruise src --include-only '^src' --output-type mermaid --collapse '^src/[^/]+'; echo '```'; } > docs/architecture-graph.md",
     "verify:lock": "npm ci --dry-run --ignore-scripts",
     "deps:audit": "npm audit --omit=dev --audit-level=high",
-    "audit": "npm run verify:lock && npm run deps:audit && npm run format && npm run lint && npm run typecheck && npm run test:coverage && npm run arch && npm run test:integration",
+    "audit": "npm run verify:lock && npm run deps:audit && npm run format:check && npm run lint && npm run typecheck && npm run arch && npm run build && npm run test:coverage && npm run test:integration",
     "prepare": "husky",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -79,6 +79,9 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.67.0",
     "vitest": "^4.1.9"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.1"
   },
   "dependencies": {
     "@bull-board/api": "^8.6.1",

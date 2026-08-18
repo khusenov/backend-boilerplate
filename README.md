@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/khusenov/backend-boilerplate/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/khusenov/backend-boilerplate/actions/workflows/ci.yaml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg)](./.nvmrc)
+[![Node](https://img.shields.io/badge/node-%3E%3D24-brightgreen.svg)](./.nvmrc)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](./tsconfig.json)
 
 A production-shaped TypeScript backend starter built on **Fastify**, **Awilix**, **Prisma** and
@@ -15,7 +15,7 @@ Clone it, rename it, and start writing features on top of infrastructure that is
 
 |                   |                                                                                                                                                |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| **HTTP**          | Fastify 5, Zod request/response validation, versioned `/v1` surface, uniform JSON error envelope, Swagger UI at `/docs`                        |
+| **HTTP**          | Fastify 5, Zod request/response validation, versioned `/v1` surface, uniform JSON error envelope, Swagger UI at `/docs` outside production     |
 | **Auth**          | Argon2 password hashing, short-lived JWT access tokens, rotating server-stored refresh tokens, email verification, self-service password reset |
 | **Authorization** | Compile-time permission catalogue, operator-managed roles, permissions enforced inside use cases (not at the HTTP edge)                        |
 | **Persistence**   | Prisma + MariaDB, one repository per aggregate, `UnitOfWork` port over interactive transactions                                                |
@@ -30,7 +30,7 @@ slice you copy when adding your own feature, and documented as such in
 
 ## Requirements
 
-- **Node 22+** (see [`.nvmrc`](./.nvmrc))
+- **Node 24+** (see [`.nvmrc`](./.nvmrc))
 - **Docker** with Compose v2
 - npm
 
@@ -44,6 +44,10 @@ docker compose up --wait
 
 API on <http://localhost:8000>, worker probes on <http://localhost:8001>. Migrations run
 automatically via the `migrate` service before the app starts.
+
+The stack runs with `NODE_ENV=production` so that a first boot exercises the same guards a
+deployment does — including the boot-time secret-strength checks. One consequence: Swagger UI is
+disabled, so `/docs` returns 404 here. Use Option B when you want to browse the API reference.
 
 ### Option B — app on the host, dependencies in Docker
 
@@ -77,9 +81,12 @@ APP_NAME=acme
 ```
 
 Everything derived from it updates at once — service name, queue prefix, JWT issuer/audience,
-rate-limit key namespace, Swagger title, Bull Board realm — via
-[`src/config/app-identity.ts`](./src/config/app-identity.ts). Individual values stay overridable by
-their own env vars (`OTEL_SERVICE_NAME`, `QUEUE_PREFIX`, …) when you need to diverge.
+envelope sender, rate-limit key namespace, Swagger title, Bull Board realm — via
+[`src/config/app-identity.ts`](./src/config/app-identity.ts). The derived variables are left
+commented out in [`.env.example`](./.env.example) precisely so they follow `APP_NAME`; uncomment one
+only when you need it to diverge. The compose stack derives its own copies the same way, including
+the worker's `<APP_NAME>-worker` service name. See
+[Application identity](./docs/README.md#application-identity) for the full table.
 
 **Two files `APP_NAME` cannot reach, and they must agree with each other:**
 
@@ -143,26 +150,27 @@ so a new use case without tests fails the build.
 
 ## Scripts
 
-| Command                                    | Purpose                                                                              |
-| ------------------------------------------ | ------------------------------------------------------------------------------------ |
-| `npm run dev`                              | API + worker with hot reload                                                         |
-| `npm run build`                            | Bundle with tsup                                                                     |
-| `npm start` / `npm run start:worker`       | Run the built API / worker                                                           |
-| `npm test` / `npm run test:watch`          | Unit suite                                                                           |
-| `npm run test:coverage`                    | Unit suite with the coverage gate                                                    |
-| `npm run test:integration`                 | Testcontainers suite (real MariaDB + Redis)                                          |
-| `npm run typecheck`                        | `tsc --noEmit`                                                                       |
-| `npm run lint` / `lint:fix`                | ESLint                                                                               |
-| `npm run format` / `format:check`          | Prettier                                                                             |
-| `npm run arch`                             | Architecture boundary rules                                                          |
-| `npm run arch:graph`                       | Regenerate `docs/architecture-graph.md`                                              |
-| `npm run db:generate`                      | Generate the Prisma client                                                           |
-| `npm run db:migrate` / `db:migrate:deploy` | Apply migrations (dev / production)                                                  |
-| `npm run db:studio`                        | Prisma Studio                                                                        |
-| `npm run db:sync-auth`                     | Sync roles/permissions and bootstrap the admin                                       |
-| **`npm run audit`**                        | **The full gate** — lockfile, deps, format, lint, types, coverage, arch, integration |
+| Command                                    | Purpose                                                                                     |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `npm run dev`                              | API + worker with hot reload                                                                |
+| `npm run build`                            | Bundle with tsup                                                                            |
+| `npm start` / `npm run start:worker`       | Run the built API / worker                                                                  |
+| `npm test` / `npm run test:watch`          | Unit suite                                                                                  |
+| `npm run test:coverage`                    | Unit suite with the coverage gate                                                           |
+| `npm run test:integration`                 | Testcontainers suite (real MariaDB + Redis)                                                 |
+| `npm run typecheck`                        | `tsc --noEmit`                                                                              |
+| `npm run lint` / `lint:fix`                | ESLint                                                                                      |
+| `npm run format` / `format:check`          | Prettier                                                                                    |
+| `npm run arch`                             | Architecture boundary rules                                                                 |
+| `npm run arch:graph`                       | Regenerate `docs/architecture-graph.md`                                                     |
+| `npm run db:generate`                      | Generate the Prisma client                                                                  |
+| `npm run db:migrate` / `db:migrate:deploy` | Apply migrations (dev / production)                                                         |
+| `npm run db:studio`                        | Prisma Studio                                                                               |
+| `npm run db:sync-auth`                     | Sync roles/permissions and bootstrap the admin                                              |
+| **`npm run audit`**                        | **The full gate** — lockfile, deps, format, lint, types, arch, build, coverage, integration |
 
-Run `npm run audit` before pushing; CI runs the same checks.
+Run `npm run audit` before pushing. It runs every check CI runs except the Docker image build and
+smoke test, which needs the compose stack — `docker compose up --wait` covers that locally.
 
 ## Ports
 
@@ -234,9 +242,17 @@ DOCKER_CONFIG=$(mktemp -d) npm run test:integration
 
 **`Cannot find module '@/generated/prisma/client'`** — you skipped `npm run db:generate`.
 
-**`npm run db:migrate` fails on the shadow database.** `prisma migrate dev` creates a temporary
-shadow DB and needs credentials that can do so; point `DATABASE_URL` at a user with create-database
-rights (the compose MariaDB root account works).
+**`npm run db:migrate` fails on the shadow database (`P3014`).** `prisma migrate dev` creates a
+temporary shadow DB, so the user in `DATABASE_URL` needs rights over that name pattern. The compose
+MariaDB grants them to the `app` user on first initialisation via
+[`docker/mariadb/init/01-shadow-database.sql`](./docker/mariadb/init/01-shadow-database.sql). That
+script only runs against an empty data volume, so a database created before it existed will not have
+the grant — apply it once by hand, or reset with `docker compose down --volumes`.
+
+```bash
+docker compose exec mariadb mariadb -uroot -proot \
+  -e "GRANT ALL PRIVILEGES ON \`prisma_migrate_shadow_db%\`.* TO 'app'@'%'; FLUSH PRIVILEGES;"
+```
 
 **Grafana logs are empty.** The compose project name and the Alloy `regex` have drifted apart — see
 [Renaming the project](#renaming-the-project).
@@ -254,8 +270,7 @@ docker compose config
 ## Contributing
 
 Pull requests are welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md) for the setup, the four build
-gates, and the commit convention. Run `npm run audit` before opening one; it runs exactly what CI
-runs.
+gates, and the commit convention. Run `npm run audit` before opening one.
 
 For anything security related, follow [SECURITY.md](./SECURITY.md) and report privately rather than
 opening an issue.
