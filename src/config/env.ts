@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { bool, cleanEnv, email, host, num, port, str } from 'envalid';
-import { APP_NAME } from './app-identity';
+import { APP_NAME, appIdentity } from './app-identity';
 import { assertProductionSecrets } from './assert-production-secrets';
 
 export const env = cleanEnv(process.env, {
@@ -21,7 +21,7 @@ export const env = cleanEnv(process.env, {
     desc: 'HMAC signing key for access tokens; required, and >= 32 chars in production',
   }),
   JWT_ISSUER: str({ default: APP_NAME }),
-  JWT_AUDIENCE: str({ default: `${APP_NAME}-api` }),
+  JWT_AUDIENCE: str({ default: appIdentity.apiServiceName }),
   ACCESS_TOKEN_TTL: num({ default: 900 }), // 15 minutes
   REFRESH_TOKEN_TTL: num({ default: 60 * 60 * 24 * 14 }), // 14 days
   COOKIE_SECRET: str({
@@ -43,7 +43,7 @@ export const env = cleanEnv(process.env, {
   METRICS_ENABLED: bool({ default: true }),
   HEALTHCHECK_TIMEOUT_MS: num({ default: 2000 }),
   OTEL_ENABLED: bool({ default: false }),
-  OTEL_SERVICE_NAME: str({ default: `${APP_NAME}-api` }),
+  OTEL_SERVICE_NAME: str({ default: appIdentity.apiServiceName }),
   OTEL_SERVICE_VERSION: str({ default: '0.0.0' }),
   OTEL_EXPORTER_OTLP_ENDPOINT: str({ default: 'http://localhost:4318' }),
   BULL_BOARD_ENABLED: bool({ default: false }),
