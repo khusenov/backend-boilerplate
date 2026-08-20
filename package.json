@@ -85,7 +85,7 @@
   },
   "dependencies": {
     "@bull-board/api": "^8.6.1",
-    "@bull-board/fastify": "^8.6.1",
+    "@bull-board/fastify": "^9.0.0",
     "@fastify/awilix": "^8.2.1",
     "@fastify/basic-auth": "^6.3.0",
     "@fastify/cookie": "^11.1.2",
