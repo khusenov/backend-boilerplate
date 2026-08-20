@@ -65,7 +65,7 @@
     "@types/node": "^24.13.3",
     "@types/nodemailer": "^8.0.1",
     "@vitest/coverage-v8": "^4.1.10",
-    "concurrently": "^10.0.4",
+    "concurrently": "^10.0.5",
     "dependency-cruiser": "^18.2.0",
     "eslint": "^10.8.1",
     "eslint-config-prettier": "^10.1.8",
