@@ -84,7 +84,7 @@
     "deepmerge-ts": "^8.0.1"
   },
   "dependencies": {
-    "@bull-board/api": "^8.6.1",
+    "@bull-board/api": "^9.0.0",
     "@bull-board/fastify": "^8.6.1",
     "@fastify/awilix": "^8.2.1",
     "@fastify/basic-auth": "^6.3.0",
