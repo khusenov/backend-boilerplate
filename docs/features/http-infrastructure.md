@@ -1,6 +1,6 @@
 # HTTP Infrastructure
 
-> **Status:** Complete · **Layers:** presentation, shared, config · **Verified against:** `5156995`
+> **Status:** Complete · **Layers:** presentation, shared, config · **Verified against:** `ef54301`
 
 ## Purpose
 
@@ -35,6 +35,14 @@ boot (throws) if any key in `PRODUCTION_SECRET_KEYS` — `COOKIE_SECRET`, `JWT_A
 (`openssl rand -base64 48`), so a misconfigured deploy fails fast and loudly rather than starting
 with a weak secret.
 
+A **second** boot guard sits beside it: importing `src/config/http-transport.ts` runs
+`parseTrustProxy(env.TRUST_PROXY)`, which throws on any value outside the grammar
+`false | true | 1…32`. The two guards fire at different import times — `assertProductionSecrets`
+when `@/config/env` is first imported, `parseTrustProxy` when `@/config/http-transport` is — so
+"the boot guard" is no longer a single locatable point. Both still run before either entrypoint
+calls `listen()`, because `app.ts` and `worker.ts` each import `http-transport` at module load, so a
+malformed `TRUST_PROXY` fails the boot rather than surfacing as a request-time surprise.
+
 ### Instance configuration
 
 The Fastify factory is given `logger: opts.loggerOptions` (a Pino `LoggerOptions` object built by
@@ -45,6 +53,28 @@ every request carries an id taken from the client's `x-request-id` header or fre
 becomes the correlation id in logs and the `requestId` in every error body.
 `forceCloseConnections: true` supports clean shutdown; `disableRequestLogging` defaults to `false`
 and is set to `env.isDevelopment` by `main.ts`.
+
+The factory is then given five **transport limits**, spread in from
+`httpHardeningOptions({ ...httpLimits, trustProxy })`. `httpHardeningOptions`
+(`src/presentation/http/server-options.ts`) is a pure, total projection of consumer vocabulary onto
+Fastify's option names; the values themselves come from `src/config/http-transport.ts`, the single
+owner of the environment-to-consumer mapping, so neither this server nor the worker's probe server
+repeats it:
+
+| Fastify option                 | From                    | Default   | Why it is set explicitly                                                                                                                                                                         |
+| ------------------------------ | ----------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `trustProxy`                   | `TRUST_PROXY`           | `false`   | Decides whether `request.ip` — and therefore the rate limiter's bucket key — may come from `X-Forwarded-For`. See the grammar table under Code-level options.                                    |
+| `bodyLimit`                    | `BODY_LIMIT_BYTES`      | `1048576` | Fastify's own default, now explicit so it is tunable without a code change. Exceeding it yields `413` through the normal error envelope.                                                         |
+| `requestTimeout`               | `REQUEST_TIMEOUT_MS`    | `30000`   | The one changed default (Fastify ships `0`, i.e. disabled). Bounds the slow-POST / RUDY shape, where a client sends headers then trickles a body forever. See the caveat under Design decisions. |
+| `keepAliveTimeout`             | `KEEP_ALIVE_TIMEOUT_MS` | `72000`   | Fastify's own default, chosen to sit above the common 60 s load-balancer idle timeout.                                                                                                           |
+| `routerOptions.maxParamLength` | `MAX_PARAM_LENGTH`      | `100`     | Fastify's own default. An over-long route parameter yields a raw `414`.                                                                                                                          |
+
+`maxParamLength` **must** be nested under `routerOptions`. As a top-level server option it is
+deprecated in Fastify 5 (`FSTDEP022`, removed in Fastify 6) and emits a runtime warning on every
+`fastify()` call — including every boot and every test run. TypeScript does not catch this: the
+`.d.ts` carries no `@deprecated` tag, so `typecheck` and `lint` both stay green while the process
+warns. This is the same practice that already routes `disableRequestLogging` through `LogController`
+rather than the deprecated top-level option.
 
 ### Plugin registration order
 
@@ -235,6 +265,7 @@ composition time in `buildApp` / `bullBoardPlugin`; `accessTokenService` (in `au
 | `registerErrorHandler`                         | Presentation | Single `setErrorHandler` + `setNotFoundHandler`; maps every error to the JSON envelope                                                                                                                                                                                                                                                               | `src/presentation/http/error-handler.ts`                     |
 | `KIND_TO_STATUS`                               | Presentation | Maps each `ErrorKindType` to its HTTP status code                                                                                                                                                                                                                                                                                                    | `src/presentation/http/error-handler.ts`                     |
 | `helmetOptions` / `rateLimitOptions`           | Presentation | Security defaults: the helmet Content-Security-Policy (CSP) toggle, and the rate limiter's option set — `max`, `timeWindow`, `skipOnError`, Redis key `nameSpace`, and the `errorResponseBuilder` that turns a throttle into a normal `FastifyError`. (The Redis handle itself is not built here; `buildApp` spreads it in alongside these options.) | `src/presentation/http/security.ts`                          |
+| `httpHardeningOptions`                         | Presentation | Pure projection of the five transport limits onto Fastify's option names, nesting `maxParamLength` under `routerOptions`; consumed by both `buildApp` and `buildHealthApp`                                                                                                                                                                           | `src/presentation/http/server-options.ts`                    |
 | `errorResponse`                                | Presentation | Zod response contract routes declare for error statuses                                                                                                                                                                                                                                                                                              | `src/presentation/http/schemas/error-schema.ts`              |
 | `paginated`                                    | Presentation | Zod response-contract factory wrapping a page of items                                                                                                                                                                                                                                                                                               | `src/presentation/http/schemas/pagination-schema.ts`         |
 | `timestamp`                                    | Presentation | Zod response contract for date fields (`z.date()`)                                                                                                                                                                                                                                                                                                   | `src/presentation/http/schemas/timestamp-schema.ts`          |
@@ -252,6 +283,8 @@ composition time in `buildApp` / `bullBoardPlugin`; `accessTokenService` (in `au
 | `Page` / `PageQuery` / `PageSlice`             | Shared       | Pagination types shared by use cases, repositories, and response schemas                                                                                                                                                                                                                                                                             | `src/shared/pagination.ts`                                   |
 | `env`                                          | Config       | Parse + validate the whole environment once at boot (`envalid`), exported frozen                                                                                                                                                                                                                                                                     | `src/config/env.ts`                                          |
 | `assertProductionSecrets`                      | Config       | Boot-time guard: refuse to start when a production secret is weak                                                                                                                                                                                                                                                                                    | `src/config/assert-production-secrets.ts`                    |
+| `parseTrustProxy`                              | Config       | Boot-time guard and parser for the `TRUST_PROXY` grammar (`false`, `true`, or a hop count `1`–`32`); rejects `0`, address lists, and out-of-range counts                                                                                                                                                                                             | `src/config/trust-proxy.ts`                                  |
+| `trustProxy` / `httpLimits`                    | Config       | Derived transport configuration read once from `env`; the single owner of the environment-to-consumer mapping for both servers                                                                                                                                                                                                                       | `src/config/http-transport.ts`                               |
 | `toServiceIdentity`                            | Config       | Derive `{ service, environment, version }` for logs/traces from env                                                                                                                                                                                                                                                                                  | `src/config/service-identity.ts`                             |
 
 ## Public surface
@@ -399,6 +432,11 @@ Consumed directly in `buildApp`, its plugins, `security.ts`, `cookies.ts`, `heal
 | `WEB_ORIGIN`               | `—` (devDefault `http://localhost:5173`)                  | Allowed CORS origin; passed to `@fastify/cors` with `credentials: true`.                                                                                                                                                          |
 | `RATE_LIMIT_MAX`           | `100`                                                     | Global rate-limit ceiling per window; passed to `@fastify/rate-limit`.                                                                                                                                                            |
 | `RATE_LIMIT_WINDOW`        | `1 minute`                                                | Global rate-limit window; also reused by the per-route auth buckets.                                                                                                                                                              |
+| `TRUST_PROXY`              | `false`                                                   | How far to trust `X-Forwarded-For` when resolving `request.ip`: `false`, `true`, or a hop count `1`–`32`. Parsed by `parseTrustProxy` at boot. **Security-sensitive** — see Code-level options below.                             |
+| `BODY_LIMIT_BYTES`         | `1048576`                                                 | Maximum request body in bytes; a larger body yields `413`.                                                                                                                                                                        |
+| `REQUEST_TIMEOUT_MS`       | `30000`                                                   | How long a request may take to _arrive_ (headers plus body) before Fastify answers `408`. Also read by the worker's probe server. Does not bound handler execution.                                                               |
+| `KEEP_ALIVE_TIMEOUT_MS`    | `72000`                                                   | Idle keep-alive window; keep it above your load balancer's idle timeout.                                                                                                                                                          |
+| `MAX_PARAM_LENGTH`         | `100`                                                     | Maximum length of a single route parameter; a longer one yields a raw `414`.                                                                                                                                                      |
 | `REDIS_URL`                | `—` (devDefault `redis://127.0.0.1:6379`)                 | Redis connection; backs the distributed rate-limit store (and BullMQ, idempotency, health checks).                                                                                                                                |
 | `METRICS_ENABLED`          | `true`                                                    | Gates registration of `metricsPlugin` and the `GET /metrics` route in `buildApp` (and the worker's `/metrics` in `buildHealthApp`). See [Metrics](./metrics.md).                                                                  |
 | `BULL_BOARD_ENABLED`       | `false`                                                   | Gates registration of `bullBoardPlugin` in `buildApp`, and whether the boot guard enforces `BULL_BOARD_PASSWORD` strength. See [Background Jobs](./background-jobs.md).                                                           |
@@ -464,6 +502,44 @@ and the optional `rateLimit` (default `true`, disabled by unit tests). `main.ts`
 - Swagger has no dedicated variable — it is gated purely on `!env.isProduction`. Bull Board, by
   contrast, is gated on `BULL_BOARD_ENABLED` and additionally protects itself with Basic Auth and
   its own strict CSP (see [Background Jobs](./background-jobs.md)).
+
+**`TRUST_PROXY` decides whether the rate limiter can be bypassed.** `rateLimitOptions` sets no
+`keyGenerator`, so `@fastify/rate-limit` keys its buckets on `request.ip`. What that resolves to is
+decided entirely by `trustProxy`, whose handling Fastify delegates to **`@fastify/proxy-addr`**. It
+builds the candidate list right-to-left — socket address first, then `X-Forwarded-For` reversed —
+and walks as many entries as it is told to trust:
+
+| `TRUST_PROXY` | `request.ip` resolves to              | Spoofable?                                 |
+| ------------- | ------------------------------------- | ------------------------------------------ |
+| `false`       | the socket address                    | No                                         |
+| `true`        | the leftmost `X-Forwarded-For` entry  | **Yes** — the client writes that entry     |
+| `1`, `2`, …   | the entry N hops back from the socket | No, **only** when N matches the real chain |
+
+Take one proxy in front and a malicious client sending `X-Forwarded-For: 198.51.100.1` (a lie). The
+proxy _appends_ the real peer, so the server sees `X-Forwarded-For: 198.51.100.1, 203.0.113.9`. With
+`TRUST_PROXY=1` the resolved address is `203.0.113.9` — the real client. With `TRUST_PROXY=true`, or
+with an **inflated** hop count such as `2` against that same one-proxy chain, it is `198.51.100.1` —
+the address the attacker chose, letting them mint unlimited fresh rate-limit buckets. Both hazards
+are pinned by tests. Use `true` only when the edge provably strips inbound `X-Forwarded-For`;
+otherwise count the real chain.
+
+The shipped default is `false`, which is also what `docker-compose.yml` pins, because that topology
+publishes port 8000 directly with no ingress in front. **Nothing about limiter behaviour changes
+until an operator opts in** — what this configuration provides is the seam, not a new default.
+
+The **address/CIDR-list grammar** Fastify would otherwise accept (`['10.0.0.0/8', 'loopback']`) is
+deliberately unsupported: validating it would mean reproducing `@fastify/proxy-addr`'s acceptance set
+at the boot check or taking on `ipaddr.js` as a direct dependency, and hop counts already cover
+single- and multi-proxy deployments. `TRUST_PROXY=10.0.0.0/8` is rejected at boot with a message
+naming every accepted form. The shape this forecloses is a _variable_ hop count — one service reached
+both through an ingress and directly by in-cluster peers, where no single integer is correct.
+
+**Three transport limits bypass the standard error envelope.** Only `bodyLimit` (`413`) throws a
+`FastifyError` that reaches `registerErrorHandler`. A `requestTimeout` expiry produces a `408`
+written by Fastify's `defaultClientErrorHandler`, and an over-long route parameter produces a raw
+`414` (`FST_ERR_MAX_PARAM_LENGTH`) written straight to the response. Neither carries `requestId` or
+the JSON envelope, so clients must not be written against one for those two statuses. This is
+upstream Fastify behaviour, not a choice made here.
 
 ## Usage & extension
 
@@ -833,6 +909,33 @@ app.post(
 - **`buildApp` returns the instance without listening.** Networking, signal handling, and worker
   startup live in `main.ts`; `buildApp` only assembles the app and exposes a `rateLimit` toggle.
   This makes the whole HTTP stack injectable in tests (`app.inject(...)`) with no open sockets.
+- **`REQUEST_TIMEOUT_MS` does not mean what its name suggests.** It is worth setting — it turns an
+  unbounded body phase into a bounded one — but three things about it surprise. First, Node does not
+  apply `headersTimeout` to headers and `requestTimeout` to the whole request; its sweep
+  **normalises the pair**, treating the smaller value as the header deadline and the larger as the
+  whole-request deadline. Fastify assigns `server.requestTimeout` after construction and never
+  touches `server.headersTimeout` (60 s), so `REQUEST_TIMEOUT_MS=30000` yields a 60 s request
+  deadline and a **30 s header deadline** — setting it very low will cut off legitimate slow clients
+  mid-headers. Second, enforcement is swept rather than exact: `connectionsCheckingInterval`
+  defaults to 30 s, so the observed close lands anywhere in a 30 s band. Third, it bounds the
+  _arrival_ of the request, not the handler — a handler running far longer than the timeout still
+  returns `200`, so this value need not be raised for slow endpoints.
+- **Zero and negative transport limits are handled inconsistently by Fastify.** `BODY_LIMIT_BYTES`
+  rejects both `0` and negatives at boot (`'bodyLimit' option must be an integer > 0`).
+  `KEEP_ALIVE_TIMEOUT_MS=0` and `MAX_PARAM_LENGTH=0` silently revert to their defaults, by different
+  mechanisms: `keepAliveTimeout` is Fastify's own `options.x || default`, whereas Fastify preserves
+  `maxParamLength: 0` and the `|| 100` fallback happens inside `find-my-way` — so `initialConfig`
+  reports `0` while the effective limit is `100`. Negative `KEEP_ALIVE_TIMEOUT_MS` and
+  `REQUEST_TIMEOUT_MS` reach the Node server unvalidated, and a negative `MAX_PARAM_LENGTH` makes
+  every parameterised route answer `414`. Adding lower bounds to the envalid declarations is a
+  reasonable follow-up.
+- **`trustProxy` correctness cannot be validated at boot.** Whether `1` or `2` is right depends on
+  deployment topology, which the process cannot observe — `parseTrustProxy` can only reject values
+  outside the grammar, not values that are wrong for the deployment. The mitigations are the safe
+  `false` default and documentation.
+- **`connectionTimeout` is deliberately not exposed.** Fastify defaults it to `0`, `requestTimeout`
+  already bounds the slow-request window, and any non-zero value severs healthy keep-alive
+  connections mid-reuse. A knob that must stay at its default would be an empty abstraction.
 
 ## Testing
 
@@ -857,6 +960,17 @@ Unit tests run under Vitest and live beside the code they cover:
   `/v1/roles`, `/v1/permissions`) and that unversioned paths (`/users`) 404.
 - `src/presentation/http/schemas/pagination-schema.test.ts` — asserts `paginated()` validates a
   well-formed envelope and **strips unknown fields** from items.
+- `src/presentation/http/server-options.test.ts` — asserts every input field lands on its Fastify
+  option with `maxParamLength` nested under `routerOptions`, then boots probe apps to pin the four
+  client-address outcomes (`false` → socket address; hop count `1` → the real peer, discarding the
+  forged leftmost entry; `true` and an inflated hop count `2` → the forged entry, pinning both
+  hazards) and the request limits (oversized body `413`, body within the limit `200`, over-long
+  route parameter `414`, short parameter `200`).
+- `src/config/trust-proxy.test.ts` — covers the `TRUST_PROXY` grammar: `'false'`, `''` and
+  whitespace-only trust nothing; `'true'` trusts every hop; casing and surrounding whitespace are
+  ignored on all three forms; `'1'` and `'32'` become hop counts; `'0'`, `'33'`, `'-1'`, `'1.5'`,
+  `'01'` and `'10.0.0.0/8'` are rejected; and the error message names both the variable and the
+  offending value.
 - `src/config/assert-production-secrets.test.ts` — covers the boot-time guard: a no-op outside
   production; in production it passes when secrets are ≥ 32 chars (including exactly at the
   minimum), throws naming the offending key when one is short or empty, names every weak secret in
@@ -882,7 +996,20 @@ Integration tests (real container, Redis-backed; configured by `vitest.integrati
   `RATE_LIMIT_AUTH_MAX` on `POST /v1/auth/login`, proves `/v1/auth/forgot-password` and
   `/v1/auth/reset-password` count in independent buckets, verifies the counters live under
   `RATE_LIMIT_KEY_NAMESPACE`-prefixed Redis keys, and proves fail-open by disconnecting
-  `rateLimitRedis` and still receiving a `401` (not a block).
+  `rateLimitRedis` and still receiving a `401` (not a block). It stays green under the suite's
+  `TRUST_PROXY=1` because its requests carry no `X-Forwarded-For`, so one trusted hop still resolves
+  to the socket address.
+- `test/integration/http-hardening.int.test.ts` — pins the **wiring**, not just the factory: it
+  boots the real `buildApp` and asserts `app.server.requestTimeout` equals `env.REQUEST_TIMEOUT_MS`
+  and `app.initialConfig.routerOptions?.maxParamLength` equals `env.MAX_PARAM_LENGTH`, then proves a
+  forged `X-Forwarded-For` entry is discarded end to end under the configured hop count
+  (`test/integration/setup-env.ts` sets `TRUST_PROXY=1` so the parse is exercised for real). Two
+  details make this test worth its weight. `BODY_LIMIT_BYTES` and `KEEP_ALIVE_TIMEOUT_MS`
+  deliberately equal Fastify's own defaults, so asserting them would pass even if the options were
+  never applied — only `requestTimeout` (`0` → 30 s) and `routerOptions` (absent → present)
+  discriminate. And `requestTimeout` is **absent from Fastify's `initialConfig` type** even though
+  it is set at runtime, so it must be read from `app.server`, which also proves the value reached
+  the transport rather than just the config object.
 
 Run the suites:
 
@@ -894,5 +1021,5 @@ npm run test:integration       # integration tests (needs the docker-compose dep
 Run only this feature's unit tests:
 
 ```bash
-npx vitest run src/presentation/http src/shared/errors src/shared/pagination.test.ts src/config/assert-production-secrets.test.ts
+npx vitest run src/presentation/http src/shared/errors src/shared/pagination.test.ts src/config/assert-production-secrets.test.ts src/config/trust-proxy.test.ts
 ```

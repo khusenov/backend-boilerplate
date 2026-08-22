@@ -4,6 +4,7 @@ import type { Cradle } from '@fastify/awilix';
 import { registerDependencies } from '@/container';
 import { createBaseLogger } from '@/infrastructure/logging/create-base-logger';
 import { env } from '@/config/env';
+import { httpLimits } from '@/config/http-transport';
 import { toServiceIdentity } from '@/config/service-identity';
 import { shutdownTracing } from '@/infrastructure/observability/tracing';
 import { startWorker } from '@/start-worker';
@@ -22,6 +23,7 @@ async function bootstrap(): Promise<void> {
     metricsExposition: container.cradle.metricsExposition,
     metricsEnabled: env.METRICS_ENABLED,
     logger,
+    hardening: { ...httpLimits, trustProxy: false },
   });
 
   registerGracefulShutdown({

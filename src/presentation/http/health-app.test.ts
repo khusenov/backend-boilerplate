@@ -6,6 +6,14 @@ import { buildHealthApp } from './health-app';
 
 const logger = createBaseLogger('silent');
 
+const testHardening = {
+  trustProxy: false,
+  bodyLimitBytes: 4096,
+  requestTimeoutMs: 1000,
+  keepAliveTimeoutMs: 2000,
+  maxParamLength: 32,
+} as const;
+
 const metricsExposition = {
   contentType: 'text/plain; version=0.0.4; charset=utf-8',
   render: vi
@@ -21,6 +29,7 @@ describe('buildHealthApp', () => {
       metricsExposition,
       metricsEnabled: true,
       logger,
+      hardening: testHardening,
     });
     await app.ready();
     const res = await app.inject({ method: 'GET', url: '/health/live' });
@@ -38,6 +47,7 @@ describe('buildHealthApp', () => {
       metricsExposition,
       metricsEnabled: true,
       logger,
+      hardening: testHardening,
     });
     await app.ready();
     const res = await app.inject({ method: 'GET', url: '/health/ready' });
@@ -53,6 +63,7 @@ describe('buildHealthApp', () => {
       metricsExposition,
       metricsEnabled: true,
       logger,
+      hardening: testHardening,
     });
     await app.ready();
     const res = await app.inject({ method: 'GET', url: '/metrics' });
@@ -69,6 +80,7 @@ describe('buildHealthApp', () => {
       metricsExposition,
       metricsEnabled: false,
       logger,
+      hardening: testHardening,
     });
     await app.ready();
     const metricsRes = await app.inject({ method: 'GET', url: '/metrics' });
