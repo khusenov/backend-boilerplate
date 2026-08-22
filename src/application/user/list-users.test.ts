@@ -1,11 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ListUsers } from './list-users';
-import { Email } from '@/domain/user/email-vo';
-import { User } from '@/domain/user/user-entity';
 import type { UserRepository } from '@/domain/user/user-repository';
 import { createUserActor } from '@/domain/authorization/actor';
 import { PermissionDeniedError } from '@/domain/authorization/access-policy-errors';
 import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
+import { makeUser } from '@test/unit/support/builders';
 
 const ACTOR = createUserActor({
   userId: 'actor-1',
@@ -18,21 +17,6 @@ const UNPRIVILEGED_ACTOR = createUserActor({
   systemRoleKeys: [],
   permissions: [],
 });
-
-const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
-
-function makeUser(id: string): User {
-  return User.create(
-    {
-      id,
-      firstName: 'Jane',
-      lastName: 'Doe',
-      email: Email.create(`${id}@example.com`),
-      passwordHash: 'hashed-pw',
-    },
-    CREATED_AT,
-  );
-}
 
 function makeListUsers() {
   const users = {
@@ -56,7 +40,13 @@ describe('ListUsers', () => {
 
   describe('execute', () => {
     it('returns a page with mapped UserDtos', async () => {
-      ctx.users.list.mockResolvedValue({ items: [makeUser('u-1'), makeUser('u-2')], total: 2 });
+      ctx.users.list.mockResolvedValue({
+        items: [
+          makeUser({ id: 'u-1', email: 'u-1@example.com' }),
+          makeUser({ id: 'u-2', email: 'u-2@example.com' }),
+        ],
+        total: 2,
+      });
 
       const result = await ctx.sut.execute({}, ACTOR);
 
@@ -96,7 +86,10 @@ describe('ListUsers', () => {
     });
 
     it('sets hasNext when there is a subsequent page', async () => {
-      ctx.users.list.mockResolvedValue({ items: [makeUser('u-1')], total: 20 });
+      ctx.users.list.mockResolvedValue({
+        items: [makeUser({ id: 'u-1', email: 'u-1@example.com' })],
+        total: 20,
+      });
 
       const result = await ctx.sut.execute({ page: 1, pageSize: 10 }, ACTOR);
 
@@ -105,7 +98,10 @@ describe('ListUsers', () => {
     });
 
     it('sets hasPrev when not on the first page', async () => {
-      ctx.users.list.mockResolvedValue({ items: [makeUser('u-1')], total: 20 });
+      ctx.users.list.mockResolvedValue({
+        items: [makeUser({ id: 'u-1', email: 'u-1@example.com' })],
+        total: 20,
+      });
 
       const result = await ctx.sut.execute({ page: 2, pageSize: 10 }, ACTOR);
 

@@ -1,13 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RevokeRole } from './revoke-role';
-import { User } from '@/domain/user/user-entity';
-import { Email } from '@/domain/user/email-vo';
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { UserRoleRepository } from '@/application/shared/ports/user-role-repository';
 import { UserNotFoundError } from '@/domain/user/user-errors';
 import { createUserActor } from '@/domain/authorization/actor';
 import { PermissionDeniedError } from '@/domain/authorization/access-policy-errors';
 import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
+import { makeUser } from '@test/unit/support/builders';
 
 const ACTOR = createUserActor({
   userId: 'actor-1',
@@ -20,21 +19,6 @@ const UNPRIVILEGED_ACTOR = createUserActor({
   systemRoleKeys: [],
   permissions: [],
 });
-
-const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
-
-function makeUser(): User {
-  return User.create(
-    {
-      id: 'user-1',
-      firstName: 'Jane',
-      lastName: 'Doe',
-      email: Email.create('jane@example.com'),
-      passwordHash: 'hash',
-    },
-    CREATED_AT,
-  );
-}
 
 function makeRevokeRole() {
   const users = {

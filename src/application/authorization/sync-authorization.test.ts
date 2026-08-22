@@ -263,7 +263,6 @@ describe('SyncAuthorization', () => {
 
       await ctx.sut.execute(ACTOR);
 
-      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(ctx.unitOfWork.run).toHaveBeenCalledOnce();
     });
   });
@@ -275,7 +274,6 @@ describe('SyncAuthorization authorization', () => {
 
     await expect(ctx.sut.execute(SUPERADMIN_ACTOR)).rejects.toThrow(SystemActorRequiredError);
 
-    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(ctx.unitOfWork.run).not.toHaveBeenCalled();
   });
 });

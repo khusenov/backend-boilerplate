@@ -1,11 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { mock } from 'vitest-mock-extended';
 import { PasswordResetTokenRetentionTask } from './password-reset-token-retention-task';
 import type { PasswordResetTokenRepository } from '@/domain/password-reset/password-reset-token-repository';
 
-function makeTask(deleteExpired = vi.fn().mockResolvedValue(0)) {
-  const passwordResetTokenRepository = { deleteExpired } as unknown as PasswordResetTokenRepository;
+function makeTask() {
+  const passwordResetTokenRepository = mock<PasswordResetTokenRepository>();
+  passwordResetTokenRepository.deleteExpired.mockResolvedValue(0);
   const task = new PasswordResetTokenRetentionTask({ passwordResetTokenRepository });
-  return { task, deleteExpired };
+  return { task, passwordResetTokenRepository };
 }
 
 describe('PasswordResetTokenRetentionTask', () => {
@@ -16,11 +18,12 @@ describe('PasswordResetTokenRetentionTask', () => {
 
   it('delegates to deleteExpired with the cutoff and returns the deleted count', async () => {
     const cutoff = new Date('2026-07-21T00:00:00.000Z');
-    const { task, deleteExpired } = makeTask(vi.fn().mockResolvedValue(4));
+    const { task, passwordResetTokenRepository } = makeTask();
+    passwordResetTokenRepository.deleteExpired.mockResolvedValue(4);
 
     const deleted = await task.prune(cutoff);
 
-    expect(deleteExpired).toHaveBeenCalledWith(cutoff);
+    expect(passwordResetTokenRepository.deleteExpired).toHaveBeenCalledWith(cutoff);
     expect(deleted).toBe(4);
   });
 });

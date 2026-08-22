@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mock } from 'vitest-mock-extended';
 import {
   DATA_RETENTION_JOB,
   EnforceDataRetentionJob,
@@ -11,16 +12,13 @@ const WINDOW_MS = 1_000;
 const NOW = new Date('2026-07-21T00:00:00.000Z');
 const EXPECTED_CUTOFF = new Date(NOW.getTime() - WINDOW_MS);
 
-function stubLogger(overrides: Partial<Logger> = {}): Logger {
-  return { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), ...overrides };
-}
-
 function fakeTask(resource: string, prune = vi.fn().mockResolvedValue(0)) {
   const task: RetentionTask = { resource, prune };
   return { task, prune };
 }
 
-function makeJob(tasks: RetentionTask[], logger: Logger = stubLogger()) {
+function makeJob(tasks: RetentionTask[]) {
+  const logger = mock<Logger>();
   const clock = { now: () => NOW } satisfies Clock;
 
   const job = new EnforceDataRetentionJob({
@@ -50,13 +48,12 @@ describe('EnforceDataRetentionJob', () => {
   });
 
   it('logs the deleted count for each pruned resource', async () => {
-    const info = vi.fn();
     const outbox = fakeTask('outbox_messages', vi.fn().mockResolvedValue(7));
-    const { job } = makeJob([outbox.task], stubLogger({ info }));
+    const { job, logger } = makeJob([outbox.task]);
 
     await job.handle();
 
-    expect(info).toHaveBeenCalledWith('Pruned expired records', {
+    expect(logger.info).toHaveBeenCalledWith('Pruned expired records', {
       resource: 'outbox_messages',
       deleted: 7,
       cutoff: EXPECTED_CUTOFF,
@@ -64,39 +61,36 @@ describe('EnforceDataRetentionJob', () => {
   });
 
   it('keeps pruning remaining resources when a task throws an Error, logging its message', async () => {
-    const error = vi.fn();
     const failing = fakeTask('outbox_messages', vi.fn().mockRejectedValue(new Error('db down')));
     const healthy = fakeTask('refresh_tokens');
-    const { job } = makeJob([failing.task, healthy.task], stubLogger({ error }));
+    const { job, logger } = makeJob([failing.task, healthy.task]);
 
     await job.handle();
 
     expect(healthy.prune).toHaveBeenCalledWith(EXPECTED_CUTOFF);
-    expect(error).toHaveBeenCalledWith('Failed to prune expired records', {
+    expect(logger.error).toHaveBeenCalledWith('Failed to prune expired records', {
       resource: 'outbox_messages',
       error: 'db down',
     });
   });
 
   it('stringifies a non-Error rejection when logging a prune failure', async () => {
-    const error = vi.fn();
     const failing = fakeTask('outbox_messages', vi.fn().mockRejectedValue('boom'));
-    const { job } = makeJob([failing.task], stubLogger({ error }));
+    const { job, logger } = makeJob([failing.task]);
 
     await job.handle();
 
-    expect(error).toHaveBeenCalledWith('Failed to prune expired records', {
+    expect(logger.error).toHaveBeenCalledWith('Failed to prune expired records', {
       resource: 'outbox_messages',
       error: 'boom',
     });
   });
 
   it('does nothing when no retention tasks are registered', async () => {
-    const info = vi.fn();
-    const { job } = makeJob([], stubLogger({ info }));
+    const { job, logger } = makeJob([]);
 
     await job.handle();
 
-    expect(info).not.toHaveBeenCalled();
+    expect(logger.info).not.toHaveBeenCalled();
   });
 });

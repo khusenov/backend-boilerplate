@@ -1,11 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { mock } from 'vitest-mock-extended';
 import { RefreshTokenRetentionTask } from './refresh-token-retention-task';
 import type { RefreshTokenRepository } from '@/domain/auth/refresh-token-repository';
 
-function makeTask(deleteExpired = vi.fn().mockResolvedValue(0)) {
-  const refreshTokenRepository = { deleteExpired } as unknown as RefreshTokenRepository;
+function makeTask() {
+  const refreshTokenRepository = mock<RefreshTokenRepository>();
+  refreshTokenRepository.deleteExpired.mockResolvedValue(0);
   const task = new RefreshTokenRetentionTask({ refreshTokenRepository });
-  return { task, deleteExpired };
+  return { task, refreshTokenRepository };
 }
 
 describe('RefreshTokenRetentionTask', () => {
@@ -16,11 +18,12 @@ describe('RefreshTokenRetentionTask', () => {
 
   it('delegates to deleteExpired with the cutoff and returns the deleted count', async () => {
     const cutoff = new Date('2026-07-21T00:00:00.000Z');
-    const { task, deleteExpired } = makeTask(vi.fn().mockResolvedValue(4));
+    const { task, refreshTokenRepository } = makeTask();
+    refreshTokenRepository.deleteExpired.mockResolvedValue(4);
 
     const deleted = await task.prune(cutoff);
 
-    expect(deleteExpired).toHaveBeenCalledWith(cutoff);
+    expect(refreshTokenRepository.deleteExpired).toHaveBeenCalledWith(cutoff);
     expect(deleted).toBe(4);
   });
 });
