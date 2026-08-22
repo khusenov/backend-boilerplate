@@ -101,7 +101,7 @@ export const userRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       schema: {
         params: editUserParams,
         body: editUserBody,
-        response: { 200: userResponse, 404: errorResponse },
+        response: { 200: userResponse, 404: errorResponse, 409: errorResponse },
       },
     },
     async (request, reply) => {

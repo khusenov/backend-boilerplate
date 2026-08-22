@@ -11,5 +11,6 @@ export interface UserRepository {
 
   findByEmail(email: Email): Promise<User | null>;
 
+  // throws StaleAggregateError when the stored version has moved on
   save(user: User): Promise<void>;
 }

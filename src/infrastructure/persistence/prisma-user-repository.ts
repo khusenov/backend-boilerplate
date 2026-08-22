@@ -1,10 +1,17 @@
 import { toDomain, toPersistence } from './prisma-user-mapper';
 import { mapPrismaError } from './prisma-error';
+import { UNSAVED_VERSION } from '@/domain/shared/aggregate-root';
+import { StaleAggregateError } from '@/domain/shared/concurrency-errors';
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { PageQuery, PageSlice } from '@/shared/pagination';
 import type { User } from '@/domain/user/user-entity';
 import type { Email } from '@/domain/user/email-vo';
+import type { User as UserRow } from '@/generated/prisma/client';
 import type { PrismaTransactionalClient } from './prisma-transactional-client';
+
+const USER_AGGREGATE_NAME = 'User';
+
+type MutableUserFields = Omit<UserRow, 'id' | 'createdAt'>;
 
 interface PrismaUserRepositoryDeps {
   prisma: PrismaTransactionalClient;
@@ -42,14 +49,38 @@ export class PrismaUserRepository implements UserRepository {
   }
 
   async save(user: User): Promise<void> {
-    // id and createdAt are immutable: written on insert, never on update.
-    const { id, createdAt, ...mutable } = toPersistence(user);
+    const { id, createdAt, ...current } = toPersistence(user);
+    const expectedVersion = current.version;
+    const next: MutableUserFields = { ...current, version: expectedVersion + 1 };
+
+    if (expectedVersion === UNSAVED_VERSION) {
+      await this.insert({ id, createdAt, ...next });
+      return;
+    }
+
+    const updatedRows = await this.guardedUpdate(id, expectedVersion, next);
+    if (updatedRows === 0) throw new StaleAggregateError(USER_AGGREGATE_NAME, id);
+  }
+
+  private async insert(row: UserRow): Promise<void> {
     try {
-      await this.prisma.user.upsert({
-        where: { id },
-        create: { id, createdAt, ...mutable },
-        update: mutable,
+      await this.prisma.user.create({ data: row });
+    } catch (error) {
+      mapPrismaError(error);
+    }
+  }
+
+  private async guardedUpdate(
+    id: string,
+    expectedVersion: number,
+    data: MutableUserFields,
+  ): Promise<number> {
+    try {
+      const { count } = await this.prisma.user.updateMany({
+        where: { id, version: expectedVersion },
+        data,
       });
+      return count;
     } catch (error) {
       mapPrismaError(error);
     }

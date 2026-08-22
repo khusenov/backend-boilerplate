@@ -11,6 +11,7 @@ function makeUserRow(overrides: Partial<UserRow> = {}): UserRow {
     email: 'john@example.com',
     passwordHash: 'hashed-password',
     status: 'active',
+    version: 1,
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
