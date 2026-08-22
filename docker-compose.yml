@@ -78,7 +78,7 @@ services:
     restart: 'no'
 
   tempo:
-    image: grafana/tempo:3.0.2
+    image: grafana/tempo:3.0.3
     restart: unless-stopped
     command: ['-config.file=/etc/tempo.yaml']
     volumes:
