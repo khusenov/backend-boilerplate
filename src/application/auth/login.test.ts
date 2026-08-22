@@ -1,15 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mock } from 'vitest-mock-extended';
 import { Login } from './login';
 import type { AuthTokensDto } from './auth-dto';
 import type { SessionService } from './session-service';
 import { InvalidCredentialsError } from '@/domain/auth/auth-errors';
 import { InvalidEmailError } from '@/domain/user/email-vo';
-import { Email } from '@/domain/user/email-vo';
-import { User } from '@/domain/user/user-entity';
+import type { User } from '@/domain/user/user-entity';
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { PasswordHasher } from '@/application/shared/ports/password-hasher';
 import type { GrantsReader } from '@/application/shared/ports/grants-reader';
-import type { Clock } from '@/application/shared/ports/clock';
+import { makeUser } from '@test/unit/support/builders';
+import { makeFixedClock } from '@test/unit/support/fakes';
 
 const FAKE_TOKENS: AuthTokensDto = {
   accessToken: 'access.token.jwt',
@@ -18,21 +19,8 @@ const FAKE_TOKENS: AuthTokensDto = {
 const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
 const NOW = new Date('2026-06-01T12:00:00.000Z');
 
-function makeActiveUser(): User {
-  return User.create(
-    {
-      id: 'user-1',
-      firstName: 'Jane',
-      lastName: 'Doe',
-      email: Email.create('jane@example.com'),
-      passwordHash: 'hashed-secret',
-    },
-    CREATED_AT,
-  );
-}
-
 function makeInactiveUser(): User {
-  const user = makeActiveUser();
+  const user = makeUser();
   user.deactivate(CREATED_AT);
   return user;
 }
@@ -50,11 +38,8 @@ function makeLogin() {
     verify: vi.fn<PasswordHasher['verify']>(),
   } satisfies PasswordHasher;
 
-  const issue = vi.fn().mockResolvedValue(FAKE_TOKENS);
-  const sessions = {
-    issue,
-    reissue: vi.fn(),
-  } as unknown as SessionService;
+  const sessions = mock<SessionService>();
+  sessions.issue.mockResolvedValue(FAKE_TOKENS);
 
   const grants = {
     grantsFor: vi
@@ -62,7 +47,7 @@ function makeLogin() {
       .mockResolvedValue({ systemRoleKeys: [], permissions: [] }),
   } satisfies GrantsReader;
 
-  const clock = { now: vi.fn<Clock['now']>().mockReturnValue(NOW) } satisfies Clock;
+  const clock = makeFixedClock(NOW);
 
   const sut = new Login({
     userRepository: users,
@@ -72,7 +57,7 @@ function makeLogin() {
     clock,
   });
 
-  return { sut, users, hasher, sessions, grants, issue, clock };
+  return { sut, users, hasher, sessions, grants, clock };
 }
 
 describe('Login', () => {
@@ -98,7 +83,7 @@ describe('Login', () => {
     });
 
     it('throws InvalidCredentialsError when the password is wrong', async () => {
-      ctx.users.findByEmail.mockResolvedValue(makeActiveUser());
+      ctx.users.findByEmail.mockResolvedValue(makeUser());
       ctx.hasher.verify.mockResolvedValue(false);
 
       await expect(
@@ -116,7 +101,7 @@ describe('Login', () => {
     });
 
     it('returns a mapped UserDto and tokens on success', async () => {
-      const user = makeActiveUser();
+      const user = makeUser();
       ctx.users.findByEmail.mockResolvedValue(user);
       ctx.hasher.verify.mockResolvedValue(true);
 
@@ -132,7 +117,7 @@ describe('Login', () => {
     });
 
     it('resolves the user grants and issues a session carrying them', async () => {
-      const user = makeActiveUser();
+      const user = makeUser();
       ctx.users.findByEmail.mockResolvedValue(user);
       ctx.hasher.verify.mockResolvedValue(true);
       ctx.grants.grantsFor.mockResolvedValue({
@@ -143,7 +128,7 @@ describe('Login', () => {
       await ctx.sut.execute({ email: 'jane@example.com', password: 'correct' });
 
       expect(ctx.grants.grantsFor).toHaveBeenCalledWith(user.id);
-      expect(ctx.issue).toHaveBeenCalledWith(
+      expect(ctx.sessions.issue).toHaveBeenCalledWith(
         user,
         {
           systemRoleKeys: ['super-admin'],
@@ -158,7 +143,7 @@ describe('Login', () => {
       [
         'a wrong password',
         () => {
-          ctx.users.findByEmail.mockResolvedValue(makeActiveUser());
+          ctx.users.findByEmail.mockResolvedValue(makeUser());
           ctx.hasher.verify.mockResolvedValue(false);
         },
       ],
@@ -180,7 +165,7 @@ describe('Login', () => {
     });
 
     it('verifies the supplied password against the stored hash', async () => {
-      const user = makeActiveUser();
+      const user = makeUser();
       ctx.users.findByEmail.mockResolvedValue(user);
       ctx.hasher.verify.mockResolvedValue(true);
 

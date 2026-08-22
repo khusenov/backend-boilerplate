@@ -1,16 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { mock } from 'vitest-mock-extended';
 import { CreateUser } from './create-user';
 import { InvalidEmailError } from '@/domain/user/email-vo';
 import { EmailAlreadyTakenError } from '@/domain/user/user-errors';
-import { Email } from '@/domain/user/email-vo';
-import { User } from '@/domain/user/user-entity';
 import { UserCreatedEvent } from '@/domain/user/events/user-created-event';
-import type { DomainEvent } from '@/domain/shared/domain-event';
-import type { TransactionContext, UnitOfWork } from '@/application/shared/ports/unit-of-work';
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { PasswordHasher } from '@/application/shared/ports/password-hasher';
 import type { IdGenerator } from '@/application/shared/ports/id-generator';
-import type { Clock } from '@/application/shared/ports/clock';
+import { makeUser } from '@test/unit/support/builders';
+import { makeFixedClock, makeUnitOfWork } from '@test/unit/support/fakes';
 import { createUserActor } from '@/domain/authorization/actor';
 import { PermissionDeniedError } from '@/domain/authorization/access-policy-errors';
 import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
@@ -29,46 +27,24 @@ const UNPRIVILEGED_ACTOR = createUserActor({
 
 const NOW = new Date('2026-01-01T00:00:00.000Z');
 
-function makeExistingUser(): User {
-  return User.create(
-    {
-      id: 'user-existing',
-      firstName: 'Jane',
-      lastName: 'Doe',
-      email: Email.create('jane@example.com'),
-      passwordHash: 'hashed-pw',
-    },
-    NOW,
-  );
-}
-
-// A fake UnitOfWork whose `run` invokes the callback with a stub transaction
-// context, capturing the tx-scoped save and the outbox staging as plain mocks.
-// `work` is typed (not `any`) and `run` returns the callback's promise directly
-// (no needless `async`), so the fake stays clean under the strict lint preset.
 function makeDeps() {
-  const stage = vi.fn<(events: readonly DomainEvent[]) => void>();
-  const txSave = vi.fn<UserRepository['save']>().mockResolvedValue(undefined);
+  const { unitOfWork, context } = makeUnitOfWork();
+  context.userRepository.save.mockResolvedValue(undefined);
 
-  const run = vi.fn((work: (context: TransactionContext) => Promise<unknown>) =>
-    work({ userRepository: { save: txSave }, outbox: { stage } } as unknown as TransactionContext),
-  );
-  const unitOfWork = { run } as unknown as UnitOfWork;
+  const userRepository = mock<UserRepository>();
+  userRepository.findByEmail.mockResolvedValue(null);
 
-  const findByEmail = vi.fn<UserRepository['findByEmail']>().mockResolvedValue(null);
-  const hash = vi.fn<PasswordHasher['hash']>().mockResolvedValue('hashed-secret');
-  const generate = vi.fn<IdGenerator['generate']>().mockReturnValue('new-user-id');
-  const clock = { now: vi.fn<Clock['now']>().mockReturnValue(NOW) } satisfies Clock;
+  const passwordHasher = mock<PasswordHasher>();
+  passwordHasher.hash.mockResolvedValue('hashed-secret');
 
-  const deps = {
-    unitOfWork,
-    userRepository: { findByEmail } as unknown as UserRepository,
-    passwordHasher: { hash } as unknown as PasswordHasher,
-    idGenerator: { generate } as unknown as IdGenerator,
-    clock,
-  };
+  const idGenerator = mock<IdGenerator>();
+  idGenerator.generate.mockReturnValue('new-user-id');
 
-  return { deps, run, findByEmail, hash, generate, stage, txSave, clock };
+  const clock = makeFixedClock(NOW);
+
+  const deps = { unitOfWork, userRepository, passwordHasher, idGenerator, clock };
+
+  return { deps, tx: context };
 }
 
 const input = {
@@ -91,56 +67,56 @@ describe('CreateUser', () => {
         new CreateUser(ctx.deps).execute({ ...input, email: 'not-an-email' }, ACTOR),
       ).rejects.toThrow(InvalidEmailError);
 
-      expect(ctx.findByEmail).not.toHaveBeenCalled(); // Email.create throws first
+      expect(ctx.deps.userRepository.findByEmail).not.toHaveBeenCalled(); // Email.create throws first
     });
 
     it('rejects a duplicate email before hashing the password', async () => {
-      ctx.findByEmail.mockResolvedValue(makeExistingUser());
+      ctx.deps.userRepository.findByEmail.mockResolvedValue(makeUser({ id: 'user-existing' }));
 
       await expect(new CreateUser(ctx.deps).execute(input, ACTOR)).rejects.toBeInstanceOf(
         EmailAlreadyTakenError,
       );
 
-      expect(ctx.hash).not.toHaveBeenCalled(); // no argon2 for duplicates
-      expect(ctx.run).not.toHaveBeenCalled(); // never opens a transaction
+      expect(ctx.deps.passwordHasher.hash).not.toHaveBeenCalled(); // no argon2 for duplicates
+      expect(ctx.deps.unitOfWork.run).not.toHaveBeenCalled(); // never opens a transaction
     });
 
     it('hashes the password before persisting', async () => {
       await new CreateUser(ctx.deps).execute(input, ACTOR);
 
-      expect(ctx.hash).toHaveBeenCalledOnce();
-      expect(ctx.hash).toHaveBeenCalledWith(input.password);
+      expect(ctx.deps.passwordHasher.hash).toHaveBeenCalledOnce();
+      expect(ctx.deps.passwordHasher.hash).toHaveBeenCalledWith(input.password);
     });
 
     it('generates an id for the new user', async () => {
       await new CreateUser(ctx.deps).execute(input, ACTOR);
 
-      expect(ctx.generate).toHaveBeenCalledOnce();
+      expect(ctx.deps.idGenerator.generate).toHaveBeenCalledOnce();
     });
 
     it('saves the user through the unit of work exactly once', async () => {
       await new CreateUser(ctx.deps).execute(input, ACTOR);
 
-      expect(ctx.run).toHaveBeenCalledOnce();
-      expect(ctx.txSave).toHaveBeenCalledOnce();
-      const [savedUser] = ctx.txSave.mock.calls[0]!;
+      expect(ctx.deps.unitOfWork.run).toHaveBeenCalledOnce();
+      expect(ctx.tx.userRepository.save).toHaveBeenCalledOnce();
+      const [savedUser] = ctx.tx.userRepository.save.mock.calls[0]!;
       expect(savedUser.id).toBe('new-user-id');
     });
 
     it('stamps the user from a single clock reading', async () => {
       await new CreateUser(ctx.deps).execute(input, ACTOR);
 
-      const [savedUser] = ctx.txSave.mock.calls[0]!;
+      const [savedUser] = ctx.tx.userRepository.save.mock.calls[0]!;
       expect(savedUser.createdAt).toEqual(NOW);
       expect(savedUser.updatedAt).toEqual(NOW);
-      expect(ctx.clock.now).toHaveBeenCalledOnce();
+      expect(ctx.deps.clock.now).toHaveBeenCalledOnce();
     });
 
     it('stages the UserCreatedEvent inside the transaction', async () => {
       await new CreateUser(ctx.deps).execute(input, ACTOR);
 
-      expect(ctx.stage).toHaveBeenCalledOnce();
-      const [stagedEvents] = ctx.stage.mock.calls[0]!;
+      expect(ctx.tx.outbox.stage).toHaveBeenCalledOnce();
+      const [stagedEvents] = ctx.tx.outbox.stage.mock.calls[0]!;
       expect(stagedEvents).toHaveLength(1);
       const event = stagedEvents[0];
       expect(event).toBeInstanceOf(UserCreatedEvent);
@@ -151,16 +127,16 @@ describe('CreateUser', () => {
     it('stages an event whose occurredAt matches the saved user createdAt', async () => {
       await new CreateUser(ctx.deps).execute(input, ACTOR);
 
-      const [savedUser] = ctx.txSave.mock.calls[0]!;
-      const [stagedEvents] = ctx.stage.mock.calls[0]!;
+      const [savedUser] = ctx.tx.userRepository.save.mock.calls[0]!;
+      const [stagedEvents] = ctx.tx.outbox.stage.mock.calls[0]!;
       expect(stagedEvents[0]!.occurredAt).toEqual(savedUser.createdAt);
     });
 
     it('saves before it stages (save precedes stage within the transaction)', async () => {
       await new CreateUser(ctx.deps).execute(input, ACTOR);
 
-      const saveOrder = ctx.txSave.mock.invocationCallOrder[0]!;
-      const stageOrder = ctx.stage.mock.invocationCallOrder[0]!;
+      const saveOrder = ctx.tx.userRepository.save.mock.invocationCallOrder[0]!;
+      const stageOrder = ctx.tx.outbox.stage.mock.invocationCallOrder[0]!;
       expect(saveOrder).toBeLessThan(stageOrder);
     });
 
@@ -185,7 +161,7 @@ describe('CreateUser authorization', () => {
       PermissionDeniedError,
     );
 
-    expect(ctx.findByEmail).not.toHaveBeenCalled();
-    expect(ctx.run).not.toHaveBeenCalled();
+    expect(ctx.deps.userRepository.findByEmail).not.toHaveBeenCalled();
+    expect(ctx.deps.unitOfWork.run).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,15 @@
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
   forbidden: [
+    {
+      name: 'production-does-not-import-test-code',
+      comment:
+        'Only test files may import the unit-test kit. Co-located *.test.ts files are ' +
+        'excluded from the cruise, so this fires only on genuine production imports.',
+      severity: 'error',
+      from: { path: '^src/' },
+      to: { path: '^test/' },
+    },
     // ─── Clean-architecture layer boundaries (the Dependency Rule: dependencies point inward) ───
     {
       name: 'domain-stays-pure',

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mock } from 'vitest-mock-extended';
 import { VerifyEmail } from './verify-email';
 import { Email, InvalidEmailError } from '@/domain/user/email-vo';
 import { User, UserStatus } from '@/domain/user/user-entity';
@@ -8,11 +9,10 @@ import {
   VerificationCodeExpiredError,
   VerificationCodeInvalidError,
 } from '@/domain/verification/verification-errors';
-import type { TransactionContext, UnitOfWork } from '@/application/shared/ports/unit-of-work';
 import type { EmailVerificationCodeRepository } from '@/domain/verification/email-verification-code-repository';
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { VerificationCodeService } from '@/application/shared/ports/verification-code-service';
-import type { Clock } from '@/application/shared/ports/clock';
+import { makeFixedClock, makeUnitOfWork } from '@test/unit/support/fakes';
 
 const ISSUED_AT = new Date('2026-01-01T00:00:00.000Z');
 const NOW = new Date('2026-01-01T00:05:00.000Z');
@@ -54,28 +54,19 @@ function makeCode(
 }
 
 function makeDeps() {
-  const txSave = vi.fn<UserRepository['save']>().mockResolvedValue(undefined);
-  const txUpdateCode = vi
-    .fn<EmailVerificationCodeRepository['update']>()
-    .mockResolvedValue(undefined);
-
-  const run = vi.fn((work: (context: TransactionContext) => Promise<unknown>) =>
-    work({
-      userRepository: { save: txSave },
-      emailVerificationCodeRepository: { update: txUpdateCode },
-    } as unknown as TransactionContext),
-  );
-  const unitOfWork = { run } as unknown as UnitOfWork;
+  const { unitOfWork, context } = makeUnitOfWork();
+  context.userRepository.save.mockResolvedValue(undefined);
+  context.emailVerificationCodeRepository.update.mockResolvedValue(undefined);
 
   const user = makePendingUser();
-  const findByEmail = vi.fn<UserRepository['findByEmail']>().mockResolvedValue(user);
-  const findActiveByUserId = vi
-    .fn<EmailVerificationCodeRepository['findActiveByUserId']>()
-    .mockResolvedValue(makeCode());
-  const updateCode = vi
-    .fn<EmailVerificationCodeRepository['update']>()
-    .mockResolvedValue(undefined);
-  const clock = { now: vi.fn<Clock['now']>().mockReturnValue(NOW) } satisfies Clock;
+  const userRepository = mock<UserRepository>();
+  userRepository.findByEmail.mockResolvedValue(user);
+
+  const emailVerificationCodeRepository = mock<EmailVerificationCodeRepository>();
+  emailVerificationCodeRepository.findActiveByUserId.mockResolvedValue(makeCode());
+  emailVerificationCodeRepository.update.mockResolvedValue(undefined);
+
+  const clock = makeFixedClock(NOW);
   const codeService = {
     generate: vi.fn<VerificationCodeService['generate']>(),
     hash: vi.fn<VerificationCodeService['hash']>().mockImplementation((code) => `hmac-of-${code}`),
@@ -83,26 +74,13 @@ function makeDeps() {
 
   const deps = {
     unitOfWork,
-    userRepository: { findByEmail } as unknown as UserRepository,
-    emailVerificationCodeRepository: {
-      findActiveByUserId,
-      update: updateCode,
-    } as unknown as EmailVerificationCodeRepository,
+    userRepository,
+    emailVerificationCodeRepository,
     verificationCodeService: codeService,
     clock,
   };
 
-  return {
-    deps,
-    run,
-    user,
-    findByEmail,
-    findActiveByUserId,
-    updateCode,
-    codeService,
-    txSave,
-    txUpdateCode,
-  };
+  return { deps, tx: context, user };
 }
 
 async function rejectionOf(promise: Promise<unknown>): Promise<VerificationCodeInvalidError> {
@@ -127,33 +105,35 @@ describe('VerifyEmail', () => {
         new VerifyEmail(ctx.deps).execute({ email: 'not-an-email', code: RIGHT_CODE }),
       ).rejects.toThrow(InvalidEmailError);
 
-      expect(ctx.findByEmail).not.toHaveBeenCalled();
+      expect(ctx.deps.userRepository.findByEmail).not.toHaveBeenCalled();
     });
 
     it('looks the code up by the resolved user id', async () => {
       await new VerifyEmail(ctx.deps).execute({ email: 'jane@example.com', code: RIGHT_CODE });
 
-      expect(ctx.findActiveByUserId).toHaveBeenCalledWith('user-1');
+      expect(ctx.deps.emailVerificationCodeRepository.findActiveByUserId).toHaveBeenCalledWith(
+        'user-1',
+      );
     });
 
     it('hashes the candidate rather than comparing plaintext', async () => {
       await new VerifyEmail(ctx.deps).execute({ email: 'jane@example.com', code: RIGHT_CODE });
 
-      expect(ctx.codeService.hash).toHaveBeenCalledWith(RIGHT_CODE);
+      expect(ctx.deps.verificationCodeService.hash).toHaveBeenCalledWith(RIGHT_CODE);
     });
 
     it('activates the user and consumes the code in one transaction', async () => {
       await new VerifyEmail(ctx.deps).execute({ email: 'jane@example.com', code: RIGHT_CODE });
 
-      expect(ctx.run).toHaveBeenCalledOnce();
-      expect(ctx.txSave).toHaveBeenCalledOnce();
-      expect(ctx.txUpdateCode).toHaveBeenCalledOnce();
+      expect(ctx.deps.unitOfWork.run).toHaveBeenCalledOnce();
+      expect(ctx.tx.userRepository.save).toHaveBeenCalledOnce();
+      expect(ctx.tx.emailVerificationCodeRepository.update).toHaveBeenCalledOnce();
 
-      const [savedUser] = ctx.txSave.mock.calls[0]!;
+      const [savedUser] = ctx.tx.userRepository.save.mock.calls[0]!;
       expect(savedUser.status).toBe(UserStatus.Active);
       expect(savedUser.updatedAt).toEqual(NOW);
 
-      const [savedCode] = ctx.txUpdateCode.mock.calls[0]!;
+      const [savedCode] = ctx.tx.emailVerificationCodeRepository.update.mock.calls[0]!;
       expect(savedCode.isConsumed).toBe(true);
       expect(savedCode.consumedAt).toEqual(NOW);
     });
@@ -172,7 +152,7 @@ describe('VerifyEmail', () => {
     it('does not write outside the transaction on success', async () => {
       await new VerifyEmail(ctx.deps).execute({ email: 'jane@example.com', code: RIGHT_CODE });
 
-      expect(ctx.updateCode).not.toHaveBeenCalled();
+      expect(ctx.deps.emailVerificationCodeRepository.update).not.toHaveBeenCalled();
     });
   });
 
@@ -186,10 +166,10 @@ describe('VerifyEmail', () => {
     it('persists the incremented attempt counter outside the transaction', async () => {
       await expect(
         new VerifyEmail(ctx.deps).execute({ email: 'jane@example.com', code: WRONG_CODE }),
-      ).rejects.toThrow();
+      ).rejects.toBeInstanceOf(VerificationCodeInvalidError);
 
-      expect(ctx.updateCode).toHaveBeenCalledOnce();
-      const [savedCode] = ctx.updateCode.mock.calls[0]!;
+      expect(ctx.deps.emailVerificationCodeRepository.update).toHaveBeenCalledOnce();
+      const [savedCode] = ctx.deps.emailVerificationCodeRepository.update.mock.calls[0]!;
       expect(savedCode.attempts).toBe(1);
       expect(savedCode.isConsumed).toBe(false);
     });
@@ -197,9 +177,9 @@ describe('VerifyEmail', () => {
     it('never activates the user', async () => {
       await expect(
         new VerifyEmail(ctx.deps).execute({ email: 'jane@example.com', code: WRONG_CODE }),
-      ).rejects.toThrow();
+      ).rejects.toBeInstanceOf(VerificationCodeInvalidError);
 
-      expect(ctx.run).not.toHaveBeenCalled();
+      expect(ctx.deps.unitOfWork.run).not.toHaveBeenCalled();
       expect(ctx.user.status).toBe(UserStatus.Pending);
     });
   });
@@ -208,7 +188,7 @@ describe('VerifyEmail', () => {
   // avoid a pointless UPDATE.
   describe('rejections that write nothing', () => {
     it('throws VerificationCodeExpiredError for an expired code', async () => {
-      ctx.findActiveByUserId.mockResolvedValue(
+      ctx.deps.emailVerificationCodeRepository.findActiveByUserId.mockResolvedValue(
         makeCode({ expiresAt: new Date('2026-01-01T00:01:00.000Z') }),
       );
 
@@ -216,43 +196,45 @@ describe('VerifyEmail', () => {
         new VerifyEmail(ctx.deps).execute({ email: 'jane@example.com', code: RIGHT_CODE }),
       ).rejects.toBeInstanceOf(VerificationCodeExpiredError);
 
-      expect(ctx.updateCode).not.toHaveBeenCalled();
-      expect(ctx.run).not.toHaveBeenCalled();
+      expect(ctx.deps.emailVerificationCodeRepository.update).not.toHaveBeenCalled();
+      expect(ctx.deps.unitOfWork.run).not.toHaveBeenCalled();
     });
 
     it('throws TooManyVerificationAttemptsError once the cap is reached', async () => {
-      ctx.findActiveByUserId.mockResolvedValue(makeCode({ attempts: MAX_ATTEMPTS }));
+      ctx.deps.emailVerificationCodeRepository.findActiveByUserId.mockResolvedValue(
+        makeCode({ attempts: MAX_ATTEMPTS }),
+      );
 
       await expect(
         new VerifyEmail(ctx.deps).execute({ email: 'jane@example.com', code: RIGHT_CODE }),
       ).rejects.toBeInstanceOf(TooManyVerificationAttemptsError);
 
-      expect(ctx.updateCode).not.toHaveBeenCalled();
-      expect(ctx.run).not.toHaveBeenCalled();
+      expect(ctx.deps.emailVerificationCodeRepository.update).not.toHaveBeenCalled();
+      expect(ctx.deps.unitOfWork.run).not.toHaveBeenCalled();
     });
   });
 
   // A caller must not be able to tell an unknown account from a wrong code.
   describe('account enumeration', () => {
     it('throws VerificationCodeInvalidError for an unknown email', async () => {
-      ctx.findByEmail.mockResolvedValue(null);
+      ctx.deps.userRepository.findByEmail.mockResolvedValue(null);
 
       await expect(
         new VerifyEmail(ctx.deps).execute({ email: 'nobody@example.com', code: RIGHT_CODE }),
       ).rejects.toBeInstanceOf(VerificationCodeInvalidError);
 
-      expect(ctx.findActiveByUserId).not.toHaveBeenCalled();
-      expect(ctx.codeService.hash).not.toHaveBeenCalled();
+      expect(ctx.deps.emailVerificationCodeRepository.findActiveByUserId).not.toHaveBeenCalled();
+      expect(ctx.deps.verificationCodeService.hash).not.toHaveBeenCalled();
     });
 
     it('throws VerificationCodeInvalidError when no active code exists', async () => {
-      ctx.findActiveByUserId.mockResolvedValue(null);
+      ctx.deps.emailVerificationCodeRepository.findActiveByUserId.mockResolvedValue(null);
 
       await expect(
         new VerifyEmail(ctx.deps).execute({ email: 'jane@example.com', code: RIGHT_CODE }),
       ).rejects.toBeInstanceOf(VerificationCodeInvalidError);
 
-      expect(ctx.codeService.hash).not.toHaveBeenCalled();
+      expect(ctx.deps.verificationCodeService.hash).not.toHaveBeenCalled();
     });
 
     it('reports the same error code and message for an unknown email and a wrong code', async () => {
@@ -261,7 +243,7 @@ describe('VerifyEmail', () => {
       );
 
       ctx = makeDeps();
-      ctx.findByEmail.mockResolvedValue(null);
+      ctx.deps.userRepository.findByEmail.mockResolvedValue(null);
       const unknown = await rejectionOf(
         new VerifyEmail(ctx.deps).execute({ email: 'nobody@example.com', code: RIGHT_CODE }),
       );

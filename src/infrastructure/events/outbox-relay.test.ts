@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mock, type MockProxy } from 'vitest-mock-extended';
 import { OutboxRelay } from './outbox-relay';
 import { DISPATCH_DOMAIN_EVENT_JOB } from './dispatch-domain-event-job-handler';
 import type { PrismaClient } from '@/generated/prisma/client';
@@ -19,21 +20,19 @@ function row(id: string) {
   };
 }
 
-function makeRelay(
-  pending: ReturnType<typeof row>[],
-  enqueue = vi.fn().mockResolvedValue(undefined),
-) {
+function makeRelay(pending: ReturnType<typeof row>[]) {
   const findMany = vi.fn().mockResolvedValue(pending);
   const updateMany = vi.fn().mockResolvedValue({ count: 0 });
   const prisma = { outboxMessage: { findMany, updateMany } } as unknown as PrismaClient;
-  const jobQueue = { enqueue } as unknown as JobQueue;
+  const jobQueue = mock<JobQueue>();
+  jobQueue.enqueue.mockResolvedValue(undefined);
   const error = vi.fn<Logger['error']>();
   const logger: Logger = { info: vi.fn(), warn: vi.fn(), error, debug: vi.fn() };
 
   const clock = { now: () => NOW } satisfies Clock;
 
   const relay = new OutboxRelay({ prisma, jobQueue, clock, logger });
-  return { relay, findMany, updateMany, enqueue, error };
+  return { relay, findMany, updateMany, jobQueue, error };
 }
 
 // The single arg the relay passes to updateMany when marking rows published.
@@ -44,10 +43,8 @@ function markPublishedArg(updateMany: ReturnType<typeof vi.fn>) {
   };
 }
 
-function deduplicationKeys(enqueue: ReturnType<typeof vi.fn>): string[] {
-  return enqueue.mock.calls.map(
-    (call) => (call[2] as { deduplicationKey: string }).deduplicationKey,
-  );
+function deduplicationKeys(jobQueue: MockProxy<JobQueue>): (string | undefined)[] {
+  return jobQueue.enqueue.mock.calls.map((call) => call[2]?.deduplicationKey);
 }
 
 describe('OutboxRelay', () => {
@@ -57,12 +54,12 @@ describe('OutboxRelay', () => {
   });
 
   it('enqueues a dispatch job per pending row and marks exactly those ids published', async () => {
-    const { relay, updateMany, enqueue } = makeRelay([row('1'), row('2'), row('3')]);
+    const { relay, updateMany, jobQueue } = makeRelay([row('1'), row('2'), row('3')]);
 
     await relay.handle();
 
-    expect(enqueue).toHaveBeenCalledTimes(3);
-    expect(enqueue).toHaveBeenCalledWith(
+    expect(jobQueue.enqueue).toHaveBeenCalledTimes(3);
+    expect(jobQueue.enqueue).toHaveBeenCalledWith(
       DISPATCH_DOMAIN_EVENT_JOB,
       { eventName: 'user.created', payload: 'payload-1' },
       { deduplicationKey: '1' },
@@ -74,23 +71,22 @@ describe('OutboxRelay', () => {
   });
 
   it('never marks anything published when every enqueue fails, and logs each error', async () => {
-    const enqueue = vi.fn().mockRejectedValue(new Error('redis down'));
-    const { relay, updateMany, error } = makeRelay([row('1'), row('2')], enqueue);
+    const { relay, updateMany, error, jobQueue } = makeRelay([row('1'), row('2')]);
+    jobQueue.enqueue.mockRejectedValue(new Error('redis down'));
 
     await relay.handle();
 
-    expect(enqueue).toHaveBeenCalledTimes(2);
+    expect(jobQueue.enqueue).toHaveBeenCalledTimes(2);
     expect(updateMany).not.toHaveBeenCalled(); // nothing is lost — all rows stay unpublished
     expect(error).toHaveBeenCalledTimes(2);
   });
 
   it('marks only the successfully-enqueued rows when one enqueue fails', async () => {
-    const enqueue = vi
-      .fn()
+    const { relay, updateMany, error, jobQueue } = makeRelay([row('1'), row('2'), row('3')]);
+    jobQueue.enqueue
       .mockResolvedValueOnce(undefined) // row 1 ok
       .mockRejectedValueOnce(new Error('boom')) // row 2 fails
       .mockResolvedValueOnce(undefined); // row 3 ok
-    const { relay, updateMany, error } = makeRelay([row('1'), row('2'), row('3')], enqueue);
 
     await relay.handle();
 
@@ -102,19 +98,19 @@ describe('OutboxRelay', () => {
   });
 
   it('keys each dispatch job on its outbox row id so a replayed batch is delivered once', async () => {
-    const { relay, enqueue } = makeRelay([row('1'), row('2'), row('3')]);
+    const { relay, jobQueue } = makeRelay([row('1'), row('2'), row('3')]);
 
     await relay.handle();
 
-    expect(deduplicationKeys(enqueue)).toEqual(['1', '2', '3']);
+    expect(deduplicationKeys(jobQueue)).toEqual(['1', '2', '3']);
   });
 
   it('does nothing when there are no pending rows', async () => {
-    const { relay, updateMany, enqueue } = makeRelay([]);
+    const { relay, updateMany, jobQueue } = makeRelay([]);
 
     await relay.handle();
 
-    expect(enqueue).not.toHaveBeenCalled();
+    expect(jobQueue.enqueue).not.toHaveBeenCalled();
     expect(updateMany).not.toHaveBeenCalled();
   });
 });

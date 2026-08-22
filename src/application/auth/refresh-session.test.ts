@@ -1,16 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mock } from 'vitest-mock-extended';
 import { RefreshSession } from './refresh-session';
 import type { AuthTokensDto } from './auth-dto';
 import type { SessionService } from './session-service';
 import { RefreshTokenInvalidError, RefreshTokenReusedError } from '@/domain/auth/auth-errors';
 import { RefreshToken } from '@/domain/auth/refresh-token-entity';
 import type { RefreshTokenRepository } from '@/domain/auth/refresh-token-repository';
-import { Email } from '@/domain/user/email-vo';
-import { User } from '@/domain/user/user-entity';
+import type { User } from '@/domain/user/user-entity';
 import type { UserRepository } from '@/domain/user/user-repository';
 import type { OpaqueTokenService } from '@/application/shared/ports/opaque-token-service';
 import type { GrantsReader, UserGrants } from '@/application/shared/ports/grants-reader';
-import type { Clock } from '@/application/shared/ports/clock';
+import { makeUser } from '@test/unit/support/builders';
+import { makeFixedClock } from '@test/unit/support/fakes';
 
 const RAW_TOKEN = 'raw-refresh-token';
 const TOKEN_HASH = 'hashed-raw-refresh-token';
@@ -57,21 +58,8 @@ function makeExpiredToken(): RefreshToken {
   return makeTokenExpiringAt(new Date(NOW.getTime() - 60_000));
 }
 
-function makeActiveUser(): User {
-  return User.create(
-    {
-      id: 'user-1',
-      firstName: 'Jane',
-      lastName: 'Doe',
-      email: Email.create('jane@example.com'),
-      passwordHash: 'hashed-secret',
-    },
-    CREATED_AT,
-  );
-}
-
 function makeInactiveUser(): User {
-  const user = makeActiveUser();
+  const user = makeUser();
   user.deactivate(CREATED_AT);
   return user;
 }
@@ -98,22 +86,20 @@ function makeRefreshSession() {
     hash: vi.fn<OpaqueTokenService['hash']>().mockReturnValue(TOKEN_HASH),
   } satisfies OpaqueTokenService;
 
-  const sessions = {
-    issue: vi.fn(),
-    reissue: vi.fn().mockResolvedValue(FAKE_TOKENS),
-  };
+  const sessions = mock<SessionService>();
+  sessions.reissue.mockResolvedValue(FAKE_TOKENS);
 
   const grants = {
     grantsFor: vi.fn<GrantsReader['grantsFor']>().mockResolvedValue(GRANTS),
   } satisfies GrantsReader;
 
-  const clock = { now: vi.fn<Clock['now']>().mockReturnValue(NOW) } satisfies Clock;
+  const clock = makeFixedClock(NOW);
 
   const sut = new RefreshSession({
     userRepository: users,
     refreshTokenRepository: refreshTokens,
     opaqueTokenService: opaque,
-    sessionService: sessions as unknown as SessionService,
+    sessionService: sessions,
     grants,
     clock,
   });
@@ -170,7 +156,7 @@ describe('RefreshSession', () => {
     });
 
     it('accepts a token expiring one millisecond after now and rejects one expiring before', async () => {
-      ctx.users.findById.mockResolvedValue(makeActiveUser());
+      ctx.users.findById.mockResolvedValue(makeUser());
 
       ctx.refreshTokens.findByTokenHash.mockResolvedValue(
         makeTokenExpiringAt(new Date(NOW.getTime() + 1)),
@@ -232,7 +218,7 @@ describe('RefreshSession', () => {
     it('marks the token as used and persists it on success', async () => {
       const token = makeActiveToken();
       ctx.refreshTokens.findByTokenHash.mockResolvedValue(token);
-      ctx.users.findById.mockResolvedValue(makeActiveUser());
+      ctx.users.findById.mockResolvedValue(makeUser());
 
       await ctx.sut.execute({ refreshToken: RAW_TOKEN });
 
@@ -243,7 +229,7 @@ describe('RefreshSession', () => {
 
     it('returns new tokens by reissuing the same family on success', async () => {
       ctx.refreshTokens.findByTokenHash.mockResolvedValue(makeActiveToken());
-      const user = makeActiveUser();
+      const user = makeUser();
       ctx.users.findById.mockResolvedValue(user);
 
       const result = await ctx.sut.execute({ refreshToken: RAW_TOKEN });
@@ -256,7 +242,7 @@ describe('RefreshSession', () => {
     it('stamps usedAt and the reissue with one instant from a single clock reading', async () => {
       const token = makeActiveToken();
       ctx.refreshTokens.findByTokenHash.mockResolvedValue(token);
-      ctx.users.findById.mockResolvedValue(makeActiveUser());
+      ctx.users.findById.mockResolvedValue(makeUser());
 
       await ctx.sut.execute({ refreshToken: RAW_TOKEN });
 
@@ -267,7 +253,7 @@ describe('RefreshSession', () => {
 
     it('re-resolves the user grants on every refresh rather than reusing old claims', async () => {
       ctx.refreshTokens.findByTokenHash.mockResolvedValue(makeActiveToken());
-      const user = makeActiveUser();
+      const user = makeUser();
       ctx.users.findById.mockResolvedValue(user);
 
       await ctx.sut.execute({ refreshToken: RAW_TOKEN });

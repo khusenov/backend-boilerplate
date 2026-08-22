@@ -1,20 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mock } from 'vitest-mock-extended';
 import { EditUser } from './edit-user';
 import { InvalidEmailError } from '@/domain/user/email-vo';
 import { EmailAlreadyTakenError, UserNotFoundError } from '@/domain/user/user-errors';
-import { Email } from '@/domain/user/email-vo';
-import { User, UserStatus } from '@/domain/user/user-entity';
+import { UserStatus } from '@/domain/user/user-entity';
 import type { UserRepository } from '@/domain/user/user-repository';
-import type { Clock } from '@/application/shared/ports/clock';
 import { createUserActor } from '@/domain/authorization/actor';
 import { PermissionDeniedError } from '@/domain/authorization/access-policy-errors';
 import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
 import { EmailVerificationCode } from '@/domain/verification/email-verification-code-entity';
 import type { EmailVerificationCodeRepository } from '@/domain/verification/email-verification-code-repository';
-import type { TransactionContext, UnitOfWork } from '@/application/shared/ports/unit-of-work';
 import type { VerificationCodeIssuer } from '@/application/auth/verification-code-issuer';
 import type { JobQueue } from '@/application/shared/ports/job-queue';
 import { SEND_VERIFICATION_EMAIL_JOB } from '@/application/jobs/send-verification-email-job';
+import { makeUser } from '@test/unit/support/builders';
+import { makeFixedClock, makeUnitOfWork } from '@test/unit/support/fakes';
 
 const RAW_CODE = '123456';
 const CODE_HASH = 'hmac-of-123456';
@@ -35,32 +35,6 @@ const UNPRIVILEGED_ACTOR = createUserActor({
 const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
 const NOW = new Date('2026-06-01T12:00:00.000Z');
 
-function makeUser(): User {
-  return User.create(
-    {
-      id: 'user-1',
-      firstName: 'Jane',
-      lastName: 'Doe',
-      email: Email.create('jane@example.com'),
-      passwordHash: 'hashed-pw',
-    },
-    CREATED_AT,
-  );
-}
-
-function makeOtherUser(): User {
-  return User.create(
-    {
-      id: 'user-2',
-      firstName: 'John',
-      lastName: 'Smith',
-      email: Email.create('taken@example.com'),
-      passwordHash: 'hashed-pw',
-    },
-    CREATED_AT,
-  );
-}
-
 function makeEditUser() {
   const users = {
     findByEmail: vi.fn<UserRepository['findByEmail']>(),
@@ -69,30 +43,15 @@ function makeEditUser() {
     save: vi.fn<UserRepository['save']>().mockResolvedValue(undefined),
   } satisfies UserRepository;
 
-  const clock = { now: vi.fn<Clock['now']>().mockReturnValue(NOW) } satisfies Clock;
+  const clock = makeFixedClock(NOW);
 
-  const txSave = vi.fn<UserRepository['save']>().mockResolvedValue(undefined);
-  const txCreateCode = vi
-    .fn<EmailVerificationCodeRepository['create']>()
-    .mockResolvedValue(undefined);
-  const txUpdateCode = vi
-    .fn<EmailVerificationCodeRepository['update']>()
-    .mockResolvedValue(undefined);
+  const { unitOfWork, context } = makeUnitOfWork();
+  context.userRepository.save.mockResolvedValue(undefined);
+  context.emailVerificationCodeRepository.create.mockResolvedValue(undefined);
+  context.emailVerificationCodeRepository.update.mockResolvedValue(undefined);
 
-  const run = vi.fn((work: (context: TransactionContext) => Promise<unknown>) =>
-    work({
-      userRepository: { save: txSave },
-      emailVerificationCodeRepository: { create: txCreateCode, update: txUpdateCode },
-    } as unknown as TransactionContext),
-  );
-  const unitOfWork = { run } as unknown as UnitOfWork;
-
-  const findActiveByUserId = vi
-    .fn<EmailVerificationCodeRepository['findActiveByUserId']>()
-    .mockResolvedValue(null);
-  const emailVerificationCodeRepository = {
-    findActiveByUserId,
-  } as unknown as EmailVerificationCodeRepository;
+  const emailVerificationCodeRepository = mock<EmailVerificationCodeRepository>();
+  emailVerificationCodeRepository.findActiveByUserId.mockResolvedValue(null);
 
   const issuedCode = EmailVerificationCode.issue(
     {
@@ -104,14 +63,12 @@ function makeEditUser() {
     },
     NOW,
   );
-  const issue = vi
-    .fn<VerificationCodeIssuer['issue']>()
-    .mockReturnValue({ code: issuedCode, rawCode: RAW_CODE });
-  const reissue = vi.fn<VerificationCodeIssuer['reissue']>().mockReturnValue(RAW_CODE);
-  const verificationCodeIssuer = { issue, reissue } as unknown as VerificationCodeIssuer;
+  const verificationCodeIssuer = mock<VerificationCodeIssuer>();
+  verificationCodeIssuer.issue.mockReturnValue({ code: issuedCode, rawCode: RAW_CODE });
+  verificationCodeIssuer.reissue.mockReturnValue(RAW_CODE);
 
-  const enqueue = vi.fn<JobQueue['enqueue']>().mockResolvedValue(undefined);
-  const jobQueue = { enqueue } as unknown as JobQueue;
+  const jobQueue = mock<JobQueue>();
+  jobQueue.enqueue.mockResolvedValue(undefined);
 
   const sut = new EditUser({
     userRepository: users,
@@ -126,15 +83,12 @@ function makeEditUser() {
     sut,
     users,
     clock,
-    run,
-    txSave,
-    txCreateCode,
-    txUpdateCode,
-    findActiveByUserId,
-    issue,
-    reissue,
+    unitOfWork,
+    tx: context,
+    emailVerificationCodeRepository,
+    verificationCodeIssuer,
+    jobQueue,
     issuedCode,
-    enqueue,
   };
 }
 
@@ -162,7 +116,14 @@ describe('EditUser', () => {
 
     it('throws EmailAlreadyTakenError when the new email belongs to another user', async () => {
       ctx.users.findById.mockResolvedValue(makeUser());
-      ctx.users.findByEmail.mockResolvedValue(makeOtherUser());
+      ctx.users.findByEmail.mockResolvedValue(
+        makeUser({
+          id: 'user-2',
+          firstName: 'John',
+          lastName: 'Smith',
+          email: 'taken@example.com',
+        }),
+      );
 
       await expect(
         ctx.sut.execute({ id: 'user-1', email: 'taken@example.com' }, ACTOR),
@@ -211,8 +172,8 @@ describe('EditUser', () => {
 
       await ctx.sut.execute({ id: 'user-1', firstName: 'Janet' }, ACTOR);
 
-      expect(ctx.txSave).toHaveBeenCalledOnce();
-      expect(ctx.txSave).toHaveBeenCalledWith(user);
+      expect(ctx.tx.userRepository.save).toHaveBeenCalledOnce();
+      expect(ctx.tx.userRepository.save).toHaveBeenCalledWith(user);
     });
 
     it('returns a mapped UserDto on success', async () => {
@@ -262,13 +223,13 @@ describe('EditUser', () => {
     it('creates a new verification code when none is active', async () => {
       ctx.users.findById.mockResolvedValue(makeUser());
       ctx.users.findByEmail.mockResolvedValue(null);
-      ctx.findActiveByUserId.mockResolvedValue(null);
+      ctx.emailVerificationCodeRepository.findActiveByUserId.mockResolvedValue(null);
 
       await ctx.sut.execute({ id: 'user-1', email: 'new@example.com' }, ACTOR);
 
-      expect(ctx.issue).toHaveBeenCalledWith('user-1', NOW);
-      expect(ctx.txCreateCode).toHaveBeenCalledWith(ctx.issuedCode);
-      expect(ctx.txUpdateCode).not.toHaveBeenCalled();
+      expect(ctx.verificationCodeIssuer.issue).toHaveBeenCalledWith('user-1', NOW);
+      expect(ctx.tx.emailVerificationCodeRepository.create).toHaveBeenCalledWith(ctx.issuedCode);
+      expect(ctx.tx.emailVerificationCodeRepository.update).not.toHaveBeenCalled();
     });
 
     it('reissues the existing active code instead of creating a duplicate', async () => {
@@ -284,13 +245,13 @@ describe('EditUser', () => {
       );
       ctx.users.findById.mockResolvedValue(makeUser());
       ctx.users.findByEmail.mockResolvedValue(null);
-      ctx.findActiveByUserId.mockResolvedValue(existingCode);
+      ctx.emailVerificationCodeRepository.findActiveByUserId.mockResolvedValue(existingCode);
 
       await ctx.sut.execute({ id: 'user-1', email: 'new@example.com' }, ACTOR);
 
-      expect(ctx.reissue).toHaveBeenCalledWith(existingCode, NOW);
-      expect(ctx.txUpdateCode).toHaveBeenCalledWith(existingCode);
-      expect(ctx.txCreateCode).not.toHaveBeenCalled();
+      expect(ctx.verificationCodeIssuer.reissue).toHaveBeenCalledWith(existingCode, NOW);
+      expect(ctx.tx.emailVerificationCodeRepository.update).toHaveBeenCalledWith(existingCode);
+      expect(ctx.tx.emailVerificationCodeRepository.create).not.toHaveBeenCalled();
     });
 
     it('enqueues the verification email after the transaction commits', async () => {
@@ -299,25 +260,25 @@ describe('EditUser', () => {
 
       await ctx.sut.execute({ id: 'user-1', email: 'new@example.com' }, ACTOR);
 
-      expect(ctx.enqueue).toHaveBeenCalledWith(SEND_VERIFICATION_EMAIL_JOB, {
+      expect(ctx.jobQueue.enqueue).toHaveBeenCalledWith(SEND_VERIFICATION_EMAIL_JOB, {
         email: 'new@example.com',
         code: RAW_CODE,
       });
-      expect(ctx.txCreateCode.mock.invocationCallOrder[0]!).toBeLessThan(
-        ctx.enqueue.mock.invocationCallOrder[0]!,
-      );
+      expect(
+        ctx.tx.emailVerificationCodeRepository.create.mock.invocationCallOrder[0]!,
+      ).toBeLessThan(ctx.jobQueue.enqueue.mock.invocationCallOrder[0]!);
     });
 
     it('does not enqueue when the transaction fails', async () => {
       ctx.users.findById.mockResolvedValue(makeUser());
       ctx.users.findByEmail.mockResolvedValue(null);
-      ctx.run.mockRejectedValue(new Error('deadlock'));
+      ctx.unitOfWork.run.mockRejectedValue(new Error('deadlock'));
 
       await expect(
         ctx.sut.execute({ id: 'user-1', email: 'new@example.com' }, ACTOR),
       ).rejects.toThrow('deadlock');
 
-      expect(ctx.enqueue).not.toHaveBeenCalled();
+      expect(ctx.jobQueue.enqueue).not.toHaveBeenCalled();
     });
 
     it('does not touch verification machinery when only the name changes', async () => {
@@ -325,8 +286,8 @@ describe('EditUser', () => {
 
       await ctx.sut.execute({ id: 'user-1', firstName: 'Janet' }, ACTOR);
 
-      expect(ctx.findActiveByUserId).not.toHaveBeenCalled();
-      expect(ctx.enqueue).not.toHaveBeenCalled();
+      expect(ctx.emailVerificationCodeRepository.findActiveByUserId).not.toHaveBeenCalled();
+      expect(ctx.jobQueue.enqueue).not.toHaveBeenCalled();
     });
 
     it('does not touch verification machinery when the email is unchanged', async () => {
@@ -334,8 +295,8 @@ describe('EditUser', () => {
 
       await ctx.sut.execute({ id: 'user-1', email: 'jane@example.com' }, ACTOR);
 
-      expect(ctx.findActiveByUserId).not.toHaveBeenCalled();
-      expect(ctx.enqueue).not.toHaveBeenCalled();
+      expect(ctx.emailVerificationCodeRepository.findActiveByUserId).not.toHaveBeenCalled();
+      expect(ctx.jobQueue.enqueue).not.toHaveBeenCalled();
     });
   });
 });
@@ -361,6 +322,6 @@ describe('EditUser authorization', () => {
     );
 
     expect(ctx.users.findById).toHaveBeenCalledWith(UNPRIVILEGED_ACTOR.userId);
-    expect(ctx.txSave).toHaveBeenCalledOnce();
+    expect(ctx.tx.userRepository.save).toHaveBeenCalledOnce();
   });
 });

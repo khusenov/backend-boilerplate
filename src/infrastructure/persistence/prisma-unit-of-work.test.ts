@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@/generated/prisma/client';
 import { describe, expect, it, vi } from 'vitest';
+import { mock } from 'vitest-mock-extended';
 import { PrismaUnitOfWork } from './prisma-unit-of-work';
 import { DomainEvent } from '@/domain/shared/domain-event';
 import type { PrismaOutboxWriter } from './prisma-outbox-writer';
@@ -21,8 +22,9 @@ function makePrisma() {
 }
 
 function makeOutboxWriter() {
-  const write = vi.fn<PrismaOutboxWriter['write']>().mockResolvedValue(undefined);
-  return { write, writer: { write } as unknown as PrismaOutboxWriter };
+  const writer = mock<PrismaOutboxWriter>();
+  writer.write.mockResolvedValue(undefined);
+  return { writer };
 }
 
 describe('PrismaUnitOfWork', () => {
@@ -40,14 +42,13 @@ describe('PrismaUnitOfWork', () => {
       return Promise.resolve('ok' as const);
     });
 
-    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(prisma.$transaction).toHaveBeenCalledOnce();
     expect(result).toBe('ok');
   });
 
   it('flushes staged domain events to the outbox writer with the tx client', async () => {
     const { prisma, tx } = makePrisma();
-    const { write, writer } = makeOutboxWriter();
+    const { writer } = makeOutboxWriter();
     const sut = new PrismaUnitOfWork({ prisma, outboxWriter: writer });
     const event = new TestEvent('agg-1', new Date('2026-01-01T00:00:00.000Z'));
 
@@ -56,29 +57,29 @@ describe('PrismaUnitOfWork', () => {
       return Promise.resolve();
     });
 
-    expect(write).toHaveBeenCalledOnce();
-    expect(write).toHaveBeenCalledWith([event], tx);
+    expect(writer.write).toHaveBeenCalledOnce();
+    expect(writer.write).toHaveBeenCalledWith([event], tx);
   });
 
   it('flushes an empty array when nothing was staged', async () => {
     const { prisma, tx } = makePrisma();
-    const { write, writer } = makeOutboxWriter();
+    const { writer } = makeOutboxWriter();
     const sut = new PrismaUnitOfWork({ prisma, outboxWriter: writer });
 
     await sut.run(() => Promise.resolve());
 
-    expect(write).toHaveBeenCalledWith([], tx);
+    expect(writer.write).toHaveBeenCalledWith([], tx);
   });
 
   it('propagates errors so Prisma rolls back the transaction and never flushes', async () => {
     const { prisma } = makePrisma();
-    const { write, writer } = makeOutboxWriter();
+    const { writer } = makeOutboxWriter();
     const sut = new PrismaUnitOfWork({ prisma, outboxWriter: writer });
 
     await expect(sut.run(() => Promise.reject(new Error('rollback-trigger')))).rejects.toThrow(
       'rollback-trigger',
     );
 
-    expect(write).not.toHaveBeenCalled();
+    expect(writer.write).not.toHaveBeenCalled();
   });
 });
