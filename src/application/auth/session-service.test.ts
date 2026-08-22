@@ -6,8 +6,7 @@ import type { OpaqueTokenService } from '@/application/shared/ports/opaque-token
 import type { RefreshTokenRepository } from '@/domain/auth/refresh-token-repository';
 import type { Env } from '@/config/env';
 import type { UserGrants } from '@/application/shared/ports/grants-reader';
-import { Email } from '@/domain/user/email-vo';
-import { User } from '@/domain/user/user-entity';
+import { makeUser } from '@test/unit/support/builders';
 
 const ACCESS_TOKEN = 'signed.access.token';
 const RAW_REFRESH = 'raw-opaque-refresh';
@@ -21,19 +20,6 @@ const GRANTS: UserGrants = {
   systemRoleKeys: ['super-admin'],
   permissions: ['users.read', 'users.create'],
 };
-
-function makeUser(): User {
-  return User.create(
-    {
-      id: 'user-1',
-      firstName: 'Jane',
-      lastName: 'Doe',
-      email: Email.create('jane@example.com'),
-      passwordHash: 'hash',
-    },
-    new Date('2026-01-01T00:00:00.000Z'),
-  );
-}
 
 function makeCtx() {
   const accessTokenService = {
