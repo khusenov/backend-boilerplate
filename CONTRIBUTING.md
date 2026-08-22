@@ -34,8 +34,8 @@ Four gates fail the build, and none of them are negotiable in review:
 
 - **Architecture.** `npm run arch` enforces the layer boundaries in `.dependency-cruiser.cjs`. The
   domain imports nothing; the application depends on the domain and its own ports; concretions bind
-  to ports only in `src/container.ts`. A new dependency that crosses a boundary fails here rather
-  than in review.
+  to ports only in `src/composition/**`, which nothing outside the composition root may import. A
+  new dependency that crosses a boundary fails here rather than in review.
 - **Coverage.** The domain and application layers are held at 100%. A new use case without tests
   fails the build.
 - **Types.** `tsc --noEmit` under a strict configuration, including `noUncheckedIndexedAccess` and

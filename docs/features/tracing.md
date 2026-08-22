@@ -13,7 +13,7 @@ that together form a trace (the tree of spans for one end-to-end request), expor
 OTLP (OpenTelemetry Protocol) collector, stamps every log line with the active `trace_id`/`span_id`,
 and carries the trace across the asynchronous BullMQ job boundary. It is deliberately opt-in (off by
 default) and, like the codebase's other process-lifecycle utilities, is **not** registered in
-`src/container.ts` — the reasons for that are the heart of the design and are explained below.
+the composition root — the reasons for that are the heart of the design and are explained below.
 
 ## How it works
 
@@ -74,7 +74,7 @@ SDK was never started it resolves immediately. See
 ## Architecture
 
 This feature is intentionally atypical for the codebase's clean-architecture layering: it defines
-**no application-layer port and is not registered in `src/container.ts`**. There is no abstraction to
+**no application-layer port and is not registered in the composition root**. There is no abstraction to
 bind because nothing in the domain or application layers ever calls it — tracing is ambient
 infrastructure that observes those layers from underneath rather than a dependency they invoke. It
 initializes through a direct side-effecting import (`src/instrumentation.ts`) instead of through
@@ -226,7 +226,7 @@ start it in production with `node --import ./dist/instrumentation.js`, and pass
   being called by them. Inventing a port would be an abstraction with exactly zero call sites. So
   the SDK is started by a direct side-effecting import instead of by the DI container, and the two
   correlation helpers are imported where used. This is the shape the codebase's other
-  process-lifecycle utilities take too: `src/container.ts` imports nothing from
+  process-lifecycle utilities take too: no file under `src/composition/` imports anything from
   `src/infrastructure/observability/tracing.ts`, and equally nothing from
   `src/infrastructure/lifecycle/` — `registerGracefulShutdown` (see
   [Graceful Shutdown](./graceful-shutdown.md)) and the `createLoggerOptions` / `createBaseLogger`

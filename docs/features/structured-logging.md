@@ -112,7 +112,7 @@ The `Logger` and `ContextProvider` **ports** live in the application layer; thei
 is seeded in the presentation layer by `correlationIdPlugin`. Dependencies point inward: application and
 domain code depend only on the `Logger` interface, never on Pino, `@fastify/request-context`, or
 `@opentelemetry/api`. The concrete `PinoLogger` — wrapping a base Pino instance and a
-`RequestContextProvider` — is bound to the `logger` port in exactly one place, `src/container.ts`. That
+`RequestContextProvider` — is bound to the `logger` port in exactly one place, `src/composition/platform.ts`. That
 is what lets `UserCreatedLogHandler` (application layer) log without importing a logging library. The
 Loki aggregation path is entirely outside the TypeScript process: the app only writes JSON to stdout,
 and the Docker/Grafana layer (Alloy, Loki, Grafana datasources) scrapes and stores it, so no application
@@ -412,9 +412,9 @@ server's logger — so its stdout is Loki-ingestible on the same terms.
 ## Design decisions & trade-offs
 
 - **Port-based logger so inner layers never import Pino.** `Logger` is a four-method interface in the
-  application layer; only `PinoLogger` (infrastructure) and `container.ts` (composition root) know about
+  application layer; only `PinoLogger` (infrastructure) and `src/composition/platform.ts` (composition root) know about
   Pino. This keeps the Dependency Rule intact — swapping the logging backend, or logging to a different
-  sink in tests, is a one-line change in `container.ts` with no edits to domain or application code. The
+  sink in tests, is a one-line change in `src/composition/platform.ts` with no edits to domain or application code. The
   cost is a thin indirection layer and a deliberately minimal API (no child loggers, no per-call level,
   no bindings) versus Pino's richer surface directly.
 - **Scrape stdout with Alloy rather than push to Loki with a Pino transport.** The app writes only to

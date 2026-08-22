@@ -84,7 +84,7 @@ observation) and `MetricsExposition` (the read side — render the current snaps
 honours the Interface Segregation Principle: the response hook depends only on the recorder, the two
 scrape routes depend only on the exposition, and none of them knows Prometheus exists. The
 infrastructure **adapter**, `PrometheusMetricsRecorder`, implements both ports over `prom-client`.
-Concretes bind to ports in exactly one place — `src/container.ts` — where `metricsRecorder` is bound
+Concretes bind to ports in exactly one place — `src/composition/metrics.ts` — where `metricsRecorder` is bound
 `asClass(PrometheusMetricsRecorder).singleton()` and `metricsExposition` is
 `aliasTo('metricsRecorder')`. The alias is what makes both ports resolve to one shared instance per
 container, so data written through the recorder is visible through the exposition. Dependencies
@@ -262,7 +262,7 @@ ports. To count how many users are created, for example:
 3. Call it where the event happens. In a use case, declare `metricsRecorder` in the deps interface
    and destructure it in the constructor, the same pattern `CreateUser` uses for its ports
    (`src/application/user/create-user.ts`); Awilix's `PROXY` injection supplies it with no
-   `container.ts` change. In a Fastify plugin, resolve `diContainer.cradle.metricsRecorder` directly,
+   composition-root change. In a Fastify plugin, resolve `diContainer.cradle.metricsRecorder` directly,
    as `metricsPlugin` does. Then:
 
    ```ts

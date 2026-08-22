@@ -79,7 +79,7 @@ disposed even if closing the probe server fails or throws (the rejection still p
 **What container disposal actually releases.** Awilix runs the disposers of the resolved singletons
 concurrently (`Promise.all`); only registrations that were resolved in that process are disposed, so
 the API never tries to close a `jobWorker` it never created. Each disposer is declared next to its
-registration in `src/container.ts`:
+registration in the composition module that owns it (`src/composition/**`):
 
 | Registration                 | Disposer                  | Effect                                                                                                                          |
 | ---------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
@@ -109,7 +109,7 @@ and its teardown is an opaque `() => Promise<void>` — so it is a pure inward-f
 neither Fastify nor Awilix leaks into. The composition root supplies the concrete meaning of "dispose":
 `main.ts` hands it Fastify's `app.close()`, `worker.ts` hands it a purpose-built closure. Resource
 teardown itself lives where resources are constructed — as `.disposer(...)` clauses in
-`src/container.ts`, the only place concretes bind to ports — so adding a resource and adding its
+`src/composition/**`, the only place concretes bind to ports — so adding a resource and adding its
 teardown are one edit, not two.
 
 | Component                                      | Layer            | Responsibility                                                                                           | File                                                |
@@ -121,7 +121,7 @@ teardown are one edit, not two.
 | `WorkerShutdownDependencies`                   | Composition root | Structural types the worker teardown needs — anything with `close()` / `dispose()`                       | `src/worker-shutdown.ts`                            |
 | `bootstrap` (API)                              | Composition root | Registers shutdown with `dispose: () => app.close()` and `flushTelemetry: shutdownTracing`               | `src/main.ts`                                       |
 | `bootstrap` (worker)                           | Composition root | Registers shutdown with `createWorkerShutdown({ healthApp, container })` before starting the worker      | `src/worker.ts`                                     |
-| `registerDependencies`                         | Composition root | Declares the `.disposer(...)` for every disposable singleton                                             | `src/container.ts`                                  |
+| `registerDependencies`                         | Composition root | Declares the `.disposer(...)` for every disposable singleton                                             | `src/composition/**`, `src/container.ts`            |
 | `fastifyAwilixPlugin` (`disposeOnClose: true`) | Presentation     | Bridges `app.close()` to `diContainer.dispose()` in the API process                                      | `src/presentation/http/app.ts`                      |
 | `shutdownTracing`                              | Infrastructure   | The `flushTelemetry` hook: flushes and stops the OpenTelemetry SDK                                       | `src/infrastructure/observability/tracing.ts`       |
 | `buildHealthApp`                               | Presentation     | The worker's probe server — the first thing `createWorkerShutdown` closes                                | `src/presentation/http/health-app.ts`               |
@@ -208,9 +208,9 @@ Two rules make this correct: put the network surface's `close()` **before** cont
 accepting work before removing what serves it), and make disposal unconditional — a `try`/`finally`,
 as `createWorkerShutdown` does — so a failing close still releases connections.
 
-**Adding a disposable resource.** Declare the teardown on the registration itself in
-`src/container.ts`; nothing else needs to change, because `container.dispose()` already runs whatever
-is registered:
+**Adding a disposable resource.** Declare the teardown on the registration itself, in whichever
+`src/composition/*.ts` module owns it; nothing else needs to change, because `container.dispose()`
+already runs whatever is registered:
 
 ```ts
 searchIndexClient: asFunction(() => createSearchIndexClient({ url: env.SEARCH_URL }))
@@ -261,7 +261,7 @@ exiting`) go to its default `console` logger — those two lines bypass
   that the final spans of a shutdown may be silently lost — an acceptable trade for not blocking a
   deployment on the observability backend.
 - **Awilix disposers as the single teardown registry, rather than a bespoke shutdown list.** Each
-  resource's cleanup sits beside its construction in `container.ts`, and only what was resolved is
+  resource's cleanup sits beside its construction in its composition module, and only what was resolved is
   disposed — so the API process disposes exactly its own working set. The cost is that Awilix runs
   disposers with `Promise.all`, giving **no ordering guarantee**; teardown must therefore be
   order-independent. Ordering that genuinely matters is expressed outside the container, in

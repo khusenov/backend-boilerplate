@@ -147,7 +147,7 @@ the event buffer on `AggregateRoot`. The application layer defines the abstracti
 unit-of-work `TransactionContext`. Infrastructure supplies every concrete: outbox writer, serializer,
 factory registry, handler registry, relay, and dispatch job handler. Dependencies point inward — the
 aggregate depends on nothing, the use cases depend on the `UnitOfWork`/`OutboxStaging` interfaces (never
-on Prisma or BullMQ), and concretes bind to ports only in `src/container.ts`. Delivery rides on the
+on Prisma or BullMQ), and concretes bind to ports only under `src/composition/**`. Delivery rides on the
 generic background-job ports (`JobQueue`, `JobScheduler`, `JobHandler`) documented in
 [background-jobs.md](./background-jobs.md); this feature does not re-implement queueing.
 
@@ -249,7 +249,7 @@ export interface DomainEventHandler<E extends DomainEvent = DomainEvent> {
 
 A handler binds to exactly one `eventName`, which must equal the event's `EVENT_NAME`. Many handlers may
 share an `eventName`; the dispatch job invokes them all, in the order they appear in the
-`domainEventHandlers` array in `container.ts`. Because delivery is at-least-once, `handle` must tolerate
+`domainEventHandlers` array in `src/composition/events.ts`. Because delivery is at-least-once, `handle` must tolerate
 being called more than once for the same event.
 
 **5. `DomainEventDispatcher` — a port to avoid for now.** The port
@@ -392,17 +392,17 @@ export class UserDeactivatedLogHandler implements DomainEventHandler<UserDeactiv
 }
 ```
 
-**Step 5 — Register the handler in the composition root (`src/container.ts`).** Import it, declare it on
-the `Cradle`, register it, and add it to the `domainEventHandlers` array (the registry is built from
+**Step 5 — Register the handler in the composition root (`src/composition/events.ts`).** Import it, declare it on
+that module's `Cradle` slice, register it, and add it to the `domainEventHandlers` array (the registry is built from
 that array):
 
 ```ts
 import { UserDeactivatedLogHandler } from '@/application/user/events/user-deactivated-log-handler';
 
-// in the Cradle interface, next to userCreatedLogHandler
+// in the module's declare module '@fastify/awilix' block, next to userCreatedLogHandler
 userDeactivatedLogHandler: DomainEventHandler;
 
-// in registerDependencies(...)'s container.register({ ... })
+// in eventsRegistrations
 userDeactivatedLogHandler: asClass(UserDeactivatedLogHandler).singleton(),
 
 // extend the handler list the registry is assembled from
@@ -456,7 +456,7 @@ purely by `eventName`. (Only a brand-new **job**, not a new event, would touch `
   `DISPATCH_DOMAIN_EVENT_JOB` per event. Each event gets its own retry unit and its own slot in the
   worker's concurrency, and a slow or failing handler cannot stall the relay's drain of the batch.
 - **`InProcessDomainEventDispatcher` is dormant plumbing — the live path bypasses it.** The
-  `domainEventDispatcher` registration in `container.ts` (built by `createDomainEventDispatcher`) is
+  `domainEventDispatcher` registration in `src/composition/events.ts` (built by `createDomainEventDispatcher`) is
   resolved nowhere at runtime; its only caller is its own unit test. The runtime dispatch path is
   `OutboxRelay → DISPATCH_DOMAIN_EVENT_JOB → DispatchDomainEventJobHandler → DomainEventHandlerRegistry`.
   The two differ deliberately: the job handler awaits each handler with no `try/catch`, so a failure

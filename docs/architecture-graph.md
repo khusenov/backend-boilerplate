@@ -3,6 +3,7 @@ flowchart LR
 
 subgraph src["src"]
   src_application["application"]
+  src_composition["composition"]
   src_config["config"]
   src_container_ts["container.ts"]
   src_domain["domain"]
@@ -20,11 +21,12 @@ end
 src_application-->src_domain
 src_application-->src_config
 src_application-->src_shared
-src_container_ts-->src_application
-src_container_ts-->src_config
-src_container_ts-->src_domain
-src_container_ts-->src_infrastructure
-src_container_ts-->src_job_catalogue_ts
+src_composition-->src_application
+src_composition-->src_config
+src_composition-->src_infrastructure
+src_composition-->src_job_catalogue_ts
+src_composition-->src_domain
+src_container_ts-->src_composition
 src_domain-->src_shared
 src_infrastructure-->src_application
 src_infrastructure-->src_domain
