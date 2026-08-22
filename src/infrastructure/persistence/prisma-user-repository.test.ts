@@ -59,10 +59,7 @@ function makeRepo() {
       .mockResolvedValue({ count: 1 }),
   };
 
-  const prisma = {
-    $transaction: vi.fn(),
-    user: userDelegate,
-  } as unknown as PrismaClient;
+  const prisma = { user: userDelegate } as unknown as PrismaClient;
 
   const repo = new PrismaUserRepository({ prisma });
   return { repo, prisma, userDelegate };
@@ -77,7 +74,8 @@ describe('PrismaUserRepository', () => {
 
   describe('list', () => {
     it('returns mapped domain items and total', async () => {
-      (ctx.prisma.$transaction as ReturnType<typeof vi.fn>).mockResolvedValue([[makeUserRow()], 1]);
+      ctx.userDelegate.findMany.mockResolvedValue([makeUserRow()]);
+      ctx.userDelegate.count.mockResolvedValue(1);
 
       const result = await ctx.repo.list({ page: 1, pageSize: 10 });
 
@@ -87,7 +85,8 @@ describe('PrismaUserRepository', () => {
     });
 
     it('returns empty items and zero total when no records exist', async () => {
-      (ctx.prisma.$transaction as ReturnType<typeof vi.fn>).mockResolvedValue([[], 0]);
+      ctx.userDelegate.findMany.mockResolvedValue([]);
+      ctx.userDelegate.count.mockResolvedValue(0);
 
       const result = await ctx.repo.list({ page: 1, pageSize: 10 });
 
@@ -96,7 +95,6 @@ describe('PrismaUserRepository', () => {
     });
 
     it('calculates correct skip for page 2', async () => {
-      (ctx.prisma.$transaction as ReturnType<typeof vi.fn>).mockResolvedValue([[], 0]);
       ctx.userDelegate.findMany.mockResolvedValue([]);
       ctx.userDelegate.count.mockResolvedValue(0);
 
@@ -108,7 +106,6 @@ describe('PrismaUserRepository', () => {
     });
 
     it('only fetches non-deleted records', async () => {
-      (ctx.prisma.$transaction as ReturnType<typeof vi.fn>).mockResolvedValue([[], 0]);
       ctx.userDelegate.findMany.mockResolvedValue([]);
       ctx.userDelegate.count.mockResolvedValue(0);
 

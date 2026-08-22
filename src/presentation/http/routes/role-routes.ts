@@ -77,7 +77,12 @@ export const roleRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       schema: {
         params: roleParams,
         body: editRoleBody,
-        response: { 200: roleResponse, 404: errorResponse },
+        response: {
+          200: roleResponse,
+          403: errorResponse,
+          404: errorResponse,
+          409: errorResponse,
+        },
       },
     },
     async (request, reply) => {
@@ -90,11 +95,25 @@ export const roleRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
     },
   );
 
-  app.delete('/:id', { schema: { params: roleParams } }, async (request, reply) => {
-    const { deleteRole } = request.diScope.cradle;
-    await deleteRole.execute({ id: request.params.id }, toRequestActor(request.user));
-    return reply.status(204).send();
-  });
+  app.delete(
+    '/:id',
+    {
+      schema: {
+        params: roleParams,
+        response: {
+          204: z.void(),
+          403: errorResponse,
+          404: errorResponse,
+          409: errorResponse,
+        },
+      },
+    },
+    async (request, reply) => {
+      const { deleteRole } = request.diScope.cradle;
+      await deleteRole.execute({ id: request.params.id }, toRequestActor(request.user));
+      return reply.status(204).send();
+    },
+  );
 
   done();
 };

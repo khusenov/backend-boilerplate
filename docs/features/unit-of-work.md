@@ -36,8 +36,9 @@ await this.uow.run(async ({ userRepository, emailVerificationCodeRepository, out
 
 Inside `PrismaUnitOfWork.run`, this happens in order:
 
-1. **Open the transaction.** `this.prisma.$transaction(async (tx) => { ... })` starts a Prisma
-   _interactive_ transaction and yields a transaction-scoped client `tx`.
+1. **Open the transaction.** `this.prisma.$transaction(async (tx) => { ... }, { isolationLevel:
+'ReadCommitted' })` starts a Prisma _interactive_ transaction and yields a transaction-scoped client
+   `tx`.
 2. **Create the outbox staging buffer.** A local `staged: DomainEvent[]` array is declared first and
    exposed to the callback as `outbox`, whose `stage(events)` simply appends to it.
 3. **Build per-transaction repositories.** A fresh `TransactionalRepositories` bundle is constructed on
@@ -73,7 +74,9 @@ its `catch` block without a redundant `throw`. Because these are the shared erro
 ## Architecture
 
 The port lives in the application layer and names only domain and application types; the adapter lives
-in infrastructure and is the only place `$transaction`, `PrismaClient`, and Prisma error codes appear.
+in infrastructure. `PrismaUnitOfWork` is the only place `$transaction` appears at all: repositories
+receive `PrismaTransactionalClient`, which omits the method, so opening a nested transaction is a
+compile error rather than a convention.
 A use case depends on the `UnitOfWork` interface and receives a `TransactionContext` whose members are
 themselves interfaces — `UserRepository`, `RoleRepository`, `EmailVerificationCodeRepository`,
 `PasswordResetTokenRepository` (domain), `PermissionRepository`, `UserRoleRepository` (application
@@ -97,7 +100,7 @@ diverge.
 | `PasswordResetTokenRepository`    | Domain             | `create`, `update`, `findByTokenHash`, `invalidateAllForUser`, `deleteExpired`                                             | `src/domain/password-reset/password-reset-token-repository.ts`  |
 | `RefreshTokenRepository`          | Domain             | Session tokens — deliberately **outside** the transactional bundle (see Design decisions)                                  | `src/domain/auth/refresh-token-repository.ts`                   |
 | `PrismaUnitOfWork`                | Infrastructure     | Opens `$transaction`, builds per-tx repositories, runs the callback, flushes staged events                                 | `src/infrastructure/persistence/prisma-unit-of-work.ts`         |
-| `PrismaTransactionalClient`       | Infrastructure     | `PrismaClient \| Prisma.TransactionClient` — lets one adapter serve both modes                                             | `src/infrastructure/persistence/prisma-transactional-client.ts` |
+| `PrismaTransactionalClient`       | Infrastructure     | `Omit<Prisma.TransactionClient, '$transaction'>` — serves both modes, and owns no transaction scope                        | `src/infrastructure/persistence/prisma-transactional-client.ts` |
 | `createPrismaClient`              | Infrastructure     | Builds the root `PrismaClient` over the `PrismaMariaDb` driver adapter from `DATABASE_URL`                                 | `src/infrastructure/persistence/prisma-client.ts`               |
 | `mapPrismaError`                  | Infrastructure     | Translates `PrismaClientKnownRequestError` codes into the shared error types; returns `never`                              | `src/infrastructure/persistence/prisma-error.ts`                |
 | `PrismaUserRepository`            | Infrastructure     | Representative adapter: `save` inserts or applies a version-guarded update, delegates row↔entity translation to the mapper | `src/infrastructure/persistence/prisma-user-repository.ts`      |
@@ -160,7 +163,10 @@ singleton over the root `PrismaClient` and injected directly into use cases for 
 writes; `PrismaUserRepository`, `PrismaRoleRepository`, `PrismaPermissionRepository`,
 `PrismaUserRoleRepository`, `PrismaEmailVerificationCodeRepository`, and
 `PrismaPasswordResetTokenRepository` all declare their constructor dependency as
-`PrismaTransactionalClient`, which is what lets one class serve both modes unchanged.
+`PrismaTransactionalClient`, which is what lets one class serve both modes unchanged. `Role` is the one
+exception, and deliberately so: `PrismaRoleReader` holds the four reads and is what the container
+registers, while `PrismaRoleRepository extends` it to add the guarded `save`. Only `PrismaUnitOfWork`
+constructs the writer, so the non-transactional singleton has no write path to reach.
 
 ## Configuration
 
@@ -168,8 +174,14 @@ writes; `PrismaUserRepository`, `PrismaRoleRepository`, `PrismaPermissionReposit
 | -------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `DATABASE_URL` | none — required (`str()` in `src/config/env.ts`) | MariaDB/MySQL connection string passed to `new PrismaMariaDb(...)` in `createPrismaClient`; e.g. `mysql://user:password@localhost:3306/app` |
 
-Transaction behaviour itself is not configurable: `run` calls `$transaction` without a `maxWait`,
-`timeout`, or `isolationLevel` option, so Prisma's defaults apply.
+Transaction behaviour itself is not configurable: `run` calls `$transaction` without a `maxWait` or
+`timeout` option, so Prisma's defaults apply. The isolation level is fixed at `ReadCommitted` rather
+than left to the server default — under MariaDB's `REPEATABLE READ` with `innodb_snapshot_isolation=ON`
+(the 11.6+ default), a version-guarded `UPDATE` that loses a race raises errno 1020 instead of matching
+zero rows, and the unmapped error surfaces as HTTP 500 in place of the intended 409. Correctness comes
+from the version predicate, not from the snapshot. One deployment caveat: `READ COMMITTED` requires
+row-based binary logging, so a server running `binlog_format=STATEMENT` rejects DML inside these
+transactions (errno 1665).
 
 ## Usage & extension
 
@@ -353,11 +365,14 @@ atomically alongside a user.
   `readonly` field, so a transaction-scoped instance cannot be shared across concurrent transactions.
   Constructing six small objects per transaction is cheap next to a database round-trip, and it removes
   an entire class of cross-request leakage.
-- **`PrismaTransactionalClient` as a union type instead of two class hierarchies.** Declaring the
-  dependency as `PrismaClient | Prisma.TransactionClient` lets one adapter class serve both the
-  container singleton and the per-transaction instance. The alternative — a base class plus a
-  transactional subclass per repository — would double the adapter count to encode a distinction that is
-  purely about which client object is passed in.
+- **One structural client type instead of two class hierarchies.** Declaring the dependency as
+  `Omit<Prisma.TransactionClient, '$transaction'>` lets one adapter class serve both the container
+  singleton and the per-transaction instance, while making transaction scope unreachable from inside a
+  repository. The alternative — a base class plus a transactional subclass per repository — would double
+  the adapter count to encode a distinction that is purely about which client object is passed in. The
+  role adapter is split anyway, but for a different reason: its `save` spans four statements and is only
+  atomic under a caller-supplied transaction, so the write method is kept off the class the container
+  hands out.
 - **The outbox flush lives in the unit of work, not in the use case.** `run` always calls
   `outboxWriter.write(staged, tx)` after the callback, so a use case cannot forget to persist the events
   it staged, and cannot persist them on the wrong client. It also means every transaction pays one extra

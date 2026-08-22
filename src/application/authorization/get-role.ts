@@ -1,5 +1,5 @@
 import { toRoleDto, type RoleDto } from './role-dto';
-import type { RoleRepository } from '@/domain/authorization/role-repository';
+import type { RoleReader } from '@/domain/authorization/role-repository';
 import { RoleNotFoundError } from '@/domain/authorization/role-errors';
 import type { Actor } from '@/domain/authorization/actor';
 import { ensurePermission } from '@/domain/authorization/access-policy';
@@ -12,11 +12,11 @@ export interface GetRoleInput {
 export type GetRoleOutput = RoleDto;
 
 interface GetRoleDeps {
-  roleRepository: RoleRepository;
+  roleRepository: RoleReader;
 }
 
 export class GetRole {
-  private readonly roles: RoleRepository;
+  private readonly roles: RoleReader;
 
   constructor({ roleRepository }: GetRoleDeps) {
     this.roles = roleRepository;

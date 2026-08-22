@@ -575,7 +575,7 @@ lives in [domain-events.md](./domain-events.md).
   edit, and a lost update is now reported instead of silently discarded.
 - **Mapper split from the repository.** `toDomain` / `toPersistence` (`prisma-user-mapper.ts`) are
   pure functions kept separate from `PrismaUserRepository`. The repository owns _querying_ (the
-  `deletedAt: null` filter, the pagination `$transaction`, the version-guarded write) while the mapper owns the
+  `deletedAt: null` filter, the page-and-count reads, the version-guarded write) while the mapper owns the
   _field-by-field translation_ between the persistence row and the aggregate, so the mapping can be
   reasoned about (and tested) without a database.
 - **Response Zod schema as an output contract.** `userResponse` re-declares the shape the endpoint

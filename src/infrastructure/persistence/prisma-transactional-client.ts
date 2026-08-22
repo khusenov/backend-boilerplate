@@ -1,3 +1,3 @@
-import { Prisma, type PrismaClient } from '@/generated/prisma/client';
+import type { Prisma } from '@/generated/prisma/client';
 
-export type PrismaTransactionalClient = PrismaClient | Prisma.TransactionClient;
+export type PrismaTransactionalClient = Omit<Prisma.TransactionClient, '$transaction'>;
