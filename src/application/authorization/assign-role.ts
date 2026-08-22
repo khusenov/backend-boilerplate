@@ -1,5 +1,5 @@
 import type { UserRepository } from '@/domain/user/user-repository';
-import type { RoleRepository } from '@/domain/authorization/role-repository';
+import type { RoleReader } from '@/domain/authorization/role-repository';
 import type { UserRoleRepository } from '@/application/shared/ports/user-role-repository';
 import type { Clock } from '@/application/shared/ports/clock';
 import { UserNotFoundError } from '@/domain/user/user-errors';
@@ -17,14 +17,14 @@ export type AssignRoleOutput = void;
 
 interface AssignRoleDeps {
   userRepository: UserRepository;
-  roleRepository: RoleRepository;
+  roleRepository: RoleReader;
   userRoleRepository: UserRoleRepository;
   clock: Clock;
 }
 
 export class AssignRole {
   private readonly users: UserRepository;
-  private readonly roles: RoleRepository;
+  private readonly roles: RoleReader;
   private readonly userRoles: UserRoleRepository;
   private readonly clock: Clock;
 

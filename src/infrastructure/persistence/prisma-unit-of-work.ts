@@ -28,23 +28,28 @@ export class PrismaUnitOfWork implements UnitOfWork {
   }
 
   async run<T>(work: (context: TransactionContext) => Promise<T>): Promise<T> {
-    return this.prisma.$transaction(async (tx) => {
-      const staged: DomainEvent[] = [];
-      const repos: TransactionalRepositories = {
-        userRepository: new PrismaUserRepository({ prisma: tx }),
-        roleRepository: new PrismaRoleRepository({ prisma: tx }),
-        permissionRepository: new PrismaPermissionRepository({ prisma: tx }),
-        userRoleRepository: new PrismaUserRoleRepository({ prisma: tx }),
-        emailVerificationCodeRepository: new PrismaEmailVerificationCodeRepository({ prisma: tx }),
-        passwordResetTokenRepository: new PrismaPasswordResetTokenRepository({ prisma: tx }),
-      };
-      const context: TransactionContext = {
-        ...repos,
-        outbox: { stage: (events) => staged.push(...events) },
-      };
-      const result = await work(context);
-      await this.outboxWriter.write(staged, tx);
-      return result;
-    });
+    return this.prisma.$transaction(
+      async (tx) => {
+        const staged: DomainEvent[] = [];
+        const repos: TransactionalRepositories = {
+          userRepository: new PrismaUserRepository({ prisma: tx }),
+          roleRepository: new PrismaRoleRepository({ prisma: tx }),
+          permissionRepository: new PrismaPermissionRepository({ prisma: tx }),
+          userRoleRepository: new PrismaUserRoleRepository({ prisma: tx }),
+          emailVerificationCodeRepository: new PrismaEmailVerificationCodeRepository({
+            prisma: tx,
+          }),
+          passwordResetTokenRepository: new PrismaPasswordResetTokenRepository({ prisma: tx }),
+        };
+        const context: TransactionContext = {
+          ...repos,
+          outbox: { stage: (events) => staged.push(...events) },
+        };
+        const result = await work(context);
+        await this.outboxWriter.write(staged, tx);
+        return result;
+      },
+      { isolationLevel: 'ReadCommitted' },
+    );
   }
 }

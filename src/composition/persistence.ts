@@ -5,7 +5,7 @@ import type { UserRepository } from '@/domain/user/user-repository';
 import type { RefreshTokenRepository } from '@/domain/auth/refresh-token-repository';
 import type { EmailVerificationCodeRepository } from '@/domain/verification/email-verification-code-repository';
 import type { PasswordResetTokenRepository } from '@/domain/password-reset/password-reset-token-repository';
-import type { RoleRepository } from '@/domain/authorization/role-repository';
+import type { RoleReader } from '@/domain/authorization/role-repository';
 import type { PermissionRepository } from '@/application/shared/ports/permission-repository';
 import type { UserRoleRepository } from '@/application/shared/ports/user-role-repository';
 import type { GrantsReader } from '@/application/shared/ports/grants-reader';
@@ -14,7 +14,7 @@ import { PrismaUserRepository } from '@/infrastructure/persistence/prisma-user-r
 import { PrismaRefreshTokenRepository } from '@/infrastructure/persistence/prisma-refresh-token-repository';
 import { PrismaEmailVerificationCodeRepository } from '@/infrastructure/persistence/prisma-email-verification-code-repository';
 import { PrismaPasswordResetTokenRepository } from '@/infrastructure/persistence/prisma-password-reset-token-repository';
-import { PrismaRoleRepository } from '@/infrastructure/persistence/prisma-role-repository';
+import { PrismaRoleReader } from '@/infrastructure/persistence/prisma-role-reader';
 import { PrismaPermissionRepository } from '@/infrastructure/persistence/prisma-permission-repository';
 import { PrismaUserRoleRepository } from '@/infrastructure/persistence/prisma-user-role-repository';
 import { PrismaGrantsReader } from '@/infrastructure/persistence/prisma-grants-reader';
@@ -29,7 +29,7 @@ declare module '@fastify/awilix' {
     refreshTokenRepository: RefreshTokenRepository;
     emailVerificationCodeRepository: EmailVerificationCodeRepository;
     passwordResetTokenRepository: PasswordResetTokenRepository;
-    roleRepository: RoleRepository;
+    roleRepository: RoleReader;
     permissionRepository: PermissionRepository;
     userRoleRepository: UserRoleRepository;
     grants: GrantsReader;
@@ -46,7 +46,7 @@ export const persistenceRegistrations = {
   refreshTokenRepository: asClass(PrismaRefreshTokenRepository).singleton(),
   emailVerificationCodeRepository: asClass(PrismaEmailVerificationCodeRepository).singleton(),
   passwordResetTokenRepository: asClass(PrismaPasswordResetTokenRepository).singleton(),
-  roleRepository: asClass(PrismaRoleRepository).singleton(),
+  roleRepository: asClass(PrismaRoleReader).singleton(),
   permissionRepository: asClass(PrismaPermissionRepository).singleton(),
   userRoleRepository: asClass(PrismaUserRoleRepository).singleton(),
   grants: asClass(PrismaGrantsReader).singleton(),

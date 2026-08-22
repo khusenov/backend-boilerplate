@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `roles` ADD COLUMN `version` INTEGER NOT NULL DEFAULT 1;

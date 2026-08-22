@@ -20,6 +20,20 @@ class TestEntity extends Entity<TestProps> {
   }
 }
 
+class GuardedEntity extends Entity<TestProps> {
+  assertions = 0;
+  refuse = false;
+
+  static create(props: TestProps): GuardedEntity {
+    return new GuardedEntity(props);
+  }
+
+  protected override assertDeletable(): void {
+    this.assertions += 1;
+    if (this.refuse) throw new Error('not deletable');
+  }
+}
+
 const LATER = new Date('2024-02-01T00:00:00Z');
 
 function makeProps(overrides: Partial<EntityProps> = {}): TestProps {
@@ -146,6 +160,35 @@ describe('Entity', () => {
       entity.softDelete(new Date('2024-03-01T00:00:00Z'));
       expect(entity.deletedAt).toBe(firstDeletedAt);
     });
+
+    it('consults assertDeletable before mutating', () => {
+      const entity = GuardedEntity.create(makeProps());
+      entity.softDelete(LATER);
+      expect(entity.assertions).toBe(1);
+    });
+
+    it('does not consult assertDeletable on an already-deleted entity', () => {
+      const entity = GuardedEntity.create(makeProps({ deletedAt: LATER }));
+      entity.softDelete(new Date('2024-03-01T00:00:00Z'));
+      expect(entity.assertions).toBe(0);
+    });
+
+    it('leaves the entity untouched when assertDeletable refuses', () => {
+      const original = new Date('2024-01-01T00:00:00Z');
+      const entity = GuardedEntity.create(makeProps({ updatedAt: original }));
+      entity.refuse = true;
+
+      expect(() => entity.softDelete(LATER)).toThrow('not deletable');
+      expect(entity.isDeleted).toBe(false);
+      expect(entity.updatedAt).toBe(original);
+    });
+
+    it('refuses a deletable subtype only once it is not already deleted', () => {
+      const entity = GuardedEntity.create(makeProps({ deletedAt: LATER }));
+      entity.refuse = true;
+
+      expect(() => entity.softDelete(new Date('2024-03-01T00:00:00Z'))).not.toThrow();
+    });
   });
 
   describe('restore', () => {
@@ -173,6 +216,15 @@ describe('Entity', () => {
       entity.restore(LATER);
       expect(entity.updatedAt).toBe(original);
       expect(entity.deletedAt).toBeNull();
+    });
+
+    it('does not consult assertDeletable — restoring has no matching guard', () => {
+      const entity = GuardedEntity.create(makeProps({ deletedAt: LATER }));
+      entity.refuse = true;
+
+      expect(() => entity.restore(new Date('2024-03-01T00:00:00Z'))).not.toThrow();
+      expect(entity.assertions).toBe(0);
+      expect(entity.isDeleted).toBe(false);
     });
   });
 });

@@ -94,6 +94,7 @@ model Role {
   createdAt   DateTime  @map("created_at")
   updatedAt   DateTime  @map("updated_at")
   deletedAt   DateTime? @map("deleted_at")
+  version     Int       @default(1)
 
   permissions RolePermission[]
   users       UserRole[]

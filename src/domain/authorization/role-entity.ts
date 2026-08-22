@@ -1,7 +1,11 @@
-import { Entity, type EntityProps } from '@/domain/shared/entity';
+import {
+  AggregateRoot,
+  UNSAVED_VERSION,
+  type AggregateRootProps,
+} from '@/domain/shared/aggregate-root';
 import { RoleDeletedError, RoleNameRequiredError, SystemRoleProtectedError } from './role-errors';
 
-interface RoleProps extends EntityProps {
+interface RoleProps extends AggregateRootProps {
   key: string | null;
   name: string;
   description: string | null;
@@ -16,7 +20,7 @@ interface RoleCreateParams {
   permissions?: string[];
 }
 
-export class Role extends Entity<RoleProps> {
+export class Role extends AggregateRoot<RoleProps> {
   private constructor(props: RoleProps) {
     super(props);
   }
@@ -64,6 +68,7 @@ export class Role extends Entity<RoleProps> {
       description: Role.normalizeDescription(params.description),
       isSystem: options.isSystem,
       permissions: new Set(params.permissions ?? []),
+      version: UNSAVED_VERSION,
       createdAt: now,
       updatedAt: now,
       deletedAt: null,
@@ -121,9 +126,8 @@ export class Role extends Entity<RoleProps> {
     return this.props.permissions.has(permission);
   }
 
-  override softDelete(now: Date): void {
+  protected override assertDeletable(): void {
     if (this.props.isSystem) throw new SystemRoleProtectedError(this.id);
-    super.softDelete(now);
   }
 
   private guardMutable(): void {

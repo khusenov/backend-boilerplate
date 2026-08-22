@@ -1,5 +1,5 @@
 import { toRoleDto, type RoleDto } from './role-dto';
-import type { RoleRepository } from '@/domain/authorization/role-repository';
+import type { RoleReader } from '@/domain/authorization/role-repository';
 import type { Actor } from '@/domain/authorization/actor';
 import { ensurePermission } from '@/domain/authorization/access-policy';
 import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
@@ -15,11 +15,11 @@ export type ListRolesInput = PageQueryInput;
 export type ListRolesOutput = Page<RoleDto>;
 
 interface ListRolesDeps {
-  roleRepository: RoleRepository;
+  roleRepository: RoleReader;
 }
 
 export class ListRoles {
-  private readonly roles: RoleRepository;
+  private readonly roles: RoleReader;
 
   constructor({ roleRepository }: ListRolesDeps) {
     this.roles = roleRepository;

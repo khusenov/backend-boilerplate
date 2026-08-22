@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Role } from './role-entity';
 import { RoleDeletedError, RoleNameRequiredError, SystemRoleProtectedError } from './role-errors';
+import { UNSAVED_VERSION } from '@/domain/shared/aggregate-root';
 
 const BASE_TIME = new Date('2026-01-01T00:00:00.000Z');
 const LATER = new Date('2026-01-01T00:00:01.000Z');
@@ -195,6 +196,78 @@ describe('Role', () => {
       expect(() => role.softDelete(LATER)).toThrow(SystemRoleProtectedError);
       expect(role.isDeleted).toBe(false);
     });
+
+    it('stays silent when soft-deleting an already-deleted system role', () => {
+      const role = Role.hydrate({
+        id: 'role-1',
+        key: 'super-admin',
+        name: 'Super Admin',
+        description: null,
+        isSystem: true,
+        permissions: new Set(),
+        version: 3,
+        createdAt: BASE_TIME,
+        updatedAt: BASE_TIME,
+        deletedAt: BASE_TIME,
+      });
+
+      expect(() => role.softDelete(LATER)).not.toThrow();
+      expect(role.deletedAt).toEqual(BASE_TIME);
+    });
+  });
+
+  describe('version', () => {
+    it('starts a created role at the unsaved version', () => {
+      const role = Role.create({ id: 'role-1', name: 'Editor' }, BASE_TIME);
+      expect(role.version).toBe(UNSAVED_VERSION);
+    });
+
+    it('starts a created system role at the unsaved version', () => {
+      const role = Role.createSystem(
+        { id: 'role-1', key: 'super-admin', name: 'Super Admin' },
+        BASE_TIME,
+      );
+      expect(role.version).toBe(UNSAVED_VERSION);
+    });
+
+    it('reports the stored version on a hydrated role', () => {
+      const role = Role.hydrate({
+        id: 'role-1',
+        key: null,
+        name: 'Editor',
+        description: null,
+        isSystem: false,
+        permissions: new Set(),
+        version: 7,
+        createdAt: BASE_TIME,
+        updatedAt: BASE_TIME,
+        deletedAt: null,
+      });
+
+      expect(role.version).toBe(7);
+    });
+
+    it('leaves the version untouched when the role mutates — the row owns it', () => {
+      const role = Role.hydrate({
+        id: 'role-1',
+        key: null,
+        name: 'Editor',
+        description: null,
+        isSystem: false,
+        permissions: new Set(['users.read']),
+        version: 7,
+        createdAt: BASE_TIME,
+        updatedAt: BASE_TIME,
+        deletedAt: null,
+      });
+
+      role.rename('Manager', LATER);
+      role.grant('roles.read', LATER);
+      role.revoke('users.read', LATER);
+      role.setPermissions(['users.update'], LATER);
+
+      expect(role.version).toBe(7);
+    });
   });
 
   describe('deleted-role protection', () => {
@@ -219,6 +292,7 @@ describe('Role', () => {
         description: 'desc',
         isSystem: false,
         permissions: new Set(['users.read']),
+        version: 1,
         createdAt: BASE_TIME,
         updatedAt: BASE_TIME,
         deletedAt: null,

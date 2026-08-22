@@ -106,6 +106,18 @@ describe('composition modules', () => {
     }
   });
 
+  it('constructs the role use cases from the cradle', () => {
+    const container = buildContainer();
+
+    expect(() => container.resolve('editRole')).not.toThrow();
+  });
+
+  it('keeps save off the non-transactional role instance in the cradle', () => {
+    const container = buildContainer();
+
+    expect('save' in container.resolve('roleRepository')).toBe(false);
+  });
+
   it('resolves metricsExposition to the metricsRecorder instance', () => {
     const container = buildContainer();
 

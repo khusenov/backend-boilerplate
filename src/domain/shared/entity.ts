@@ -46,8 +46,13 @@ export abstract class Entity<T extends EntityProps> {
 
   public softDelete(now: Date): void {
     if (this.isDeleted) return;
+    this.assertDeletable();
     this.props.deletedAt = now;
     this.touch(now);
+  }
+
+  protected assertDeletable(): void {
+    return;
   }
 
   public restore(now: Date): void {

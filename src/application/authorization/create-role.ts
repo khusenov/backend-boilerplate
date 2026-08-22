@@ -1,6 +1,6 @@
 import { toRoleDto, type RoleDto } from './role-dto';
 import { assertKnownPermissions } from './assert-known-permissions';
-import type { RoleRepository } from '@/domain/authorization/role-repository';
+import type { UnitOfWork } from '@/application/shared/ports/unit-of-work';
 import type { Clock } from '@/application/shared/ports/clock';
 import type { IdGenerator } from '@/application/shared/ports/id-generator';
 import { Role } from '@/domain/authorization/role-entity';
@@ -18,18 +18,18 @@ export interface CreateRoleInput {
 export type CreateRoleOutput = RoleDto;
 
 interface CreateRoleDeps {
-  roleRepository: RoleRepository;
+  unitOfWork: UnitOfWork;
   idGenerator: IdGenerator;
   clock: Clock;
 }
 
 export class CreateRole {
-  private readonly roles: RoleRepository;
+  private readonly unitOfWork: UnitOfWork;
   private readonly ids: IdGenerator;
   private readonly clock: Clock;
 
-  constructor({ roleRepository, idGenerator, clock }: CreateRoleDeps) {
-    this.roles = roleRepository;
+  constructor({ unitOfWork, idGenerator, clock }: CreateRoleDeps) {
+    this.unitOfWork = unitOfWork;
     this.ids = idGenerator;
     this.clock = clock;
   }
@@ -50,10 +50,12 @@ export class CreateRole {
       this.clock.now(),
     );
 
-    const existing = await this.roles.findByName(role.name);
-    if (existing) throw new RoleNameTakenError(role.name);
+    return this.unitOfWork.run(async ({ roleRepository }) => {
+      const existing = await roleRepository.findByName(role.name);
+      if (existing) throw new RoleNameTakenError(role.name);
 
-    await this.roles.save(role);
-    return toRoleDto(role);
+      await roleRepository.save(role);
+      return toRoleDto(role);
+    });
   }
 }

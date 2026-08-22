@@ -1,116 +1,93 @@
-import { toDomain } from './prisma-role-mapper';
+import { PrismaRoleReader } from './prisma-role-reader';
+import { toPersistence } from './prisma-role-mapper';
 import { mapPrismaError } from './prisma-error';
+import { UNSAVED_VERSION } from '@/domain/shared/aggregate-root';
+import { StaleAggregateError } from '@/domain/shared/concurrency-errors';
 import type { RoleRepository } from '@/domain/authorization/role-repository';
 import type { Role } from '@/domain/authorization/role-entity';
-import type { PageQuery, PageSlice } from '@/shared/pagination';
-import type { PrismaTransactionalClient } from './prisma-transactional-client';
+import type { Role as RoleRow } from '@/generated/prisma/client';
 
-const ROLE_INCLUDE = {
-  permissions: { select: { permission: { select: { key: true } } } },
-} as const;
+const ROLE_AGGREGATE_NAME = 'Role';
 
-interface PrismaRoleRepositoryDeps {
-  prisma: PrismaTransactionalClient;
-}
+type MutableRoleFields = Omit<RoleRow, 'id' | 'createdAt'>;
 
-export class PrismaRoleRepository implements RoleRepository {
-  private readonly prisma: PrismaTransactionalClient;
-
-  constructor({ prisma }: PrismaRoleRepositoryDeps) {
-    this.prisma = prisma;
-  }
-
-  async list(query: PageQuery): Promise<PageSlice<Role>> {
-    const where = { deletedAt: null };
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.role.findMany({
-        where,
-        include: ROLE_INCLUDE,
-        orderBy: { createdAt: 'desc' },
-        skip: (query.page - 1) * query.pageSize,
-        take: query.pageSize,
-      }),
-      this.prisma.role.count({ where }),
-    ]);
-    return { items: rows.map(toDomain), total };
-  }
-
-  async findById(id: string): Promise<Role | null> {
-    const row = await this.prisma.role.findFirst({
-      where: { id, deletedAt: null },
-      include: ROLE_INCLUDE,
-    });
-    return row ? toDomain(row) : null;
-  }
-
-  async findByKey(key: string): Promise<Role | null> {
-    const row = await this.prisma.role.findUnique({ where: { key }, include: ROLE_INCLUDE });
-    return row ? toDomain(row) : null;
-  }
-
-  async findByName(name: string): Promise<Role | null> {
-    const row = await this.prisma.role.findFirst({
-      where: { name, deletedAt: null },
-      include: ROLE_INCLUDE,
-    });
-    return row ? toDomain(row) : null;
-  }
-
+export class PrismaRoleRepository extends PrismaRoleReader implements RoleRepository {
   async save(role: Role): Promise<void> {
+    const { id, createdAt, ...current } = toPersistence(role);
+    const expectedVersion = current.version;
+    const next: MutableRoleFields = { ...current, version: expectedVersion + 1 };
+
+    if (expectedVersion === UNSAVED_VERSION) {
+      await this.insert({ id, createdAt, ...next });
+    } else {
+      const updatedRows = await this.guardedUpdate(id, expectedVersion, next);
+      if (updatedRows === 0) throw new StaleAggregateError(ROLE_AGGREGATE_NAME, id);
+    }
+
+    await this.replacePermissions(role);
+  }
+
+  private async insert(row: RoleRow): Promise<void> {
     try {
-      await this.prisma.$transaction(async (tx) => {
-        await tx.role.upsert({
-          where: { id: role.id },
-          create: {
-            id: role.id,
-            key: role.key,
-            name: role.name,
-            description: role.description,
-            isSystem: role.isSystem,
-            createdAt: role.createdAt,
-            updatedAt: role.updatedAt,
-            deletedAt: role.deletedAt,
-          },
-          update: {
-            name: role.name,
-            description: role.description,
-            isSystem: role.isSystem,
-            updatedAt: role.updatedAt,
-            deletedAt: role.deletedAt,
-          },
-        });
-
-        const desiredKeys = role.permissions;
-        const matched = desiredKeys.length
-          ? await tx.permission.findMany({
-              where: { key: { in: desiredKeys } },
-              select: { id: true },
-            })
-          : [];
-        const desiredIds = new Set(matched.map((p) => p.id));
-
-        const current = await tx.rolePermission.findMany({
-          where: { roleId: role.id },
-          select: { permissionId: true },
-        });
-        const currentIds = new Set(current.map((c) => c.permissionId));
-
-        const toRemove = [...currentIds].filter((id) => !desiredIds.has(id));
-        const toAdd = [...desiredIds].filter((id) => !currentIds.has(id));
-
-        if (toRemove.length) {
-          await tx.rolePermission.deleteMany({
-            where: { roleId: role.id, permissionId: { in: toRemove } },
-          });
-        }
-        if (toAdd.length) {
-          await tx.rolePermission.createMany({
-            data: toAdd.map((permissionId) => ({ roleId: role.id, permissionId })),
-          });
-        }
-      });
+      await this.prisma.role.create({ data: row });
     } catch (error) {
       mapPrismaError(error);
     }
+  }
+
+  private async guardedUpdate(
+    id: string,
+    expectedVersion: number,
+    data: MutableRoleFields,
+  ): Promise<number> {
+    try {
+      const { count } = await this.prisma.role.updateMany({
+        where: { id, version: expectedVersion },
+        data,
+      });
+      return count;
+    } catch (error) {
+      mapPrismaError(error);
+    }
+  }
+
+  private async replacePermissions(role: Role): Promise<void> {
+    try {
+      const desiredIds = await this.resolvePermissionIds(role.permissions);
+      const currentIds = await this.currentPermissionIds(role.id);
+
+      const toRemove = [...currentIds].filter((id) => !desiredIds.has(id));
+      const toAdd = [...desiredIds].filter((id) => !currentIds.has(id));
+
+      if (toRemove.length) {
+        await this.prisma.rolePermission.deleteMany({
+          where: { roleId: role.id, permissionId: { in: toRemove } },
+        });
+      }
+      if (toAdd.length) {
+        await this.prisma.rolePermission.createMany({
+          data: toAdd.map((permissionId) => ({ roleId: role.id, permissionId })),
+        });
+      }
+    } catch (error) {
+      mapPrismaError(error);
+    }
+  }
+
+  private async resolvePermissionIds(keys: string[]): Promise<Set<string>> {
+    if (!keys.length) return new Set();
+    const rows = await this.prisma.permission.findMany({
+      where: { key: { in: keys } },
+      select: { id: true },
+    });
+    return new Set(rows.map((row) => row.id));
+  }
+
+  private async currentPermissionIds(roleId: string): Promise<Set<string>> {
+    const rows = await this.prisma.rolePermission.findMany({
+      where: { roleId },
+      select: { permissionId: true },
+    });
+    return new Set(rows.map((row) => row.permissionId));
   }
 }

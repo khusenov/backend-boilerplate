@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CreateRole } from './create-role';
 import { Role } from '@/domain/authorization/role-entity';
-import type { RoleRepository } from '@/domain/authorization/role-repository';
 import type { IdGenerator } from '@/application/shared/ports/id-generator';
-import type { Clock } from '@/application/shared/ports/clock';
 import { RoleNameTakenError, UnknownPermissionError } from '@/domain/authorization/role-errors';
+import { StaleAggregateError } from '@/domain/shared/concurrency-errors';
 import { createUserActor } from '@/domain/authorization/actor';
 import { PermissionDeniedError } from '@/domain/authorization/access-policy-errors';
 import { PERMISSIONS } from '@/domain/authorization/permission-catalogue';
+import { makeFixedClock, makeUnitOfWork } from '@test/unit/support/fakes';
 
 const ACTOR = createUserActor({
   userId: 'actor-1',
@@ -25,23 +25,19 @@ const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
 const NOW = new Date('2026-06-01T12:00:00.000Z');
 
 function makeCreateRole() {
-  const roles = {
-    list: vi.fn<RoleRepository['list']>(),
-    findById: vi.fn<RoleRepository['findById']>(),
-    findByKey: vi.fn<RoleRepository['findByKey']>(),
-    findByName: vi.fn<RoleRepository['findByName']>().mockResolvedValue(null),
-    save: vi.fn<RoleRepository['save']>().mockResolvedValue(undefined),
-  } satisfies RoleRepository;
+  const { unitOfWork, context } = makeUnitOfWork();
+  context.roleRepository.findByName.mockResolvedValue(null);
+  context.roleRepository.save.mockResolvedValue(undefined);
 
   const ids = {
     generate: vi.fn<IdGenerator['generate']>().mockReturnValue('new-role-id'),
   } satisfies IdGenerator;
 
-  const clock = { now: vi.fn<Clock['now']>().mockReturnValue(NOW) } satisfies Clock;
+  const clock = makeFixedClock(NOW);
 
-  const sut = new CreateRole({ roleRepository: roles, idGenerator: ids, clock });
+  const sut = new CreateRole({ unitOfWork, idGenerator: ids, clock });
 
-  return { sut, roles, ids, clock };
+  return { sut, unitOfWork, roles: context.roleRepository, ids, clock };
 }
 
 describe('CreateRole', () => {
@@ -56,6 +52,13 @@ describe('CreateRole', () => {
       ctx.sut.execute({ name: 'Editor', permissions: ['users.read', 'users.reed'] }, ACTOR),
     ).rejects.toThrow(UnknownPermissionError);
     expect(ctx.roles.save).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown permission key without opening a transaction', async () => {
+    await expect(
+      ctx.sut.execute({ name: 'Editor', permissions: ['users.reed'] }, ACTOR),
+    ).rejects.toThrow(UnknownPermissionError);
+    expect(ctx.unitOfWork.run).not.toHaveBeenCalled();
   });
 
   it('rejects a name already held by an active role', async () => {
@@ -92,6 +95,18 @@ describe('CreateRole', () => {
     expect([...result.permissions].sort()).toEqual(['users.read', 'users.update']);
   });
 
+  it('does the uniqueness check and the write inside one transaction', async () => {
+    await ctx.sut.execute({ name: 'Editor' }, ACTOR);
+
+    expect(ctx.unitOfWork.run).toHaveBeenCalledOnce();
+  });
+
+  it('propagates a stale-aggregate conflict from the repository', async () => {
+    ctx.roles.save.mockRejectedValue(new StaleAggregateError('Role', 'new-role-id'));
+
+    await expect(ctx.sut.execute({ name: 'Editor' }, ACTOR)).rejects.toThrow(StaleAggregateError);
+  });
+
   it('stamps the new role from a single clock reading', async () => {
     await ctx.sut.execute({ name: 'Editor' }, ACTOR);
 
@@ -112,5 +127,15 @@ describe('CreateRole authorization', () => {
 
     expect(ctx.roles.findByName).not.toHaveBeenCalled();
     expect(ctx.roles.save).not.toHaveBeenCalled();
+  });
+
+  it('denies an unauthorized caller without opening a transaction', async () => {
+    const ctx = makeCreateRole();
+
+    await expect(ctx.sut.execute({ name: 'auditor' }, UNPRIVILEGED_ACTOR)).rejects.toThrow(
+      PermissionDeniedError,
+    );
+
+    expect(ctx.unitOfWork.run).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,4 @@
-import type { RoleRepository } from '@/domain/authorization/role-repository';
+import type { UnitOfWork } from '@/application/shared/ports/unit-of-work';
 import type { Clock } from '@/application/shared/ports/clock';
 import { RoleNotFoundError } from '@/domain/authorization/role-errors';
 import type { Actor } from '@/domain/authorization/actor';
@@ -12,25 +12,27 @@ export interface DeleteRoleInput {
 export type DeleteRoleOutput = void;
 
 interface DeleteRoleDeps {
-  roleRepository: RoleRepository;
+  unitOfWork: UnitOfWork;
   clock: Clock;
 }
 
 export class DeleteRole {
-  private readonly roles: RoleRepository;
+  private readonly unitOfWork: UnitOfWork;
   private readonly clock: Clock;
 
-  constructor({ roleRepository, clock }: DeleteRoleDeps) {
-    this.roles = roleRepository;
+  constructor({ unitOfWork, clock }: DeleteRoleDeps) {
+    this.unitOfWork = unitOfWork;
     this.clock = clock;
   }
 
   async execute(input: DeleteRoleInput, actor: Actor): Promise<DeleteRoleOutput> {
     ensurePermission(actor, PERMISSIONS.RolesDelete.key);
 
-    const role = await this.roles.findById(input.id);
-    if (!role) throw new RoleNotFoundError(input.id);
-    role.softDelete(this.clock.now());
-    await this.roles.save(role);
+    await this.unitOfWork.run(async ({ roleRepository }) => {
+      const role = await roleRepository.findById(input.id);
+      if (!role) throw new RoleNotFoundError(input.id);
+      role.softDelete(this.clock.now());
+      await roleRepository.save(role);
+    });
   }
 }

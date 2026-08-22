@@ -2,6 +2,7 @@ import type { PrismaClient } from '@/generated/prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { mock } from 'vitest-mock-extended';
 import { PrismaUnitOfWork } from './prisma-unit-of-work';
+import { PrismaRoleRepository } from './prisma-role-repository';
 import { DomainEvent } from '@/domain/shared/domain-event';
 import type { PrismaOutboxWriter } from './prisma-outbox-writer';
 
@@ -16,7 +17,9 @@ class TestEvent extends DomainEvent {
 function makePrisma() {
   const tx = { __tx: true };
   const prisma = {
-    $transaction: vi.fn().mockImplementation((work: (tx: object) => Promise<unknown>) => work(tx)),
+    $transaction: vi
+      .fn<(work: (tx: object) => Promise<unknown>, options?: object) => Promise<unknown>>()
+      .mockImplementation((work) => work(tx)),
   } as unknown as PrismaClient;
   return { prisma, tx };
 }
@@ -44,6 +47,29 @@ describe('PrismaUnitOfWork', () => {
 
     expect(prisma.$transaction).toHaveBeenCalledOnce();
     expect(result).toBe('ok');
+  });
+
+  it('opens the transaction at read-committed so the version guard sees committed rows', async () => {
+    const { prisma } = makePrisma();
+    const { writer } = makeOutboxWriter();
+    const sut = new PrismaUnitOfWork({ prisma, outboxWriter: writer });
+
+    await sut.run(() => Promise.resolve());
+
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: 'ReadCommitted',
+    });
+  });
+
+  it('hands the callback a role repository that can write', async () => {
+    const { prisma } = makePrisma();
+    const { writer } = makeOutboxWriter();
+    const sut = new PrismaUnitOfWork({ prisma, outboxWriter: writer });
+
+    await sut.run((context) => {
+      expect(context.roleRepository).toBeInstanceOf(PrismaRoleRepository);
+      return Promise.resolve();
+    });
   });
 
   it('flushes staged domain events to the outbox writer with the tx client', async () => {

@@ -26,15 +26,13 @@ export class PrismaUserRepository implements UserRepository {
 
   async list(query: PageQuery): Promise<PageSlice<User>> {
     const where = { deletedAt: null };
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.user.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (query.page - 1) * query.pageSize,
-        take: query.pageSize,
-      }),
-      this.prisma.user.count({ where }),
-    ]);
+    const rows = await this.prisma.user.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip: (query.page - 1) * query.pageSize,
+      take: query.pageSize,
+    });
+    const total = await this.prisma.user.count({ where });
     return { items: rows.map(toDomain), total };
   }
 
