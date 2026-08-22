@@ -152,7 +152,7 @@ export const authRoutes: FastifyPluginCallbackZod = (app, _opts, done) => {
       },
       schema: {
         body: verifyEmailBody,
-        response: { 200: userResponse, 400: errorResponse },
+        response: { 200: userResponse, 400: errorResponse, 409: errorResponse },
       },
     },
     async (request, reply) => {

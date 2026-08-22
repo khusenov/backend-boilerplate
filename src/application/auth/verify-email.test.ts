@@ -29,6 +29,7 @@ function makePendingUser(): User {
     email: Email.create('jane@example.com'),
     passwordHash: 'hashed-pw',
     status: UserStatus.Pending,
+    version: 1,
     createdAt: ISSUED_AT,
     updatedAt: ISSUED_AT,
     deletedAt: null,

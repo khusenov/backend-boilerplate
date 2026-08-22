@@ -83,26 +83,26 @@ Each repository is paired with a **mapper**: a module of two pure functions that
 Prisma row type and the domain entity, keeping the persistence schema and the domain model free to
 diverge.
 
-| Component                         | Layer              | Responsibility                                                                                     | File                                                            |
-| --------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `UnitOfWork`                      | Application (port) | The contract: `run<T>(work)` executes a callback atomically and returns its result                 | `src/application/shared/ports/unit-of-work.ts`                  |
-| `TransactionalRepositories`       | Application (port) | The six repositories a transactional callback may write through                                    | `src/application/shared/ports/unit-of-work.ts`                  |
-| `OutboxStaging`                   | Application (port) | `stage(events)` — hands domain events to the running transaction                                   | `src/application/shared/ports/unit-of-work.ts`                  |
-| `TransactionContext`              | Application (port) | `TransactionalRepositories` plus a readonly `outbox`; the callback's single parameter              | `src/application/shared/ports/unit-of-work.ts`                  |
-| `PermissionRepository`            | Application (port) | `findAll`, `upsertByKey`, `deleteByKeys` over `PermissionRecord` (a flat record, not an aggregate) | `src/application/shared/ports/permission-repository.ts`         |
-| `UserRoleRepository`              | Application (port) | The user↔role join table: `listRoleIdsForUser`, `assign`, `revoke`                                 | `src/application/shared/ports/user-role-repository.ts`          |
-| `UserRepository`                  | Domain             | `list`, `findById`, `findByEmail`, `save` — the first two exclude soft-deleted users               | `src/domain/user/user-repository.ts`                            |
-| `RoleRepository`                  | Domain             | `list`, `findById`, `findByKey`, `findByName`, `save`                                              | `src/domain/authorization/role-repository.ts`                   |
-| `EmailVerificationCodeRepository` | Domain             | `create`, `update`, `findActiveByUserId`                                                           | `src/domain/verification/email-verification-code-repository.ts` |
-| `PasswordResetTokenRepository`    | Domain             | `create`, `update`, `findByTokenHash`, `invalidateAllForUser`, `deleteExpired`                     | `src/domain/password-reset/password-reset-token-repository.ts`  |
-| `RefreshTokenRepository`          | Domain             | Session tokens — deliberately **outside** the transactional bundle (see Design decisions)          | `src/domain/auth/refresh-token-repository.ts`                   |
-| `PrismaUnitOfWork`                | Infrastructure     | Opens `$transaction`, builds per-tx repositories, runs the callback, flushes staged events         | `src/infrastructure/persistence/prisma-unit-of-work.ts`         |
-| `PrismaTransactionalClient`       | Infrastructure     | `PrismaClient \| Prisma.TransactionClient` — lets one adapter serve both modes                     | `src/infrastructure/persistence/prisma-transactional-client.ts` |
-| `createPrismaClient`              | Infrastructure     | Builds the root `PrismaClient` over the `PrismaMariaDb` driver adapter from `DATABASE_URL`         | `src/infrastructure/persistence/prisma-client.ts`               |
-| `mapPrismaError`                  | Infrastructure     | Translates `PrismaClientKnownRequestError` codes into the shared error types; returns `never`      | `src/infrastructure/persistence/prisma-error.ts`                |
-| `PrismaUserRepository`            | Infrastructure     | Representative adapter: upserts on `save`, delegates row↔entity translation to the mapper          | `src/infrastructure/persistence/prisma-user-repository.ts`      |
-| `toDomain` / `toPersistence`      | Infrastructure     | The user mapper: `UserRow` → `User.hydrate(...)` and `User` → `UserRow`                            | `src/infrastructure/persistence/prisma-user-mapper.ts`          |
-| `PrismaOutboxWriter`              | Infrastructure     | `write(events, tx)` — serializes staged events into `outbox_messages` on the given client          | `src/infrastructure/persistence/prisma-outbox-writer.ts`        |
+| Component                         | Layer              | Responsibility                                                                                                             | File                                                            |
+| --------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `UnitOfWork`                      | Application (port) | The contract: `run<T>(work)` executes a callback atomically and returns its result                                         | `src/application/shared/ports/unit-of-work.ts`                  |
+| `TransactionalRepositories`       | Application (port) | The six repositories a transactional callback may write through                                                            | `src/application/shared/ports/unit-of-work.ts`                  |
+| `OutboxStaging`                   | Application (port) | `stage(events)` — hands domain events to the running transaction                                                           | `src/application/shared/ports/unit-of-work.ts`                  |
+| `TransactionContext`              | Application (port) | `TransactionalRepositories` plus a readonly `outbox`; the callback's single parameter                                      | `src/application/shared/ports/unit-of-work.ts`                  |
+| `PermissionRepository`            | Application (port) | `findAll`, `upsertByKey`, `deleteByKeys` over `PermissionRecord` (a flat record, not an aggregate)                         | `src/application/shared/ports/permission-repository.ts`         |
+| `UserRoleRepository`              | Application (port) | The user↔role join table: `listRoleIdsForUser`, `assign`, `revoke`                                                         | `src/application/shared/ports/user-role-repository.ts`          |
+| `UserRepository`                  | Domain             | `list`, `findById`, `findByEmail`, `save` — the first two exclude soft-deleted users                                       | `src/domain/user/user-repository.ts`                            |
+| `RoleRepository`                  | Domain             | `list`, `findById`, `findByKey`, `findByName`, `save`                                                                      | `src/domain/authorization/role-repository.ts`                   |
+| `EmailVerificationCodeRepository` | Domain             | `create`, `update`, `findActiveByUserId`                                                                                   | `src/domain/verification/email-verification-code-repository.ts` |
+| `PasswordResetTokenRepository`    | Domain             | `create`, `update`, `findByTokenHash`, `invalidateAllForUser`, `deleteExpired`                                             | `src/domain/password-reset/password-reset-token-repository.ts`  |
+| `RefreshTokenRepository`          | Domain             | Session tokens — deliberately **outside** the transactional bundle (see Design decisions)                                  | `src/domain/auth/refresh-token-repository.ts`                   |
+| `PrismaUnitOfWork`                | Infrastructure     | Opens `$transaction`, builds per-tx repositories, runs the callback, flushes staged events                                 | `src/infrastructure/persistence/prisma-unit-of-work.ts`         |
+| `PrismaTransactionalClient`       | Infrastructure     | `PrismaClient \| Prisma.TransactionClient` — lets one adapter serve both modes                                             | `src/infrastructure/persistence/prisma-transactional-client.ts` |
+| `createPrismaClient`              | Infrastructure     | Builds the root `PrismaClient` over the `PrismaMariaDb` driver adapter from `DATABASE_URL`                                 | `src/infrastructure/persistence/prisma-client.ts`               |
+| `mapPrismaError`                  | Infrastructure     | Translates `PrismaClientKnownRequestError` codes into the shared error types; returns `never`                              | `src/infrastructure/persistence/prisma-error.ts`                |
+| `PrismaUserRepository`            | Infrastructure     | Representative adapter: `save` inserts or applies a version-guarded update, delegates row↔entity translation to the mapper | `src/infrastructure/persistence/prisma-user-repository.ts`      |
+| `toDomain` / `toPersistence`      | Infrastructure     | The user mapper: `UserRow` → `User.hydrate(...)` and `User` → `UserRow`                                                    | `src/infrastructure/persistence/prisma-user-mapper.ts`          |
+| `PrismaOutboxWriter`              | Infrastructure     | `write(events, tx)` — serializes staged events into `outbox_messages` on the given client                                  | `src/infrastructure/persistence/prisma-outbox-writer.ts`        |
 
 ## Public surface
 
@@ -386,9 +386,11 @@ atomically alongside a user.
   entirely — `User` never imports from `@/generated/prisma/client`. Rehydration goes through
   `User.hydrate(...)` rather than a constructor, which is what lets the aggregate reconstruct without
   re-emitting its creation event.
-- **`save` is an upsert with immutable-column handling.** `PrismaUserRepository.save` splits
-  `toPersistence(user)` into `{ id, createdAt, ...mutable }` and writes the first two only in the
-  `create` branch, so an update can never rewrite an entity's identity or creation time. One method
+- **`save` is a version-guarded insert-or-update with immutable-column handling.**
+  `PrismaUserRepository.save` splits `toPersistence(user)` into `{ id, createdAt, ...mutable }` and
+  writes the first two only on insert, so an update can never rewrite an entity's identity or creation
+  time. An aggregate at `UNSAVED_VERSION` is inserted; otherwise `updateMany` is filtered on
+  `{ id, version }` and a zero `count` raises `StaleAggregateError` (`409`). One method
   covers both insert and update, which keeps the domain interface at a single `save` verb instead of
   making callers know whether the aggregate is new.
 
@@ -412,8 +414,10 @@ Unit tests use Vitest with mocked Prisma clients; integration tests drive a real
 - **`src/infrastructure/persistence/prisma-user-repository.test.ts`** — the representative adapter:
   `list` returns mapped domain items with a total, handles the empty case, computes the right `skip` for
   page 2, and filters `deletedAt: null`; `findById` and `findByEmail` map a hit and return `null` on a
-  miss, querying by `id` + `deletedAt: null` and by email string respectively; `save` upserts keyed on
-  `id`, writes `id`/`createdAt` on insert but never on update, and surfaces a `P2002` as `ConflictError`.
+  miss, querying by `id` + `deletedAt: null` and by email string respectively; `save` inserts at
+  version `1` when unsaved and otherwise guards `updateMany` on the loaded version, writes
+  `id`/`createdAt` on insert but never on update, raises `StaleAggregateError` when no row matched,
+  and surfaces a `P2002` as `ConflictError`.
 - **`src/infrastructure/persistence/prisma-user-mapper.test.ts`** — round-tripping a `User` through
   `toPersistence` and `toDomain`. Sibling mapper tests cover the other aggregates:
   `prisma-refresh-token-mapper.test.ts` and `prisma-email-verification-code-mapper.test.ts`.

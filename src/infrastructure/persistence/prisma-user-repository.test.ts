@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 import { PrismaUserRepository } from './prisma-user-repository';
+import { toDomain } from './prisma-user-mapper';
 import type { PrismaClient, User as UserRow } from '@/generated/prisma/client';
-import { ConflictError } from '@/shared/errors';
+import { ConflictError, ErrorKind } from '@/shared/errors';
+import { StaleAggregateError } from '@/domain/shared/concurrency-errors';
 import { Email } from '@/domain/user/email-vo';
 import { User } from '@/domain/user/user-entity';
 
@@ -15,6 +17,7 @@ function makeUserRow(overrides: Partial<UserRow> = {}): UserRow {
     email: 'john@example.com',
     passwordHash: 'hashed-pw',
     status: 'active',
+    version: 1,
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
@@ -45,11 +48,15 @@ function makeRepo() {
     count: vi.fn(),
     findFirst: vi.fn(),
     findUnique: vi.fn(),
-    upsert: vi
+    create: vi.fn<(args: { data: UserRow }) => Promise<unknown>>().mockResolvedValue(undefined),
+    updateMany: vi
       .fn<
-        (args: { create: UserRow; update: Omit<UserRow, 'id' | 'createdAt'> }) => Promise<unknown>
+        (args: {
+          where: { id: string; version: number };
+          data: Omit<UserRow, 'id' | 'createdAt'>;
+        }) => Promise<{ count: number }>
       >()
-      .mockResolvedValue(undefined),
+      .mockResolvedValue({ count: 1 }),
   };
 
   const prisma = {
@@ -174,29 +181,78 @@ describe('PrismaUserRepository', () => {
   });
 
   describe('save', () => {
-    it('upserts the user keyed on id', async () => {
+    it('inserts at version 1 when the aggregate has never been persisted', async () => {
       await ctx.repo.save(makeUser());
 
-      expect(ctx.userDelegate.upsert).toHaveBeenCalledOnce();
-      expect(ctx.userDelegate.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 'user-1' } }),
+      expect(ctx.userDelegate.create).toHaveBeenCalledOnce();
+      expect(ctx.userDelegate.create.mock.calls[0]?.[0].data.version).toBe(1);
+      expect(ctx.userDelegate.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('writes immutable columns (id, createdAt) on insert', async () => {
+      await ctx.repo.save(makeUser());
+
+      const { data } = ctx.userDelegate.create.mock.calls[0]![0];
+      expect(data).toHaveProperty('id', 'user-1');
+      expect(data).toHaveProperty('createdAt');
+    });
+
+    it('guards the update on the loaded version and writes the next one', async () => {
+      await ctx.repo.save(toDomain(makeUserRow({ version: 4 })));
+
+      expect(ctx.userDelegate.create).not.toHaveBeenCalled();
+      expect(ctx.userDelegate.updateMany).toHaveBeenCalledOnce();
+      const [args] = ctx.userDelegate.updateMany.mock.calls[0]!;
+      expect(args.where).toEqual({ id: 'user-1', version: 4 });
+      expect(args.data.version).toBe(5);
+    });
+
+    it('never writes id or createdAt on update', async () => {
+      await ctx.repo.save(toDomain(makeUserRow({ version: 4 })));
+
+      expect(ctx.userDelegate.updateMany).toHaveBeenCalledOnce();
+      const [args] = ctx.userDelegate.updateMany.mock.calls[0]!;
+      expect(args.data).not.toHaveProperty('id');
+      expect(args.data).not.toHaveProperty('createdAt');
+    });
+
+    it('throws StaleAggregateError when no row matched the expected version', async () => {
+      ctx.userDelegate.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(ctx.repo.save(toDomain(makeUserRow({ version: 4 })))).rejects.toThrow(
+        StaleAggregateError,
       );
     });
 
-    it('writes immutable columns (id, createdAt) on insert but never on update', async () => {
-      await ctx.repo.save(makeUser());
+    it('reports a conflict rather than an internal error on a stale write', async () => {
+      ctx.userDelegate.updateMany.mockResolvedValue({ count: 0 });
 
-      const [args] = ctx.userDelegate.upsert.mock.calls[0]!;
-      expect(args.create).toHaveProperty('id', 'user-1');
-      expect(args.create).toHaveProperty('createdAt');
-      expect(args.update).not.toHaveProperty('id');
-      expect(args.update).not.toHaveProperty('createdAt');
+      await expect(ctx.repo.save(toDomain(makeUserRow({ version: 4 })))).rejects.toMatchObject({
+        kind: ErrorKind.Conflict,
+        code: 'STALE_AGGREGATE',
+      });
     });
 
-    it('translates a unique constraint violation (P2002) into ConflictError', async () => {
-      ctx.userDelegate.upsert.mockRejectedValue(makePrismaError('P2002'));
+    it('leaves the in-memory aggregate untouched — the row is the source of truth', async () => {
+      const user = toDomain(makeUserRow({ version: 4 }));
+
+      await ctx.repo.save(user);
+
+      expect(user.version).toBe(4);
+    });
+
+    it('translates a unique constraint violation (P2002) into ConflictError on insert', async () => {
+      ctx.userDelegate.create.mockRejectedValue(makePrismaError('P2002'));
 
       await expect(ctx.repo.save(makeUser())).rejects.toThrow(ConflictError);
+    });
+
+    it('translates a unique constraint violation (P2002) into ConflictError on update', async () => {
+      ctx.userDelegate.updateMany.mockRejectedValue(makePrismaError('P2002'));
+
+      await expect(ctx.repo.save(toDomain(makeUserRow({ version: 4 })))).rejects.toThrow(
+        ConflictError,
+      );
     });
   });
 });

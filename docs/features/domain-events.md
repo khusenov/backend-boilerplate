@@ -154,7 +154,7 @@ generic background-job ports (`JobQueue`, `JobScheduler`, `JobHandler`) document
 | Component                                 | Layer                   | Responsibility                                                                                                                                                                     | File                                                                           |
 | ----------------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | `DomainEvent`                             | Domain                  | Abstract base for every event; carries `aggregateId`, `eventName`, and a caller-supplied `occurredAt`                                                                              | `src/domain/shared/domain-event.ts`                                            |
-| `AggregateRoot`                           | Domain                  | Extends `Entity` with the event buffer: protected `recordEvent(...)` appends, public `pullDomainEvents()` drains and clears                                                        | `src/domain/shared/aggregate-root.ts`                                          |
+| `AggregateRoot`                           | Domain                  | Extends `Entity` with the event buffer (protected `recordEvent(...)` appends, public `pullDomainEvents()` drains and clears) and a `readonly version` for optimistic concurrency   | `src/domain/shared/aggregate-root.ts`                                          |
 | `Entity`                                  | Domain                  | Base identity/timestamps/soft-delete for all entities — holds **no** event machinery                                                                                               | `src/domain/shared/entity.ts`                                                  |
 | `UserCreatedEvent`                        | Domain                  | Concrete event for user creation; pins routing key `EVENT_NAME = 'user.created'` and carries `email`                                                                               | `src/domain/user/events/user-created-event.ts`                                 |
 | `User`                                    | Domain                  | Records `UserCreatedEvent` in its private `build(...)`, reached from both `create(...)` and `register(...)`                                                                        | `src/domain/user/user-entity.ts`                                               |
@@ -201,11 +201,23 @@ than silently restamping with the deserialization time. A concrete event pins it
 `EVENT_NAME = 'user.created'`.
 
 **2. `AggregateRoot` — recording and draining events.** Extend `AggregateRoot` (not `Entity`) for any
-aggregate that emits events; only it carries the buffer:
+aggregate that emits events; only it carries the buffer. Doing so also opts the aggregate into
+optimistic concurrency, which obliges its table to carry a `version` column and its repository to
+apply a version-guarded save — see [user-crud.md](./user-crud.md):
 
 ```ts
-export abstract class AggregateRoot<T extends EntityProps> extends Entity<T> {
+export const UNSAVED_VERSION = 0;
+
+export interface AggregateRootProps extends EntityProps {
+  readonly version: number;
+}
+
+export abstract class AggregateRoot<T extends AggregateRootProps> extends Entity<T> {
   private readonly _domainEvents: DomainEvent[] = [];
+
+  get version(): number {
+    return this.props.version;
+  }
 
   public pullDomainEvents(): DomainEvent[] {
     const events = [...this._domainEvents];
@@ -494,7 +506,9 @@ Unit tests use Vitest with mocked ports; integration tests drive the real databa
 relay/dispatch path, a real Redis via Testcontainers) end-to-end.
 
 - **`src/domain/shared/aggregate-root.test.ts`** — the event buffer: starts empty, records events and
-  returns them in insertion order, and clears on pull (a second `pullDomainEvents()` returns `[]`).
+  returns them in insertion order, and clears on pull (a second `pullDomainEvents()` returns `[]`);
+  plus the version lifecycle: a newly built aggregate reports `UNSAVED_VERSION`, a hydrated one
+  reports its stored version.
 - **`src/infrastructure/persistence/prisma-outbox-writer.test.ts`** — the writer emits one `createMany`
   row per event with correctly serialized columns (`id`, `aggregateId`, `eventName`, `payload`,
   `occurredAt`) using the transactional client, and performs no write for an empty array.

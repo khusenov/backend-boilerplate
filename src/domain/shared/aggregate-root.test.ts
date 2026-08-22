@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { AggregateRoot } from './aggregate-root';
+import { AggregateRoot, UNSAVED_VERSION, type AggregateRootProps } from './aggregate-root';
 import { DomainEvent } from './domain-event';
-import type { EntityProps } from './entity';
 
 class RecordedEvent extends DomainEvent {
   constructor(aggregateId: string, occurredAt: Date) {
@@ -9,7 +8,7 @@ class RecordedEvent extends DomainEvent {
   }
 }
 
-interface TestAggregateProps extends EntityProps {
+interface TestAggregateProps extends AggregateRootProps {
   name: string;
 }
 
@@ -18,10 +17,15 @@ class TestAggregate extends AggregateRoot<TestAggregateProps> {
     return new TestAggregate({
       id,
       name: 'test',
+      version: UNSAVED_VERSION,
       createdAt: now,
       updatedAt: now,
       deletedAt: null,
     });
+  }
+
+  static hydrate(props: TestAggregateProps): TestAggregate {
+    return new TestAggregate(props);
   }
 
   emit(occurredAt: Date): void {
@@ -58,5 +62,22 @@ describe('AggregateRoot', () => {
 
     expect(aggregate.pullDomainEvents()).toHaveLength(1);
     expect(aggregate.pullDomainEvents()).toEqual([]);
+  });
+
+  it('starts a newly built aggregate at the unsaved version', () => {
+    expect(TestAggregate.create('agg-1', createdAt).version).toBe(UNSAVED_VERSION);
+  });
+
+  it('reports the stored version of a hydrated aggregate', () => {
+    const aggregate = TestAggregate.hydrate({
+      id: 'agg-1',
+      name: 'test',
+      version: 3,
+      createdAt,
+      updatedAt: createdAt,
+      deletedAt: null,
+    });
+
+    expect(aggregate.version).toBe(3);
   });
 });

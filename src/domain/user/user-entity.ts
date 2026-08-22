@@ -1,5 +1,8 @@
-import { AggregateRoot } from '@/domain/shared/aggregate-root';
-import type { EntityProps } from '@/domain/shared/entity';
+import {
+  AggregateRoot,
+  UNSAVED_VERSION,
+  type AggregateRootProps,
+} from '@/domain/shared/aggregate-root';
 import type { Email } from './email-vo';
 import { UserInvalidNameError, UserDeletedError } from './user-errors';
 import { UserCreatedEvent } from '@/domain/user/events/user-created-event';
@@ -12,7 +15,7 @@ export const UserStatus = {
 
 export type UserStatusType = (typeof UserStatus)[keyof typeof UserStatus];
 
-interface UserProps extends EntityProps {
+interface UserProps extends AggregateRootProps {
   firstName: string;
   lastName: string;
   email: Email;
@@ -80,6 +83,7 @@ export class User extends AggregateRoot<UserProps> {
       firstName,
       lastName,
       status,
+      version: UNSAVED_VERSION,
       createdAt: now,
       updatedAt: now,
       deletedAt: null,

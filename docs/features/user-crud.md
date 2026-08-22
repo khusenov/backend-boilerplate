@@ -119,7 +119,8 @@ a name that passes `z.string().min(1)` but is blank once trimmed (`"   "`), `401
 invalid access token (`MISSING_ACCESS_TOKEN` when the `Authorization` header is absent), `403`
 (`FORBIDDEN`) when the caller lacks the required permission and is not acting on their own record,
 `404` (`USER_NOT_FOUND`) for an unknown or already soft-deleted user, `409`
-(`EMAIL_ALREADY_TAKEN`) for a duplicate email, and `429` (`RATE_LIMITED`) once the caller exhausts
+(`EMAIL_ALREADY_TAKEN`) for a duplicate email or `409` (`STALE_AGGREGATE`) when a concurrent write
+won the race, and `429` (`RATE_LIMITED`) once the caller exhausts
 its request budget — the stricter `RATE_LIMIT_AUTH_MAX` per `RATE_LIMIT_WINDOW` on
 `PATCH /v1/users/:id`, the app-wide `RATE_LIMIT_MAX` on the other `/v1/users` routes. Every case
 except the last is thrown as a typed error and translated to an HTTP status by the central error
@@ -190,7 +191,7 @@ and the five use cases `listUsers` / `getUser` / `createUser` / `editUser` / `de
 | `DeleteUser`                                                                                                   | Application        | Guard `users.delete`, soft-delete an existing user                                                                                                                                                               | `src/application/user/delete-user.ts`                           |
 | `UserDto` / `toUserDto`                                                                                        | Application        | Outbound shape (no `passwordHash`) and the entity→DTO mapper                                                                                                                                                     | `src/application/user/user-dto.ts`                              |
 | `normalizePageQuery` / `createPage`                                                                            | Shared             | Normalize and clamp the page query (`page` ≥ 1, `pageSize` 1–100, defaults `1`/`10`), then wrap the mapped DTOs in the `Page<T>` envelope with `total`/`hasNext`/`hasPrev`                                       | `src/shared/pagination.ts`                                      |
-| `PrismaUserRepository`                                                                                         | Infrastructure     | `UserRepository` adapter over Prisma; filters `deletedAt: null` on identity reads (`findById`, `list`), upserts on `save`                                                                                        | `src/infrastructure/persistence/prisma-user-repository.ts`      |
+| `PrismaUserRepository`                                                                                         | Infrastructure     | `UserRepository` adapter over Prisma; filters `deletedAt: null` on identity reads (`findById`, `list`); `save` inserts an unsaved aggregate and otherwise applies a version-guarded update                       | `src/infrastructure/persistence/prisma-user-repository.ts`      |
 | `toDomain` / `toPersistence`                                                                                   | Infrastructure     | Maps a Prisma `User` row ↔ the `User` aggregate                                                                                                                                                                  | `src/infrastructure/persistence/prisma-user-mapper.ts`          |
 | `mapPrismaError`                                                                                               | Infrastructure     | Translates Prisma `P2002`/`P2025` into `ConflictError` (`UNIQUE_VIOLATION`) / `NotFoundError` (`RECORD_NOT_FOUND`), everything else into `InternalError` (`INTERNAL`)                                            | `src/infrastructure/persistence/prisma-error.ts`                |
 | `userRoutes`                                                                                                   | Presentation       | Fastify plugin: authenticate hook, OpenAPI tagging, Zod schemas, actor mapping, handlers                                                                                                                         | `src/presentation/http/routes/user-routes.ts`                   |
@@ -209,13 +210,13 @@ requires a valid bearer access token (the `onRequest` → `app.authenticate` hoo
 column below is the _additional_ check the use case enforces. A superadmin (holder of the
 `super-admin` system role) bypasses every permission and self check.
 
-| Method   | Path            | Auth                                  | Purpose                                                                                                                                                                                                                                                                                                                                                              |
-| -------- | --------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`    | `/v1/users`     | permission `users.read`               | List users (paginated, excludes soft-deleted, newest first). Query: `page`, `pageSize` — optional, coerced ints ≥ 1. Returns `200` with a paginated envelope; `400 VALIDATION` on a malformed query.                                                                                                                                                                 |
-| `GET`    | `/v1/users/:id` | self **or** permission `users.read`   | Fetch one user by id. `:id` must be a UUID. Returns `200`, `404 USER_NOT_FOUND` if unknown or soft-deleted, `400 VALIDATION` for a non-UUID id.                                                                                                                                                                                                                      |
-| `POST`   | `/v1/users`     | permission `users.create`             | Create an `active` user. Body: `firstName`, `lastName` (1–100 chars), `email`, `password` (8–128 chars). Returns `201` with the created user, `409 EMAIL_ALREADY_TAKEN` on a duplicate address, `400 VALIDATION` on any schema rejection (including a malformed email), or `400 USER_NAME_INVALID` for a whitespace-only name.                                       |
-| `PATCH`  | `/v1/users/:id` | self **or** permission `users.update` | Partial update of `firstName`, `lastName`, and/or `email` (all optional, non-empty). An email change demotes the user to `pending` and triggers a verification email. Returns `200`, `404 USER_NOT_FOUND`, `409 EMAIL_ALREADY_TAKEN`, `400 VALIDATION` / `400 USER_NAME_INVALID`, or `429 RATE_LIMITED` past `RATE_LIMIT_AUTH_MAX` requests per `RATE_LIMIT_WINDOW`. |
-| `DELETE` | `/v1/users/:id` | permission `users.delete`             | Soft-delete a user. Returns `204`, or `404 USER_NOT_FOUND` if unknown or already deleted.                                                                                                                                                                                                                                                                            |
+| Method   | Path            | Auth                                  | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| -------- | --------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`    | `/v1/users`     | permission `users.read`               | List users (paginated, excludes soft-deleted, newest first). Query: `page`, `pageSize` — optional, coerced ints ≥ 1. Returns `200` with a paginated envelope; `400 VALIDATION` on a malformed query.                                                                                                                                                                                                                                 |
+| `GET`    | `/v1/users/:id` | self **or** permission `users.read`   | Fetch one user by id. `:id` must be a UUID. Returns `200`, `404 USER_NOT_FOUND` if unknown or soft-deleted, `400 VALIDATION` for a non-UUID id.                                                                                                                                                                                                                                                                                      |
+| `POST`   | `/v1/users`     | permission `users.create`             | Create an `active` user. Body: `firstName`, `lastName` (1–100 chars), `email`, `password` (8–128 chars). Returns `201` with the created user, `409 EMAIL_ALREADY_TAKEN` on a duplicate address, `400 VALIDATION` on any schema rejection (including a malformed email), or `400 USER_NAME_INVALID` for a whitespace-only name.                                                                                                       |
+| `PATCH`  | `/v1/users/:id` | self **or** permission `users.update` | Partial update of `firstName`, `lastName`, and/or `email` (all optional, non-empty). An email change demotes the user to `pending` and triggers a verification email. Returns `200`, `404 USER_NOT_FOUND`, `409 EMAIL_ALREADY_TAKEN`, `409 STALE_AGGREGATE` when a concurrent write moved the row on, `400 VALIDATION` / `400 USER_NAME_INVALID`, or `429 RATE_LIMITED` past `RATE_LIMIT_AUTH_MAX` requests per `RATE_LIMIT_WINDOW`. |
+| `DELETE` | `/v1/users/:id` | permission `users.delete`             | Soft-delete a user. Returns `204`, `404 USER_NOT_FOUND` if unknown or already deleted, or `409 STALE_AGGREGATE` if a concurrent write moved the row on.                                                                                                                                                                                                                                                                              |
 
 Two more routes are **declared** in the same file but **owned** elsewhere:
 
@@ -258,6 +259,7 @@ The codes this feature owns:
 | `USER_NAME_INVALID`   | `400`  | `UserInvalidNameError` — a first or last name that is blank after trimming. Reachable over HTTP: `"   "` satisfies `z.string().min(1)` and is only rejected by `User.normalizeName`.                                                                                                                                                                                                                                                 |
 | `INVALID_EMAIL`       | `400`  | `InvalidEmailError` (`src/domain/user/email-vo.ts`) — `Email.create` on a malformed address. **Defence in depth, not a reachable HTTP path:** every body carrying an email is validated by `z.email()` first, which is strictly stricter than the domain's `/^[^\s@]+@[^\s@]+\.[^\s@]+$/`, so a malformed address always comes back as `VALIDATION`. The domain check protects non-HTTP callers (jobs, scripts, a future transport). |
 | `USER_DELETED`        | `409`  | `UserDeletedError` — an entity mutator invoked on a soft-deleted aggregate. Defence in depth rather than a reachable HTTP path; see _Design decisions_.                                                                                                                                                                                                                                                                              |
+| `STALE_AGGREGATE`     | `409`  | `StaleAggregateError` — `PrismaUserRepository.save` found no row at the version the aggregate was loaded at, so a concurrent write committed first. The losing caller should re-read and retry; nothing is written.                                                                                                                                                                                                                  |     |
 
 The codes for the layers this feature sits on are documented with those features:
 
@@ -339,7 +341,8 @@ The pattern is identical for every use case; follow these steps.
    DI, take the `Actor` as the last `execute` parameter, and make the authorization check the first
    statement. Save directly through `this.users.save(user)` when the operation writes a single
    `User` row and records no domain event — that is what `DeleteUser` does, and what the recipe
-   below does. Open `uow.run(...)` when the operation **can** write more than one row: `CreateUser`
+   below does. Note that `save` can now raise `StaleAggregateError` (`409`) when a concurrent write
+   moved the row on; let it propagate rather than catching it. Open `uow.run(...)` when the operation **can** write more than one row: `CreateUser`
    must stage the `UserCreatedEvent` outbox row in the same commit as the user, and `EditUser`
    wraps unconditionally because its email branch may add a verification-code row — the criterion
    is what the operation is capable of writing, not what a given call happens to write:
@@ -563,13 +566,16 @@ lives in [domain-events.md](./domain-events.md).
   never load one — they get `null` and return `404` first. The entity guard protects any _future_
   caller that obtains a deleted aggregate by another route, without weakening the current API's
   `404` behaviour.
-- **`save` as an upsert with immutable `id`/`createdAt`.** `PrismaUserRepository.save`
-  destructures `id` and `createdAt` out of the mutable set and upserts: it writes them only on the
-  `create` branch, never on `update`. One method covers both create and edit, and
-  identity/creation time cannot be mutated by an edit.
+- **`save` as a version-guarded insert-or-update.** `PrismaUserRepository.save` destructures `id`
+  and `createdAt` out of the mutable set (`MutableUserFields`) so they are written only on insert,
+  never on update. An aggregate still at `UNSAVED_VERSION` is inserted; anything else goes through
+  `updateMany` filtered on `{ id, version }` with the version incremented in the same statement, and
+  a `count` of zero means another writer committed first — raised as `StaleAggregateError` → `409`.
+  One method still covers both create and edit, identity and creation time cannot be mutated by an
+  edit, and a lost update is now reported instead of silently discarded.
 - **Mapper split from the repository.** `toDomain` / `toPersistence` (`prisma-user-mapper.ts`) are
   pure functions kept separate from `PrismaUserRepository`. The repository owns _querying_ (the
-  `deletedAt: null` filter, the pagination `$transaction`, the upsert) while the mapper owns the
+  `deletedAt: null` filter, the pagination `$transaction`, the version-guarded write) while the mapper owns the
   _field-by-field translation_ between the persistence row and the aggregate, so the mapping can be
   reasoned about (and tested) without a database.
 - **Response Zod schema as an output contract.** `userResponse` re-declares the shape the endpoint
@@ -619,7 +625,10 @@ and `src/application/**`, so any new entity method or use case must arrive with 
   which is where `GET /v1/users`'s envelope actually comes from.
 - `src/infrastructure/persistence/prisma-user-repository.test.ts` — the `deletedAt: null` filter on
   `list`/`findById` and its deliberate absence on `findByEmail`, `skip`/`take` arithmetic, and the
-  upsert writing `id`/`createdAt` only on insert with `P2002` → `ConflictError`.
+  insert path writing `id`/`createdAt` at version `1`, the guarded update filtering on the loaded
+  version and writing the next one, `count === 0` raising `StaleAggregateError` with
+  `kind: Conflict`, a successful save leaving the in-memory aggregate untouched, and `P2002` →
+  `ConflictError` on both branches.
 - `src/infrastructure/persistence/prisma-user-mapper.test.ts` — every scalar column maps in both
   directions (including `deletedAt`) and the pair round-trips losslessly.
 - `src/presentation/http/schemas/user-response-schema.test.ts` — `userResponse` strips fields
