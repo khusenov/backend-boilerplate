@@ -138,7 +138,7 @@ opaque tokens, `@node-rs/argon2` for password hashing, Prisma for persistence) l
 infrastructure and never leak upward. `RefreshToken` is a domain entity that owns the lifecycle
 rules (`isActive`, `markUsed`, `revoke`) with no framework or I/O. Presentation reaches the use
 cases through Awilix's request-scoped cradle (`request.diScope.cradle`). Concretes are bound to
-ports **only** in `src/container.ts`, keeping the dependency arrows pointing inward.
+ports **only** under `src/composition/**`, keeping the dependency arrows pointing inward.
 
 | Component                                                                                                                                                   | Layer              | Responsibility                                                                                                                                                                                                                                                                                                                                                          | File                                                                |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
@@ -384,27 +384,23 @@ and echo the `Cookie` header back instead — then the server unsigns the value 
 trap applies.
 
 **Swap a token implementation.** Because the use cases depend on ports, replacing an implementation
-is a rebinding in `src/container.ts` — specifically a one-line edit **inside
-`registerDependencies(container, baseLogger)`**, where `container` is in scope as a parameter (the
-registration call would not compile at module top level). For example, to move access tokens from a
-symmetric HS256 secret to asymmetric RS256, write a new adapter implementing `AccessTokenService`
-and swap the line in the existing `container.register({ … })` block:
+is a one-line rebinding in `src/composition/security.ts`, the composition module that owns the token
+services. For example, to move access tokens from a symmetric HS256 secret to asymmetric RS256, write
+a new adapter implementing `AccessTokenService` and swap the line in that module's registration map:
 
 ```ts
-// src/container.ts
+// src/composition/security.ts
 import { RsaAccessTokenService } from '@/infrastructure/security/rsa-access-token-service';
 
-export function registerDependencies(
-  container: AwilixContainer,
-  baseLogger: FastifyBaseLogger,
-): void {
-  container.register({
-    // ...the rest of the existing registrations, unchanged
-    // was: accessTokenService: asClass(JoseAccessTokenService).singleton(),
-    accessTokenService: asClass(RsaAccessTokenService).singleton(),
-  });
-}
+export const securityRegistrations = {
+  // ...the rest of the existing registrations, unchanged
+  // was: accessTokenService: asClass(JoseAccessTokenService).singleton(),
+  accessTokenService: asClass(RsaAccessTokenService).singleton(),
+} satisfies RegistrationMap;
 ```
+
+The `Cradle` slice above it still types the key as the `AccessTokenService` **port**, so the swap
+is checked against the abstraction: an adapter that does not implement it fails to compile here.
 
 No application, domain, or presentation code changes — `Login`, `RefreshSession`, `SessionService`,
 and `authPlugin` keep calling `sign`/`verify` through the unchanged port. The same pattern applies

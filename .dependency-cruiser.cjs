@@ -94,6 +94,18 @@ module.exports = {
       to: { path: '^src/container\\.ts$' },
     },
     {
+      name: 'composition-modules-are-not-importable',
+      comment:
+        'src/composition/* files are slices of the composition root: like src/container.ts they see ' +
+        'both application and infrastructure, so importing one from anywhere else defeats every ' +
+        'layer rule at once, and reaching past registerDependencies skips the completeness check ' +
+        'that makes the split safe. Only src/container.ts may import them, and they may import ' +
+        'each other. Depend on a port instead.',
+      severity: 'error',
+      from: { path: '^src/', pathNot: ['^src/container\\.ts$', '^src/composition/'] },
+      to: { path: '^src/composition/' },
+    },
+    {
       name: 'system-actor-is-entry-point-only',
       comment:
         'A SystemActor bypasses every permission check. Only process entry points may build ' +

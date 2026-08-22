@@ -78,7 +78,7 @@ A use case depends on the `UnitOfWork` interface and receives a `TransactionCont
 themselves interfaces — `UserRepository`, `RoleRepository`, `EmailVerificationCodeRepository`,
 `PasswordResetTokenRepository` (domain), `PermissionRepository`, `UserRoleRepository` (application
 ports) — so no application file imports Prisma. Dependencies point
-inward throughout, and `PrismaUnitOfWork` binds to the `unitOfWork` port in `src/container.ts` alone.
+inward throughout, and `PrismaUnitOfWork` binds to the `unitOfWork` port in `src/composition/persistence.ts` alone.
 Each repository is paired with a **mapper**: a module of two pure functions that translates between the
 Prisma row type and the domain entity, keeping the persistence schema and the domain model free to
 diverge.
@@ -328,9 +328,9 @@ atomically alongside a user.
    };
    ```
 
-6. Register the non-transactional singleton in `src/container.ts` — add `invoiceRepository:
-InvoiceRepository;` to the `Cradle` interface and
-   `invoiceRepository: asClass(PrismaInvoiceRepository).singleton(),` to `container.register({ ... })`,
+6. Register the non-transactional singleton in `src/composition/persistence.ts` — add
+   `invoiceRepository: InvoiceRepository;` to that module's `Cradle` slice and
+   `invoiceRepository: asClass(PrismaInvoiceRepository).singleton(),` to `persistenceRegistrations`,
    next to the existing `userRepository` / `roleRepository` entries. Awilix injects the cradle as the
    single constructor argument, which is why every adapter takes one destructured object.
 

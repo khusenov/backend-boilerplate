@@ -163,10 +163,12 @@ Prisma or Fastify. The domain takes time as a plain `Date` parameter and depends
 all. Infrastructure supplies the **adapters** (`PrismaUserRepository`, `PrismaUnitOfWork`,
 `Argon2PasswordHasher`, `UuidIdGenerator`, `SystemClock`, `BullMqJobQueue`,
 `PrismaEmailVerificationCodeRepository`) that implement those ports. The presentation layer adapts
-HTTP to use-case calls. Concretes are bound to ports in exactly one place — the composition root
-`src/container.ts` (`userRepository`, `idGenerator`, `clock`, `passwordHasher`, `unitOfWork`,
-`jobQueue`, `emailVerificationCodeRepository`, `verificationCodeIssuer`, and the five use cases
-`listUsers` / `getUser` / `createUser` / `editUser` / `deleteUser`, all registered as singletons).
+HTTP to use-case calls. Concretes are bound to ports in exactly one tier — the composition root
+under `src/composition/**` (`userRepository`, `unitOfWork` and
+`emailVerificationCodeRepository` in `persistence.ts`; `idGenerator` and `clock` in `platform.ts`;
+`passwordHasher` in `security.ts`; `jobQueue` in `jobs.ts`; `verificationCodeIssuer` in `auth.ts`;
+and the five use cases `listUsers` / `getUser` / `createUser` / `editUser` / `deleteUser` in
+`user.ts`, all registered as singletons).
 
 | Component                                                                                                      | Layer              | Responsibility                                                                                                                                                                                                   | File                                                            |
 | -------------------------------------------------------------------------------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
@@ -383,16 +385,19 @@ The pattern is identical for every use case; follow these steps.
    }
    ```
 
-3. **Register it in the composition root** `src/container.ts`. Add the type to the `Cradle`
-   interface and bind it alongside the other user use cases:
+3. **Register it in the composition root** `src/composition/user.ts`. Add the type to that module's
+   `Cradle` slice and bind it alongside the other user use cases:
 
    ```ts
-   // in the Cradle interface
+   // in the module's declare module '@fastify/awilix' block
    deactivateUser: DeactivateUser;
 
-   // in registerDependencies(...)'s container.register({ ... })
+   // in userRegistrations
    deactivateUser: asClass(DeactivateUser).singleton(),
    ```
+
+   Declaring the key without registering it is a compile error in `src/composition/compose.ts`, so
+   a half-finished wiring cannot reach runtime.
 
    Awilix injects `userRepository` (and any other cradle key) by matching the constructor
    destructuring names, so no manual dependency wiring is needed.
@@ -453,7 +458,7 @@ which documents them in full.
 ### Subscribing to `user.created`
 
 To react when a user is created (e.g. send a welcome email), implement a domain-event handler,
-register it in `src/container.ts`, and add it to the `domainEventHandlers` array — the list the
+register it in `src/composition/events.ts`, and add it to the `domainEventHandlers` array — the list the
 `DomainEventHandlerRegistry` is built from. The existing `UserCreatedLogHandler`
 (`src/application/user/events/user-created-log-handler.ts`) is the reference implementation.
 Because the event is delivered asynchronously through the outbox, a new event type also needs a

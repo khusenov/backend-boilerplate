@@ -29,16 +29,16 @@ The worker process is the one exception to the `-api` suffix: `docker-compose.ym
 
 ## Architecture at a glance
 
-| Layer            | Path                             | Contains                                                                                                                                | May import                                                 |
-| ---------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| Domain           | `src/domain/**`                  | Entities, value objects (e.g. `Email`), domain errors, repository **interfaces**, domain events                                         | Nothing outside `domain` (no framework, no Prisma, no I/O) |
-| Application      | `src/application/**`             | Use-case classes (`CreateUser`…) with constructor DI + `execute()`; **ports** in `application/shared/ports/**`; DTOs + mappers          | `domain` + its own ports only                              |
-| Infrastructure   | `src/infrastructure/**`          | Adapters implementing ports/repos (Prisma repos & mappers, argon2 hasher, jose/crypto token services, BullMQ queue/worker, Pino logger) | `domain`, `application` ports, concrete libs/Prisma        |
-| Presentation     | `src/presentation/http/**`       | Fastify app, routes, plugins, guards, error handler, security, cookies, Zod response schemas                                            | `application`, Fastify                                     |
-| Composition root | `src/container.ts`               | Awilix wiring (`asClass`/`asFunction`/`asValue`, typed `Cradle`)                                                                        | Everything — the **only** place concretes bind to ports    |
-| Shared / Config  | `src/shared/**`, `src/config/**` | Pagination, error base types, env parsing (`envalid`)                                                                                   | Keep framework-free where possible                         |
+| Layer            | Path                                     | Contains                                                                                                                                | May import                                                 |
+| ---------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Domain           | `src/domain/**`                          | Entities, value objects (e.g. `Email`), domain errors, repository **interfaces**, domain events                                         | Nothing outside `domain` (no framework, no Prisma, no I/O) |
+| Application      | `src/application/**`                     | Use-case classes (`CreateUser`…) with constructor DI + `execute()`; **ports** in `application/shared/ports/**`; DTOs + mappers          | `domain` + its own ports only                              |
+| Infrastructure   | `src/infrastructure/**`                  | Adapters implementing ports/repos (Prisma repos & mappers, argon2 hasher, jose/crypto token services, BullMQ queue/worker, Pino logger) | `domain`, `application` ports, concrete libs/Prisma        |
+| Presentation     | `src/presentation/http/**`               | Fastify app, routes, plugins, guards, error handler, security, cookies, Zod response schemas                                            | `application`, Fastify                                     |
+| Composition root | `src/composition/**`, `src/container.ts` | Awilix wiring (`asClass`/`asFunction`/`asValue`) split one file per module, each declaring its own `Cradle` slice                       | Everything — the **only** place concretes bind to ports    |
+| Shared / Config  | `src/shared/**`, `src/config/**`         | Pagination, error base types, env parsing (`envalid`)                                                                                   | Keep framework-free where possible                         |
 
-**The Dependency Rule:** dependencies point **inward**. The domain depends on nothing; the application depends on the domain plus its own ports; infrastructure and presentation depend inward through those abstractions. Concrete implementations are bound to ports **only** in `src/container.ts`.
+**The Dependency Rule:** dependencies point **inward**. The domain depends on nothing; the application depends on the domain plus its own ports; infrastructure and presentation depend inward through those abstractions. Concrete implementations are bound to ports **only** in `src/composition/**`; `src/container.ts` does nothing but hand the merged registration map to the container.
 
 ## Feature documentation
 
@@ -70,5 +70,5 @@ Every feature discovered in this codebase was complete enough to document — no
 
 Two sub-components are wired but dormant, and the relevant docs call each out:
 
-- **`InProcessDomainEventDispatcher`** is registered in `src/container.ts` but resolved nowhere outside its own test; the live dispatch path goes through `DomainEventHandlerRegistry` (see [domain-events.md](./features/domain-events.md)).
+- **`InProcessDomainEventDispatcher`** is registered in `src/composition/events.ts` but resolved nowhere outside its own test; the live dispatch path goes through `DomainEventHandlerRegistry` (see [domain-events.md](./features/domain-events.md)).
 - **The `example.ping` job** (`EXAMPLE_JOB` / `ExampleJobHandler`) is fully wired into the worker but enqueued only from the transport integration tests; it serves as a template for new jobs (see [background-jobs.md](./features/background-jobs.md)).

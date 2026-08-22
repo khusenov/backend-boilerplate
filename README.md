@@ -103,16 +103,17 @@ project, rename the regex in the same commit.
 
 Dependencies point **inward**. The domain depends on nothing; the application depends on the domain
 plus its own ports; infrastructure and presentation depend inward through those abstractions.
-Concrete implementations bind to ports in exactly one place: `src/container.ts`.
+Concrete implementations bind to ports in exactly one tier: `src/composition/**`, the per-module
+slices of the composition root.
 
-| Layer            | Path                             | Contains                                                                                             | May import                                              |
-| ---------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| Domain           | `src/domain/**`                  | Entities, value objects, domain errors, repository **interfaces**, domain events                     | Nothing outside `domain`                                |
-| Application      | `src/application/**`             | Use-case classes with constructor DI + `execute()`; **ports** in `application/shared/ports/**`; DTOs | `domain` + its own ports                                |
-| Infrastructure   | `src/infrastructure/**`          | Adapters implementing ports (Prisma repos, argon2, jose, BullMQ, Pino)                               | `domain`, `application` ports, concrete libs            |
-| Presentation     | `src/presentation/http/**`       | Fastify app, routes, plugins, guards, error handler, Zod schemas                                     | `application`, Fastify                                  |
-| Composition root | `src/container.ts`               | Awilix wiring, typed `Cradle`                                                                        | Everything — the **only** place concretes bind to ports |
-| Shared / Config  | `src/shared/**`, `src/config/**` | Pagination, error base types, env parsing                                                            | Framework-free                                          |
+| Layer            | Path                                     | Contains                                                                                             | May import                                              |
+| ---------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Domain           | `src/domain/**`                          | Entities, value objects, domain errors, repository **interfaces**, domain events                     | Nothing outside `domain`                                |
+| Application      | `src/application/**`                     | Use-case classes with constructor DI + `execute()`; **ports** in `application/shared/ports/**`; DTOs | `domain` + its own ports                                |
+| Infrastructure   | `src/infrastructure/**`                  | Adapters implementing ports (Prisma repos, argon2, jose, BullMQ, Pino)                               | `domain`, `application` ports, concrete libs            |
+| Presentation     | `src/presentation/http/**`               | Fastify app, routes, plugins, guards, error handler, Zod schemas                                     | `application`, Fastify                                  |
+| Composition root | `src/composition/**`, `src/container.ts` | Awilix wiring split one file per module, each owning its `Cradle` slice                              | Everything — the **only** place concretes bind to ports |
+| Shared / Config  | `src/shared/**`, `src/config/**`         | Pagination, error base types, env parsing                                                            | Framework-free                                          |
 
 This is not a convention you have to remember: `npm run arch` fails the build on violations, and
 `scripts/assert-arch-not-vacuous.mjs` guarantees the ruleset cannot silently pass on zero modules.
@@ -136,14 +137,16 @@ Copy the shape of the user slice. In order:
 5. **HTTP** — Zod shapes in `src/presentation/http/schemas/`, routes in
    `src/presentation/http/routes/<feature>-routes.ts`.
 6. **Wire the route** — one line in `src/presentation/http/routes/api-v1-routes.ts`.
-7. **Wire the dependencies** — `src/container.ts`, in three places: the import block, the `Cradle`
-   interface, and the `register({...})` call.
+7. **Wire the dependencies** — create `src/composition/<feature>.ts` with the feature's `Cradle`
+   slice and its registration map, then add one spread line to `src/composition/compose.ts`. A
+   missing registration is a compile error, so the compiler names anything you forget.
 8. **Permissions** — add keys to `src/domain/authorization/permission-catalogue.ts` and enforce them
    **inside the use case**, not at the route.
 9. **Transactions** — if the repository must join a transaction, register it in
    `src/infrastructure/persistence/prisma-unit-of-work.ts`.
 10. **Jobs** — if the feature enqueues work, add it to `src/job-catalogue.ts` and to the `jobWorker`
-    factory in `src/container.ts`. `example.ping` (`ExampleJobHandler`) exists as a copyable template.
+    factory in `src/composition/jobs.ts`. `example.ping` (`ExampleJobHandler`) exists as a copyable
+    template.
 
 Tests are co-located (`*.test.ts`) and the domain + application layers are held at **100% coverage**,
 so a new use case without tests fails the build.

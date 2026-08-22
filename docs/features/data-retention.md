@@ -11,18 +11,18 @@ Operational tables accumulate rows that stop being useful once they age out: ref
 Two independent quantities drive the feature, and it is worth separating them up front:
 
 - **Cadence** — _how often_ the sweep runs. Fixed at hourly by the code constant `DATA_RETENTION_INTERVAL_MS` (`60 * 60 * 1000`).
-- **Retention window** — _how old_ a row must be before it is eligible for deletion. Configured by the env var `DATA_RETENTION_TTL` (seconds), default 30 days, converted to `dataRetentionWindowMs` in `container.ts`.
+- **Retention window** — _how old_ a row must be before it is eligible for deletion. Configured by the env var `DATA_RETENTION_TTL` (seconds), default 30 days, converted to `dataRetentionWindowMs` in `src/composition/retention.ts`.
 
 **At bootstrap of the worker process** (`src/worker.ts` calls `startWorker(container)` in `src/start-worker.ts`):
 
-1. **The worker starts.** `void container.resolve('jobWorker')` resolves the `JobWorker` singleton, which begins consuming the shared `default` BullMQ queue. Its handler map (assembled in `container.ts`) includes `[DATA_RETENTION_JOB]: enforceDataRetentionJob`, and `src/job-catalogue.ts` lists `DATA_RETENTION_JOB` in `JOB_NAMES`, so the `JobHandlersByName` type forces that entry to exist.
+1. **The worker starts.** `void container.resolve('jobWorker')` resolves the `JobWorker` singleton, which begins consuming the shared `default` BullMQ queue. Its handler map (assembled in `src/composition/jobs.ts`) includes `[DATA_RETENTION_JOB]: enforceDataRetentionJob`, and `src/job-catalogue.ts` lists `DATA_RETENTION_JOB` in `JOB_NAMES`, so the `JobHandlersByName` type forces that entry to exist.
 2. **The job is scheduled.** `await scheduler.schedule(DATA_RETENTION_JOB, {}, { everyMs: DATA_RETENTION_INTERVAL_MS })` registers `data.retention` as a repeatable job. Backed by BullMQ's `upsertJobScheduler`, this is idempotent per job name, so restarting the worker re-registers the same schedule rather than stacking duplicates. The payload is an empty object — the handler ignores it.
 
 **From then on, once an hour:**
 
 3. **BullMQ enqueues the job** onto the `default` queue, and `JobWorker` routes it by `job.name` to `EnforceDataRetentionJob`.
 4. **The job computes a single cutoff.** `EnforceDataRetentionJob.handle()` calculates `cutoff = new Date(this.clock.now().getTime() - this.dataRetentionWindowMs)` — the instant `DATA_RETENTION_TTL` seconds ago (30 days ago by default). Time arrives through the injected `Clock` port (`src/application/shared/ports/clock.ts`, adapter `SystemClock`) rather than an ambient `Date.now()`, so a test pins the cutoff by handing the job a stub clock instead of patching global timers.
-5. **Every task is pruned with that cutoff.** The job iterates its `retentionTasks` array — wired in `container.ts` as `[refreshTokenRetentionTask, outboxRetentionTask, passwordResetTokenRetentionTask]` — and awaits `task.prune(cutoff)` on each. On success it logs `'Pruned expired records'` with the task's `resource` label, the `deleted` count, and the `cutoff`.
+5. **Every task is pruned with that cutoff.** The job iterates its `retentionTasks` array — wired in `src/composition/retention.ts` as `[refreshTokenRetentionTask, outboxRetentionTask, passwordResetTokenRetentionTask]` — and awaits `task.prune(cutoff)` on each. On success it logs `'Pruned expired records'` with the task's `resource` label, the `deleted` count, and the `cutoff`.
 6. **Failures are isolated per task.** Each `prune` call is wrapped in `try/catch`. If one task throws, the job logs `'Failed to prune expired records'` with that task's `resource` and the error message (stringifying a non-`Error` rejection) and **continues to the next task**, so one broken table never blocks the others.
 
 **What each task actually deletes.** The single `cutoff` is handed to every task, but each task decides which timestamp column defines "too old":
@@ -35,7 +35,7 @@ The job runs on the project's shared background-job transport rather than an in-
 
 ## Architecture
 
-The feature sits across the port/adapter boundary. The application layer owns two abstractions: `RetentionTask` — the contract "delete rows older than this cutoff and tell me how many" — and `EnforceDataRetentionJob`, a `JobHandler` that fans a cutoff out across a list of `RetentionTask`s. Neither mentions Prisma or any concrete table. The infrastructure layer holds the only code that knows what is being pruned and how: `RefreshTokenRetentionTask` and `PasswordResetTokenRetentionTask` (each through a domain repository interface) and `OutboxRetentionTask` (through Prisma directly). Dependencies point inward — the job depends on the `RetentionTask` _interface_, and the concrete tasks are bound to it and assembled into the job's task list **only** in `src/container.ts`. Pruning a new resource therefore never edits `EnforceDataRetentionJob`; it adds an adapter and a few lines of container wiring (see Usage & extension).
+The feature sits across the port/adapter boundary. The application layer owns two abstractions: `RetentionTask` — the contract "delete rows older than this cutoff and tell me how many" — and `EnforceDataRetentionJob`, a `JobHandler` that fans a cutoff out across a list of `RetentionTask`s. Neither mentions Prisma or any concrete table. The infrastructure layer holds the only code that knows what is being pruned and how: `RefreshTokenRetentionTask` and `PasswordResetTokenRetentionTask` (each through a domain repository interface) and `OutboxRetentionTask` (through Prisma directly). Dependencies point inward — the job depends on the `RetentionTask` _interface_, and the concrete tasks are bound to it and assembled into the job's task list **only** in `src/composition/retention.ts`. Pruning a new resource therefore never edits `EnforceDataRetentionJob`; it adds an adapter and a few lines of container wiring (see Usage & extension).
 
 | Component                                    | Layer                                      | Responsibility                                                                                                                                      | File                                                                                                                                       |
 | -------------------------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -50,7 +50,7 @@ The feature sits across the port/adapter boundary. The application layer owns tw
 | `JobHandler`                                 | Application (port)                         | The consumer contract `EnforceDataRetentionJob` implements so the worker can route `data.retention` to it                                           | `src/application/shared/ports/job-handler.ts`                                                                                              |
 | `JobScheduler`                               | Application (port)                         | `schedule(jobName, payload, { everyMs })` — registers the repeatable `data.retention` job (adapter: `BullMqJobScheduler`)                           | `src/application/shared/ports/job-scheduler.ts`                                                                                            |
 | Job catalogue entry                          | Composition root                           | `JOB_NAMES` includes `DATA_RETENTION_JOB`; `JobHandlersByName` makes the worker's handler map provably complete                                     | `src/job-catalogue.ts`                                                                                                                     |
-| Container wiring                             | Composition root                           | Binds the three tasks to `RetentionTask`, sets `dataRetentionWindowMs`, assembles the job's task list, and adds the job to the worker's handler map | `src/container.ts`                                                                                                                         |
+| Container wiring                             | Composition root                           | Binds the three tasks to `RetentionTask`, sets `dataRetentionWindowMs`, assembles the job's task list, and adds the job to the worker's handler map | `src/composition/retention.ts`, `src/composition/jobs.ts`                                                                                  |
 | Worker bootstrap                             | Composition root                           | `startWorker` resolves `jobWorker` and schedules `data.retention` on the hourly interval (invoked from `src/worker.ts`)                             | `src/start-worker.ts`                                                                                                                      |
 
 ## Public surface
@@ -68,15 +68,15 @@ export interface RetentionTask {
 - **`resource`** — a stable, log-friendly label for the table this task prunes (the existing tasks use `'refresh_tokens'`, `'outbox_messages'`, and `'password_reset_tokens'`). `EnforceDataRetentionJob` includes it verbatim in every success and failure log line, so it is how a resource's pruning is identified in the logs.
 - **`prune(cutoff)`** — delete the rows this task considers older than `cutoff` and resolve with the number deleted. The task chooses which timestamp column `cutoff` is compared against — the job supplies the same cutoff to every task but does not dictate its meaning. Returning `0` (nothing old enough) is normal. The operation must be safe to repeat: it runs at least once an hour and re-running it after a partial failure must not corrupt anything (a `deleteMany … where < cutoff` is naturally idempotent).
 
-A task is only reached once it is registered in `container.ts` **and** added to the `retentionTasks` array passed to `EnforceDataRetentionJob` (see below). Defining a `RetentionTask` without wiring it in has no effect.
+A task is only reached once it is registered in `src/composition/retention.ts` **and** added to the `retentionTasks` array passed to `EnforceDataRetentionJob` (see below). Defining a `RetentionTask` without wiring it in has no effect.
 
 ## Configuration
 
 Read from `src/config/env.ts` (`.env.example` lists the same key):
 
-| Variable             | Default                         | Meaning                                                                                                                                                                                                                                                                                                   |
-| -------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DATA_RETENTION_TTL` | `2592000` (30 days, in seconds) | How old a row must be before it is eligible for pruning. `container.ts` registers `dataRetentionWindowMs` as `env.DATA_RETENTION_TTL * 1000`, and the job's cutoff is `now − dataRetentionWindowMs`. Each task applies this window to its own timestamp column (token `expiresAt`, outbox `publishedAt`). |
+| Variable             | Default                         | Meaning                                                                                                                                                                                                                                                                                                                   |
+| -------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATA_RETENTION_TTL` | `2592000` (30 days, in seconds) | How old a row must be before it is eligible for pruning. `src/composition/retention.ts` registers `dataRetentionWindowMs` as `env.DATA_RETENTION_TTL * 1000`, and the job's cutoff is `now − dataRetentionWindowMs`. Each task applies this window to its own timestamp column (token `expiresAt`, outbox `publishedAt`). |
 
 Two related values are **compile-time constants, not env vars**, both in `src/application/retention/enforce-data-retention-job.ts`: `DATA_RETENTION_INTERVAL_MS` (`60 * 60 * 1000` — the hourly cadence) and `DATA_RETENTION_JOB` (`'data.retention'` — the job name). Scheduling and execution run on the shared background-job transport, which reads its own configuration (`REDIS_URL`, `QUEUE_PREFIX`, `QUEUE_CONCURRENCY`); see [background jobs](./background-jobs.md#configuration).
 
@@ -111,19 +111,19 @@ export class AuditLogRetentionTask implements RetentionTask {
 }
 ```
 
-**Step 2 — Register the task (`src/container.ts`).** Import it, declare it on the `Cradle` interface, and register it as a singleton bound to `RetentionTask`:
+**Step 2 — Register the task (`src/composition/retention.ts`).** Import it, declare it on that module's `Cradle` slice, and register it as a singleton bound to `RetentionTask`:
 
 ```ts
 import { AuditLogRetentionTask } from '@/infrastructure/persistence/audit-log-retention-task';
 
-// on the Cradle interface, beside the other retention tasks
+// in the module's Cradle slice, beside the other retention tasks
 auditLogRetentionTask: RetentionTask;
 
-// inside registerDependencies(...), beside the existing task registrations
+// in retentionRegistrations, beside the existing task registrations
 auditLogRetentionTask: asClass(AuditLogRetentionTask).singleton(),
 ```
 
-**Step 3 — Add it to the job's task list (`src/container.ts`).** This is the step that actually makes it run. Extend the `enforceDataRetentionJob` factory: add the task to the `Pick<Cradle, …>` destructure and to the `retentionTasks` array:
+**Step 3 — Add it to the job's task list (`src/composition/retention.ts`).** This is the step that actually makes it run. Extend the `enforceDataRetentionJob` factory: add the task to the `Pick<Cradle, …>` destructure and to the `retentionTasks` array:
 
 ```ts
 enforceDataRetentionJob: asFunction(

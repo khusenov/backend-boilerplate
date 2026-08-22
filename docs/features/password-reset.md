@@ -33,7 +33,7 @@ Those full paths assemble in three files: both routes are declared in `authRoute
 
 ## Architecture
 
-The domain layer owns the security invariant, not the plumbing: `PasswordResetToken` encodes "single use, before expiry" in `consume`, and `PasswordResetTokenRepository` is the persistence _interface_, defined next to the entity. The application layer orchestrates both flows exclusively through ports — `OpaqueTokenService`, `PasswordHasher`, `UnitOfWork`, `JobQueue`, `EmailSender`, `Clock`, `IdGenerator` — so `RequestPasswordReset` and `ResetPassword` name no Prisma model, BullMQ queue, or SMTP transport. Infrastructure supplies the adapters (Prisma repository and mapper, `node:crypto` token service, Nodemailer sender, retention task), presentation contributes only two route declarations, and every concrete is bound to its abstraction in `src/container.ts` — dependencies point inward throughout.
+The domain layer owns the security invariant, not the plumbing: `PasswordResetToken` encodes "single use, before expiry" in `consume`, and `PasswordResetTokenRepository` is the persistence _interface_, defined next to the entity. The application layer orchestrates both flows exclusively through ports — `OpaqueTokenService`, `PasswordHasher`, `UnitOfWork`, `JobQueue`, `EmailSender`, `Clock`, `IdGenerator` — so `RequestPasswordReset` and `ResetPassword` name no Prisma model, BullMQ queue, or SMTP transport. Infrastructure supplies the adapters (Prisma repository and mapper, `node:crypto` token service, Nodemailer sender, retention task), presentation contributes only two route declarations, and every concrete is bound to its abstraction under `src/composition/**` — dependencies point inward throughout.
 
 | Component                                                          | Layer            | Responsibility                                                                                                                                                               | File                                                                       |
 | ------------------------------------------------------------------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
@@ -55,7 +55,7 @@ The domain layer owns the security invariant, not the plumbing: `PasswordResetTo
 | `CryptoOpaqueTokenService`                                         | Infrastructure   | `OpaqueTokenService` adapter: 256-bit base64url `generate`, deterministic SHA-256 hex `hash`                                                                                 | `src/infrastructure/security/crypto-opaque-token-service.ts`               |
 | `PasswordResetTokenRetentionTask`                                  | Infrastructure   | `RetentionTask` (resource `password_reset_tokens`) delegating to `deleteExpired` on the retention sweep                                                                      | `src/infrastructure/persistence/password-reset-token-retention-task.ts`    |
 | `authRoutes`                                                       | Presentation     | Validate bodies with Zod, resolve the use cases from the request DI scope, reply `204`                                                                                       | `src/presentation/http/routes/auth-routes.ts`                              |
-| Container wiring                                                   | Composition root | Binds repository, config, issuer, use cases, and both job handlers; files the handlers into the worker's handler record and adds the retention task to the sweep's task list | `src/container.ts`                                                         |
+| Container wiring                                                   | Composition root | Binds repository, config, issuer, use cases, and both job handlers; files the handlers into the worker's handler record and adds the retention task to the sweep's task list | `src/composition/{auth,persistence,jobs,retention}.ts`                     |
 
 ## Public surface
 
@@ -132,12 +132,12 @@ issue(userId: string, now: Date): IssuedPasswordResetToken;
 
 Read from `src/config/env.ts`; `.env.example` mirrors the two password-reset keys verbatim.
 
-| Variable                   | Default                                                                        | Meaning                                                                                                                                                                                                                            |
-| -------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PASSWORD_RESET_TOKEN_TTL` | `1800` (`60 * 30`, 30 minutes, in seconds)                                     | Token lifetime. Bound to `passwordResetConfig.ttlSeconds` in `container.ts`; the issuer computes `expiresAt = now + ttlSeconds × 1000`, and `consume` treats the expiry instant itself as already expired.                         |
-| `PASSWORD_RESET_URL_BASE`  | `http://localhost:5173/reset-password` (dev/test only; required in production) | The frontend URL the reset email links to; `SendPasswordResetEmailHandler` appends the raw token as `?token=<url-encoded>`. Bound to `passwordResetUrlBase` in `container.ts` and consumed in [email sending](./email-sending.md). |
-| `RATE_LIMIT_AUTH_MAX`      | `5`                                                                            | Per-route request cap applied to both endpoints; the stricter budget shared with the other `/auth` routes ([authentication](./authentication.md)).                                                                                 |
-| `RATE_LIMIT_WINDOW`        | `1 minute`                                                                     | Length of that window; also the global limiter's window, and shared with the other `/auth` routes.                                                                                                                                 |
+| Variable                   | Default                                                                        | Meaning                                                                                                                                                                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PASSWORD_RESET_TOKEN_TTL` | `1800` (`60 * 30`, 30 minutes, in seconds)                                     | Token lifetime. Bound to `passwordResetConfig.ttlSeconds` in `src/composition/auth.ts`; the issuer computes `expiresAt = now + ttlSeconds × 1000`, and `consume` treats the expiry instant itself as already expired.                         |
+| `PASSWORD_RESET_URL_BASE`  | `http://localhost:5173/reset-password` (dev/test only; required in production) | The frontend URL the reset email links to; `SendPasswordResetEmailHandler` appends the raw token as `?token=<url-encoded>`. Bound to `passwordResetUrlBase` in `src/composition/auth.ts` and consumed in [email sending](./email-sending.md). |
+| `RATE_LIMIT_AUTH_MAX`      | `5`                                                                            | Per-route request cap applied to both endpoints; the stricter budget shared with the other `/auth` routes ([authentication](./authentication.md)).                                                                                            |
+| `RATE_LIMIT_WINDOW`        | `1 minute`                                                                     | Length of that window; also the global limiter's window, and shared with the other `/auth` routes.                                                                                                                                            |
 
 Three further keys are read elsewhere but govern this feature's code path. `DATA_RETENTION_TTL` (default `2592000` — 30 days, in seconds) sets the prune cutoff `PasswordResetTokenRetentionTask` applies to `password_reset_tokens`: a row survives until `expiresAt` is older than that window — see [data retention](./data-retention.md). SMTP transport settings (`SMTP_HOST`, `EMAIL_FROM`, …) belong to [email sending](./email-sending.md); queue settings (`REDIS_URL`, `QUEUE_PREFIX`, `QUEUE_CONCURRENCY`) to [background jobs](./background-jobs.md).
 
@@ -228,10 +228,10 @@ export const JOB_NAMES = [
 ] as const;
 ```
 
-**Step 4 — wire it** in the three places in `src/container.ts` where the existing handlers appear (the `Cradle` interface, `registerDependencies`, and the `jobWorker` factory), plus the import block they share:
+**Step 4 — wire it** in the three places in `src/composition/jobs.ts` where the existing handlers appear (the module's `Cradle` slice, `jobsRegistrations`, and the `jobWorker` factory), plus the import block they share:
 
 ```ts
-// at the top of src/container.ts, beside the existing handler imports
+// at the top of src/composition/jobs.ts, beside the existing handler imports
 import { SendPasswordChangedEmailHandler } from '@/application/jobs/send-password-changed-email-handler';
 import {
   SEND_PASSWORD_CHANGED_EMAIL_JOB,
@@ -239,7 +239,7 @@ import {
 } from '@/application/jobs/send-password-changed-email-job';
 ```
 
-On the `Cradle` interface, beside `revokeUserSessionsHandler` — declared by its port type, not its class:
+In the module's `Cradle` slice, beside `revokeUserSessionsHandler` — declared by its port type, not its class:
 
 ```ts
 sendPasswordChangedEmailHandler: JobHandler<

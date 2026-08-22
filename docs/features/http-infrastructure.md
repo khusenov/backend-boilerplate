@@ -129,7 +129,7 @@ env.WEB_ORIGIN, credentials: true }`. _Constraint:_ must precede route registrat
     its `preHandler` timing matters — it runs after body parsing and schema validation, so the
     request fingerprint hashes the parsed body. Documented by [Idempotency](./idempotency.md).
 11. `registerDependencies(diContainer, app.log)` — Awilix wiring (the composition root,
-    `src/container.ts`). _Constraint:_ must precede the three registrations below that read
+    `src/container.ts`, which registers the merged map built from `src/composition/**`). _Constraint:_ must precede the three registrations below that read
     `diContainer.cradle` **at composition time** rather than per request: the rate limiter's
     `rateLimitRedis`, the health routes' `healthCheck`, and Bull Board's `dashboardQueue`.
 12. `registerErrorHandler(app)` — installs the app-wide error handler **and** the not-found handler.
@@ -219,7 +219,7 @@ vocabulary into HTTP — status codes in `error-handler.ts`, wire shapes in the 
 policy in `security.ts`, URL versioning in `api-version.ts`. The shared error and pagination types
 carry no framework imports, which is precisely why an application use case may construct them
 without breaching the Dependency Rule. The concrete dependencies the HTTP layer pulls from
-`src/container.ts` come from the Awilix cradle at different moments: `rateLimitRedis`, `healthCheck`,
+the composition root come from the Awilix cradle at different moments: `rateLimitRedis`, `healthCheck`,
 and (when enabled) `dashboardQueue` are resolved once from the global `diContainer.cradle` at
 composition time in `buildApp` / `bullBoardPlugin`; `accessTokenService` (in `authenticate`) and
 `idempotencyStore` (in the idempotency hooks) are resolved **per request** from

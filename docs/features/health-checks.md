@@ -95,10 +95,10 @@ says nothing about _which_ dependency is probed or _how_. The infrastructure lay
 `CompositeHealthCheck` is itself a `HealthCheck` that composes other `HealthCheck`s (the Composite
 pattern). The presentation layer — `healthRoutes` and the worker's `buildHealthApp` — depends only
 on the port; it is unaware that readiness is backed by a database _and_ Redis, or that there is more
-than one probe at all. Concretes bind to the port in exactly one place — `src/container.ts` —
+than one probe at all. Concretes bind to the port in exactly one place — `src/composition/health.ts` —
 preserving the inward dependency direction, and because both processes wire themselves through the
 same `registerDependencies`, adding or removing a dependency from readiness is a single
-`container.ts` edit that updates **both** probe surfaces; the routes and schemas never change.
+`src/composition/health.ts` edit that updates **both** probe surfaces; the routes and schemas never change.
 
 | Component                                                               | Layer            | Responsibility                                                                                                                                                 | File                                                      |
 | ----------------------------------------------------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
@@ -112,7 +112,7 @@ same `registerDependencies`, adding or removing a dependency from readiness is a
 | `buildHealthApp`                                                        | Presentation     | Builds the worker's minimal probe app: `healthRoutes` at `/health`, plus `workerMetricsRoutes` at `/metrics` when metrics are enabled                          | `src/presentation/http/health-app.ts`                     |
 | `createWorkerShutdown`                                                  | Composition root | Shutdown ordering for the worker: close the probe app first, then dispose the container                                                                        | `src/worker-shutdown.ts`                                  |
 
-The container registrations (`src/container.ts`): `databaseHealthCheck` is
+The container registrations (`src/composition/health.ts`): `databaseHealthCheck` is
 `asClass(PrismaHealthCheck).singleton()`; `healthCheckRedisConnection` is a singleton
 `createRedisConnection({ redisUrl: env.REDIS_URL })` with a disposer that disconnects it;
 `redisHealthCheck` is `asClass(RedisHealthCheck).singleton()`; `healthCheckTimeoutMs` is
@@ -245,14 +245,14 @@ dependency to be reachable:
    ```
 
 2. **Declare the new cradle keys** in the `declare module '@fastify/awilix'` block in
-   `src/container.ts`:
+   `src/composition/health.ts`:
 
    ```ts
    dependencyHealthCheck: HealthCheck;
    dependencyHealthUrl: string;
    ```
 
-3. **Register the adapter (and any value it needs)** in `registerDependencies`, alongside the
+3. **Register the adapter (and any value it needs)** in `healthRegistrations`, alongside the
    existing `databaseHealthCheck` / `redisHealthCheck` registrations:
 
    ```ts

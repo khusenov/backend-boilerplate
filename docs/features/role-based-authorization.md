@@ -65,7 +65,7 @@ access policy, and the typed domain errors — it depends on nothing outside `do
 mappers that keep entities off the wire. The **infrastructure** layer supplies the Prisma adapters that
 implement those ports. The **presentation** layer exposes the HTTP routes, the token-payload → `Actor`
 mapper, and the Zod response schemas. Concretes are bound to ports in exactly one place —
-`src/container.ts`.
+`src/composition/authorization.ts` (with the Prisma repositories in `src/composition/persistence.ts`).
 
 Two `dependency-cruiser` rules keep privileged actor construction contained:
 `system-actor-is-entry-point-only` restricts `createSystemActor` to process entry points
@@ -314,9 +314,9 @@ holder needs none of this — the policy's superadmin bypass covers `reports.exp
 ### Add a new authorization use case
 
 Follow the existing pattern: write the class in `src/application/authorization/` with constructor DI
-of the ports it needs and a single `execute(input, actor)` method, register it in `src/container.ts` with
-`asClass(...).singleton()` and add its type to the `Cradle` interface, then call it from a route via
-`request.diScope.cradle`.
+of the ports it needs and a single `execute(input, actor)` method, register it in
+`src/composition/authorization.ts` with `asClass(...).singleton()` and add its type to that module's
+`Cradle` slice, then call it from a route via `request.diScope.cradle`.
 
 ## Design decisions & trade-offs
 
