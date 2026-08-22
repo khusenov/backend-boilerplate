@@ -1,6 +1,6 @@
 # User CRUD
 
-> **Status:** Complete · **Layers:** domain, application, infrastructure, presentation · **Verified against:** `5156995`
+> **Status:** Complete · **Layers:** domain, application, infrastructure, presentation · **Verified against:** `53d27db`
 
 ## Purpose
 
