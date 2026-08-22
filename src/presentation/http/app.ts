@@ -13,6 +13,8 @@ import {
 import { fastifyCors } from '@fastify/cors';
 import { appIdentity } from '@/config/app-identity';
 import { env } from '@/config/env';
+import { httpLimits, trustProxy } from '@/config/http-transport';
+import { httpHardeningOptions } from '@/presentation/http/server-options';
 import { fastifyCookie } from '@fastify/cookie';
 import { authPlugin } from '@/presentation/http/plugins/authenticate';
 import { idempotencyPlugin } from '@/presentation/http/plugins/idempotency';
@@ -44,6 +46,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     requestIdHeader: CORRELATION_ID_HEADER,
     genReqId: () => randomUUID(),
     forceCloseConnections: true,
+    ...httpHardeningOptions({ ...httpLimits, trustProxy }),
     logController: new LogController({
       disableRequestLogging: opts.disableRequestLogging ?? false,
     }),

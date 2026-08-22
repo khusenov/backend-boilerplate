@@ -17,6 +17,8 @@ export default defineConfig({
         'src/presentation/http/identity/**',
         'src/presentation/http/plugins/**',
         'src/presentation/http/error-handler.ts',
+        'src/config/trust-proxy.ts',
+        'src/presentation/http/server-options.ts',
       ],
       exclude: ['src/application/shared/ports/**'],
       reporter: ['text', 'text-summary', 'html'],

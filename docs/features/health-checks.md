@@ -1,6 +1,6 @@
 # Health Checks
 
-> **Status:** Complete · **Layers:** application, infrastructure, presentation · **Verified against:** `5156995`
+> **Status:** Complete · **Layers:** application, infrastructure, presentation · **Verified against:** `33ad1b0`
 
 ## Purpose
 
@@ -33,10 +33,20 @@ plugin host-agnostic, and it is mounted on two separate probe surfaces:
   `registerDependencies`, and passes `container.cradle.healthCheck` into `buildHealthApp`
   (`src/presentation/http/health-app.ts`) — so worker readiness verifies **exactly the same
   dependencies** as API readiness. `buildHealthApp` constructs a bare Fastify instance
-  (`disableRequestLogging: true`, so frequent probe polling does not spam logs), installs the Zod
-  validator/serializer compilers, registers `healthRoutes` under `/health`, and — only when
+  (`disableRequestLogging: true`, so frequent probe polling does not spam logs), applies the
+  transport limits from its required `hardening` parameter via `httpHardeningOptions`, installs the
+  Zod validator/serializer compilers, registers `healthRoutes` under `/health`, and — only when
   `metricsEnabled` — `workerMetricsRoutes` under `/metrics` (that endpoint belongs to
-  [Metrics](./metrics.md)). `worker.ts` starts listening on `HOST`:`WORKER_PORT` (default `8001`)
+  [Metrics](./metrics.md)). The `hardening` field is **required**, not optional: this server listens
+  on `env.HOST` (`0.0.0.0` by default, and set explicitly by compose), so a health app that silently
+  defaulted to Fastify's unbounded `requestTimeout: 0` would accept a trickled body on every
+  interface forever. It takes the consumer-vocabulary `HttpHardeningInput` rather than the projected
+  Fastify options, so callers cannot smuggle in a raw `trustProxy` string. `worker.ts` supplies
+  `{ ...httpLimits, trustProxy: false }` — the four numeric limits come from shared configuration,
+  but `trustProxy` is pinned to the literal `false` rather than read from `TRUST_PROXY`, because
+  this server exposes only `/health/*` and `/metrics`, applies no rate limiting, and so has no
+  reason to believe a forwarding header. See
+  [HTTP Infrastructure](./http-infrastructure.md) for the grammar and its hazards. `worker.ts` starts listening on `HOST`:`WORKER_PORT` (default `8001`)
   only **after** `startWorker(container)` has resolved, so a responding probe implies the queue
   consumer and its repeatable-job schedules actually started. On shutdown, `createWorkerShutdown`
   (`src/worker-shutdown.ts`) closes the health app first and disposes the container in a `finally` —
@@ -175,6 +185,10 @@ All variables are parsed by `envalid` in `src/config/env.ts` and mirrored in `.e
 | `PORT`                   | `8000`                                                                               | Port the API process listens on — and therefore where its `/health/*` endpoints live.                                                                             |
 | `HOST`                   | `0.0.0.0`                                                                            | Bind address for both processes' listeners.                                                                                                                       |
 | `METRICS_ENABLED`        | `true`                                                                               | Passed to `buildHealthApp` as `metricsEnabled`: gates whether the worker probe app also mounts `/metrics` ([Metrics](./metrics.md)). Health routes are always on. |
+| `BODY_LIMIT_BYTES`       | `1048576`                                                                            | Reaches this app through `httpLimits`, spread into the required `hardening` parameter in `src/worker.ts`. Maximum request body in bytes.                          |
+| `REQUEST_TIMEOUT_MS`     | `30000`                                                                              | Same route. Bounds how long a request may take to arrive, closing the slow-POST hole on the worker's listener. `TRUST_PROXY` is **not** read here — see above.    |
+| `KEEP_ALIVE_TIMEOUT_MS`  | `72000`                                                                              | Same route. Idle keep-alive window for the probe server.                                                                                                          |
+| `MAX_PARAM_LENGTH`       | `100`                                                                                | Same route. Maximum route-parameter length; the probe routes declare no parameters, so this is inherited uniformity rather than an active limit.                  |
 | `REDIS_URL`              | `redis://127.0.0.1:6379` (dev default; **required in production** — no prod default) | Connection string for the dedicated `healthCheckRedisConnection` that `RedisHealthCheck` pings.                                                                   |
 | `DATABASE_URL`           | (required, no default)                                                               | Connection string for the Prisma client that `PrismaHealthCheck` probes with `SELECT 1`. Read transitively via the shared client, not by this feature directly.   |
 
@@ -385,6 +399,9 @@ coverage, architecture boundaries, integration).
   `buildHealthApp`: serves `GET /health/live` (`200`); maps a failing dependency to `503` on
   `GET /health/ready`; mounts `GET /metrics` when `metricsEnabled` is true (correct content type
   and body); and omits it — `404` — when metrics are disabled while `/health/live` keeps serving.
+  All four cases pass a shared `testHardening` fixture whose values are deliberately arbitrary, so
+  no reader mistakes them for a record of the production defaults; the limits themselves are covered
+  by `src/presentation/http/server-options.test.ts`.
 
 - **Integration — `test/integration/health.int.test.ts`.** Starts a real Redis via Testcontainers
   (`redis:7.4-alpine`), wraps a `RedisHealthCheck` in a `CompositeHealthCheck`, and asserts the

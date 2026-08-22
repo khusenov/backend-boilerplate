@@ -16,6 +16,8 @@ x-app-environment: &app-environment
   VERIFICATION_CODE_SECRET: ${VERIFICATION_CODE_SECRET:-dev-only-verification-secret-change-me-32chars}
   PASSWORD_RESET_URL_BASE: ${PASSWORD_RESET_URL_BASE:-http://localhost:5173/reset-password}
   COOKIE_SECURE: 'false'
+  # This stack publishes 8000 directly — no ingress strips X-Forwarded-For, so trust nothing.
+  TRUST_PROXY: ${TRUST_PROXY:-false}
   METRICS_ENABLED: 'true'
   OTEL_ENABLED: 'true'
   OTEL_SERVICE_NAME: ${APP_NAME:-app}-api

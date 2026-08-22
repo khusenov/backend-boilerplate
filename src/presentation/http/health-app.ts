@@ -5,12 +5,14 @@ import type { HealthCheck } from '@/application/shared/ports/health-check';
 import type { MetricsExposition } from '@/application/shared/ports/metrics';
 import { healthRoutes } from './routes/health-routes';
 import { workerMetricsRoutes } from './routes/worker-metrics-routes';
+import { httpHardeningOptions, type HttpHardeningInput } from './server-options';
 
 export interface HealthAppOptions {
   healthCheck: HealthCheck;
   metricsExposition: MetricsExposition;
   metricsEnabled: boolean;
   logger: FastifyBaseLogger;
+  hardening: HttpHardeningInput;
 }
 
 export async function buildHealthApp({
@@ -18,9 +20,11 @@ export async function buildHealthApp({
   metricsExposition,
   metricsEnabled,
   logger,
+  hardening,
 }: HealthAppOptions): Promise<FastifyInstance> {
   const app = Fastify({
     loggerInstance: logger,
+    ...httpHardeningOptions(hardening),
     logController: new LogController({ disableRequestLogging: true }),
   });
   app.setValidatorCompiler(validatorCompiler);
