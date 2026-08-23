@@ -32,7 +32,7 @@ const DISPOSABLE_KEYS = [
 const CONFIG_BACKED_KEYS = [
   'verificationCodeService',
   'emailSender',
-  'domainEventSerializer',
+  'domainEventCodecRegistry',
 ] as const;
 
 function moduleKeys(): string[] {
