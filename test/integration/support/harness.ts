@@ -1,10 +1,12 @@
 import { buildApp } from '@/presentation/http/app';
-import { createLoggerOptions } from '@/infrastructure/logging/logger-options';
+import { createAppContainer } from '@/container';
+import { createBaseLogger } from '@/infrastructure/logging/create-base-logger';
 import type { FastifyInstance } from 'fastify';
 import type { PrismaClient } from '@/generated/prisma/client';
 import { asValue } from 'awilix';
 import type { Cradle } from '@fastify/awilix';
 import type { JobQueue } from '@/application/shared/ports/job-queue';
+import { SILENT_LOG_LEVEL } from './log-level';
 
 export interface TestHarness {
   app: FastifyInstance;
@@ -14,18 +16,19 @@ export interface TestHarness {
 export type CradleOverrides = Partial<Cradle>;
 
 export async function createHarness(overrides: CradleOverrides = {}): Promise<TestHarness> {
+  const container = createAppContainer(createBaseLogger(SILENT_LOG_LEVEL));
+  for (const [name, value] of Object.entries(overrides)) {
+    container.register({ [name]: asValue(value) });
+  }
+
   const app = await buildApp({
-    loggerOptions: createLoggerOptions('silent'),
+    container,
     disableRequestLogging: true,
     rateLimit: false,
   });
-  for (const [name, value] of Object.entries(overrides)) {
-    app.diContainer.register({ [name]: asValue(value) });
-  }
   await app.ready();
 
-  const prisma = app.diContainer.cradle.prisma;
-  return { app, prisma };
+  return { app, prisma: container.cradle.prisma };
 }
 
 export async function resetDb(prisma: PrismaClient): Promise<void> {

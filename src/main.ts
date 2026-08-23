@@ -1,14 +1,17 @@
 import './instrumentation';
 import { buildApp } from '@/presentation/http/app';
 import { env } from '@/config/env';
-import { createLoggerOptions } from '@/infrastructure/logging/logger-options';
+import { createAppContainer } from '@/container';
+import { createBaseLogger } from '@/infrastructure/logging/create-base-logger';
 import { toServiceIdentity } from '@/config/service-identity';
 import { shutdownTracing } from '@/infrastructure/observability/tracing';
 import { registerGracefulShutdown } from '@/infrastructure/lifecycle/graceful-shutdown';
 
 async function bootstrap(): Promise<void> {
+  const container = createAppContainer(createBaseLogger(env.LOG_LEVEL, toServiceIdentity(env)));
+
   const app = await buildApp({
-    loggerOptions: createLoggerOptions(env.LOG_LEVEL, toServiceIdentity(env)),
+    container,
     disableRequestLogging: env.isDevelopment,
   });
 

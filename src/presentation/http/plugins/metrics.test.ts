@@ -1,7 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fastify, { type FastifyInstance } from 'fastify';
-import { diContainer, fastifyAwilixPlugin } from '@fastify/awilix';
-import { asValue } from 'awilix';
 import { metricsPlugin } from './metrics';
 import type { MetricsRecorder } from '@/application/shared/ports/metrics';
 
@@ -13,14 +11,7 @@ function makeMetricsRecorder() {
 
 async function buildApp(recorder: MetricsRecorder): Promise<FastifyInstance> {
   const app = fastify({ logger: false });
-  await app.register(fastifyAwilixPlugin, {
-    disposeOnClose: true,
-    disposeOnResponse: true,
-    strictBooleanEnforced: true,
-    injectionMode: 'PROXY',
-  });
-  diContainer.register({ metricsRecorder: asValue(recorder) });
-  await app.register(metricsPlugin);
+  await app.register(metricsPlugin, { metricsRecorder: recorder });
   app.get('/things/:id', () => ({ ok: true }));
   return app;
 }

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fastify, { type FastifyInstance } from 'fastify';
-import { diContainer, fastifyAwilixPlugin } from '@fastify/awilix';
+import { registerTestContainer } from '@test/unit/support/container';
 import { asValue } from 'awilix';
 import { authPlugin } from './authenticate';
 import { registerErrorHandler } from '@/presentation/http/error-handler';
@@ -31,14 +31,7 @@ async function buildApp(service: AccessTokenService): Promise<FastifyInstance> {
 
   registerErrorHandler(app);
 
-  await app.register(fastifyAwilixPlugin, {
-    disposeOnClose: true,
-    disposeOnResponse: true,
-    strictBooleanEnforced: true,
-    injectionMode: 'PROXY',
-  });
-
-  diContainer.register({ accessTokenService: asValue(service) });
+  await registerTestContainer(app, { accessTokenService: asValue(service) });
 
   await app.register(authPlugin);
 

@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '@/presentation/http/app';
-import { createLoggerOptions } from '@/infrastructure/logging/logger-options';
+import { createAppContainer } from '@/container';
+import { createBaseLogger } from '@/infrastructure/logging/create-base-logger';
+import { SILENT_LOG_LEVEL } from './support/log-level';
 import { env } from '@/config/env';
 import { RATE_LIMIT_KEY_NAMESPACE } from '@/presentation/http/security';
 
@@ -10,7 +12,7 @@ const badCredentials = { email: 'nobody@example.test', password: 'wrong-password
 
 async function startRateLimitedApp(): Promise<FastifyInstance> {
   const app = await buildApp({
-    loggerOptions: createLoggerOptions('silent'),
+    container: createAppContainer(createBaseLogger(SILENT_LOG_LEVEL)),
     disableRequestLogging: true,
     rateLimit: true,
   });

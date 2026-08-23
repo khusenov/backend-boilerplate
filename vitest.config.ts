@@ -14,6 +14,8 @@ export default defineConfig({
       include: [
         'src/domain/**',
         'src/application/**',
+        'src/container.ts',
+        'src/container-options.ts',
         'src/presentation/http/identity/**',
         'src/presentation/http/plugins/**',
         'src/presentation/http/error-handler.ts',

@@ -2,11 +2,15 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { createBullBoard } from '@bull-board/api';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { FastifyAdapter } from '@bull-board/fastify';
-import { diContainer } from '@fastify/awilix';
+import type { Queue } from 'bullmq';
 import fastifyBasicAuth from '@fastify/basic-auth';
 import type { FastifyInstance } from 'fastify';
 import { appIdentity } from '@/config/app-identity';
 import { env } from '@/config/env';
+
+export interface BullBoardPluginOptions {
+  dashboardQueue: Queue;
+}
 
 const BULL_BOARD_REALM = appIdentity.bullBoardRealm;
 
@@ -39,7 +43,10 @@ export function createBasicAuthValidator(username: string, password: string) {
   };
 }
 
-export async function bullBoardPlugin(app: FastifyInstance): Promise<void> {
+export async function bullBoardPlugin(
+  app: FastifyInstance,
+  { dashboardQueue }: BullBoardPluginOptions,
+): Promise<void> {
   const basePath = env.BULL_BOARD_PATH;
 
   await app.register(fastifyBasicAuth, {
@@ -58,7 +65,7 @@ export async function bullBoardPlugin(app: FastifyInstance): Promise<void> {
 
   createBullBoard({
     queues: [
-      new BullMQAdapter(diContainer.cradle.dashboardQueue, {
+      new BullMQAdapter(dashboardQueue, {
         readOnlyMode: env.BULL_BOARD_READONLY,
       }),
     ],

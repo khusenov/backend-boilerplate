@@ -74,23 +74,21 @@ module.exports = {
         'Top-level src/*.ts modules are composition roots: they sit outside every layer and are ' +
         'the only place allowed to see both application and infrastructure. Importing one from ' +
         'inside a layer launders a forbidden dependency past the layer rules — depend on a port ' +
-        'instead. src/container.ts has its own rule below.',
+        'instead. src/container-options.ts is their shared options leaf; a layer has no reason to ' +
+        'construct a container at all. src/container.ts has its own rule below.',
       severity: 'error',
       from: { path: '^src/(domain|shared|application|infrastructure|presentation|config)/' },
       to: { path: '^src/[^/]+\\.ts$', pathNot: '^src/container\\.ts$' },
     },
     {
-      name: 'container-is-imported-only-by-buildapp',
+      name: 'container-is-not-importable',
       comment:
         'The composition root wires every concretion, so importing it from inside a layer defeats ' +
-        'every rule above at once. buildApp is the single sanctioned edge from a layer: it calls ' +
-        'registerDependencies. Entry points under src/scripts/ are a sibling tier, not a layer, ' +
-        'and are deliberately out of scope here.',
+        'every rule above at once. Only process entry points build one, via createAppContainer, and ' +
+        'pass it inward as an argument. Entry points under src/scripts/ are a sibling tier, not a ' +
+        'layer, and are deliberately out of scope here.',
       severity: 'error',
-      from: {
-        path: '^src/(domain|shared|application|infrastructure|presentation|config)/',
-        pathNot: '^src/presentation/http/app\\.ts$',
-      },
+      from: { path: '^src/(domain|shared|application|infrastructure|presentation|config)/' },
       to: { path: '^src/container\\.ts$' },
     },
     {
@@ -98,7 +96,7 @@ module.exports = {
       comment:
         'src/composition/* files are slices of the composition root: like src/container.ts they see ' +
         'both application and infrastructure, so importing one from anywhere else defeats every ' +
-        'layer rule at once, and reaching past registerDependencies skips the completeness check ' +
+        'layer rule at once, and reaching past createAppContainer skips the completeness check ' +
         'that makes the split safe. Only src/container.ts may import them, and they may import ' +
         'each other. Depend on a port instead.',
       severity: 'error',

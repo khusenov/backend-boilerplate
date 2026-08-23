@@ -1,6 +1,4 @@
-import { createContainer, InjectionMode } from 'awilix';
-import type { Cradle } from '@fastify/awilix';
-import { registerDependencies } from '@/container';
+import { createAppContainer } from '@/container';
 import { createBaseLogger } from '@/infrastructure/logging/create-base-logger';
 import { env } from '@/config/env';
 import type { SyncAuthorization } from '@/application/authorization/sync-authorization';
@@ -10,11 +8,7 @@ import { createSystemActor } from '@/domain/authorization/system-actor';
 const SYNC_AUTH_ACTOR_NAME = 'sync-auth';
 
 async function main(): Promise<void> {
-  const container = createContainer<Cradle>({
-    injectionMode: InjectionMode.PROXY,
-    strict: true,
-  });
-  registerDependencies(container, createBaseLogger(env.LOG_LEVEL, toServiceIdentity(env)));
+  const container = createAppContainer(createBaseLogger(env.LOG_LEVEL, toServiceIdentity(env)));
 
   try {
     const sync = container.resolve<SyncAuthorization>('syncAuthorization');
