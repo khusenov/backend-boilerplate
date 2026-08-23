@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { diContainer, fastifyAwilixPlugin } from '@fastify/awilix';
+import { registerTestContainer } from '@test/unit/support/container';
 import { asValue } from 'awilix';
 import { metricsRoutes } from './metrics-routes';
 import type { MetricsExposition } from '@/application/shared/ports/metrics';
@@ -18,14 +18,7 @@ async function buildApp(metricsExposition: MetricsExposition): Promise<FastifyIn
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
-  await app.register(fastifyAwilixPlugin, {
-    disposeOnClose: true,
-    disposeOnResponse: true,
-    strictBooleanEnforced: true,
-    injectionMode: 'PROXY',
-  });
-
-  diContainer.register({ metricsExposition: asValue(metricsExposition) });
+  await registerTestContainer(app, { metricsExposition: asValue(metricsExposition) });
 
   await app.register(metricsRoutes, { prefix: '/metrics' });
 

@@ -1,9 +1,9 @@
-import { InjectionMode, createContainer, type AwilixContainer } from 'awilix';
+import type { AwilixContainer } from 'awilix';
 import type { Cradle } from '@fastify/awilix';
 import type { FastifyBaseLogger } from 'fastify';
 import { describe, expect, it } from 'vitest';
 import { mock } from 'vitest-mock-extended';
-import { registerDependencies } from '@/container';
+import { createAppContainer } from '@/container';
 import { createPlatformRegistrations } from '@/composition/platform';
 import { persistenceRegistrations } from '@/composition/persistence';
 import { securityRegistrations } from '@/composition/security';
@@ -68,12 +68,7 @@ function duplicatesIn(keys: string[]): string[] {
 }
 
 function buildContainer(): AwilixContainer<Cradle> {
-  const container = createContainer<Cradle>({
-    injectionMode: InjectionMode.PROXY,
-    strict: true,
-  });
-  registerDependencies(container, mock<FastifyBaseLogger>());
-  return container;
+  return createAppContainer(mock<FastifyBaseLogger>());
 }
 
 describe('composition modules', () => {

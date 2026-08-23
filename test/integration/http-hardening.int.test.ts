@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { env } from '@/config/env';
-import { createLoggerOptions } from '@/infrastructure/logging/logger-options';
+import { createAppContainer } from '@/container';
+import { createBaseLogger } from '@/infrastructure/logging/create-base-logger';
+import { SILENT_LOG_LEVEL } from './support/log-level';
 import { buildApp } from '@/presentation/http/app';
 
 const FORGED_CLIENT_ADDRESS = '198.51.100.1';
@@ -12,7 +14,7 @@ describe('http hardening (integration)', () => {
 
   beforeAll(async () => {
     app = await buildApp({
-      loggerOptions: createLoggerOptions('silent'),
+      container: createAppContainer(createBaseLogger(SILENT_LOG_LEVEL)),
       disableRequestLogging: true,
       rateLimit: false,
     });

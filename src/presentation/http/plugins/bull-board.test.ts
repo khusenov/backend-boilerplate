@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import fastify, { type FastifyInstance } from 'fastify';
-import { diContainer, fastifyAwilixPlugin } from '@fastify/awilix';
-import { asValue } from 'awilix';
+import { mock } from 'vitest-mock-extended';
+import type { Queue } from 'bullmq';
 import fastifyBasicAuth from '@fastify/basic-auth';
 import { bullBoardPlugin, createBasicAuthValidator } from './bull-board';
 
@@ -77,16 +77,9 @@ describe('bullBoardPlugin', () => {
 
   it('guards the dashboard with basic auth and stamps a CSP header', async () => {
     app = fastify({ logger: false });
-    await app.register(fastifyAwilixPlugin, {
-      disposeOnClose: true,
-      disposeOnResponse: true,
-      strictBooleanEnforced: true,
-      injectionMode: 'PROXY',
+    await app.register(bullBoardPlugin, {
+      dashboardQueue: mock<Queue>({ name: 'app', metaValues: { version: 'bullmq' } }),
     });
-    diContainer.register({
-      dashboardQueue: asValue({ name: 'app', metaValues: { version: 'bullmq' } }),
-    });
-    await app.register(bullBoardPlugin);
 
     const response = await app.inject({ method: 'GET', url: '/admin/queues' });
 

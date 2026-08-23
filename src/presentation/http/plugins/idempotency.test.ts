@@ -1,4 +1,4 @@
-import { diContainer, fastifyAwilixPlugin } from '@fastify/awilix';
+import { registerTestContainer } from '@test/unit/support/container';
 import { asValue } from 'awilix';
 import fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -45,13 +45,7 @@ async function buildTestApp(
   handler: () => unknown,
 ): Promise<FastifyInstance> {
   const app = fastify({ logger: false });
-  await app.register(fastifyAwilixPlugin, {
-    disposeOnClose: true,
-    disposeOnResponse: true,
-    strictBooleanEnforced: true,
-    injectionMode: 'PROXY',
-  });
-  diContainer.register({ idempotencyStore: asValue(store) });
+  await registerTestContainer(app, { idempotencyStore: asValue(store) });
   registerErrorHandler(app);
   await app.register(idempotencyPlugin);
   app.post('/things', { config: { idempotency: true } }, () => handler());

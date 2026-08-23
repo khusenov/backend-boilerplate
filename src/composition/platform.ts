@@ -13,6 +13,7 @@ import type { RegistrationMap } from '@/composition/registration-map';
 declare module '@fastify/awilix' {
   interface Cradle {
     env: Env;
+    baseLogger: FastifyBaseLogger;
     logger: Logger;
     clock: Clock;
     idGenerator: IdGenerator;
@@ -22,6 +23,7 @@ declare module '@fastify/awilix' {
 export function createPlatformRegistrations(baseLogger: FastifyBaseLogger) {
   return {
     env: asValue(env),
+    baseLogger: asValue(baseLogger),
     logger: asValue(new PinoLogger(baseLogger, new RequestContextProvider())),
     clock: asClass(SystemClock).singleton(),
     idGenerator: asClass(UuidIdGenerator).singleton(),
