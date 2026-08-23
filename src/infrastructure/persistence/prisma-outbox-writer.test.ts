@@ -1,13 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PrismaOutboxWriter } from './prisma-outbox-writer';
 import { DomainEventSerializer } from '@/infrastructure/events/domain-event-serializer';
-import { domainEventFactories } from '@/infrastructure/events/domain-event-factories';
+import { DomainEventCodecRegistry } from '@/infrastructure/events/domain-event-codec-registry';
+import { domainEventCodecs } from '@/infrastructure/events/domain-event-codecs';
 import { UserCreatedEvent } from '@/domain/user/events/user-created-event';
 import type { IdGenerator } from '@/application/shared/ports/id-generator';
 import type { PrismaTransactionalClient } from './prisma-transactional-client';
 
 function makeWriter() {
-  const serializer = new DomainEventSerializer({ factories: domainEventFactories });
+  const serializer = new DomainEventSerializer({
+    domainEventCodecRegistry: new DomainEventCodecRegistry({ codecs: domainEventCodecs }),
+  });
   const generate = vi.fn<IdGenerator['generate']>();
   const writer = new PrismaOutboxWriter({
     domainEventSerializer: serializer,

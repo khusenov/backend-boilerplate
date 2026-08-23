@@ -4,13 +4,17 @@ import {
   DISPATCH_DOMAIN_EVENT_JOB,
   type DispatchDomainEventPayload,
 } from './dispatch-domain-event-job-handler';
-import { DomainEventSerializer, UnknownDomainEventError } from './domain-event-serializer';
+import { DomainEventSerializer } from './domain-event-serializer';
+import { UnknownDomainEventError } from './domain-event-errors';
 import { DomainEventHandlerRegistry } from './domain-event-handler-registry';
-import { domainEventFactories } from './domain-event-factories';
+import { DomainEventCodecRegistry } from './domain-event-codec-registry';
+import { domainEventCodecs } from './domain-event-codecs';
 import { UserCreatedEvent } from '@/domain/user/events/user-created-event';
 import type { DomainEventHandler } from '@/application/shared/ports/domain-event-handler';
 
-const serializer = new DomainEventSerializer({ factories: domainEventFactories });
+const serializer = new DomainEventSerializer({
+  domainEventCodecRegistry: new DomainEventCodecRegistry({ codecs: domainEventCodecs }),
+});
 
 function makeSut(handlers: DomainEventHandler[]) {
   const registry = new DomainEventHandlerRegistry({ handlers });
@@ -58,7 +62,7 @@ describe('DispatchDomainEventJobHandler', () => {
     await expect(sut.handle(payload)).rejects.toThrow('handler failed');
   });
 
-  it('propagates UnknownDomainEventError when the event has no factory', async () => {
+  it('propagates UnknownDomainEventError when the event has no codec', async () => {
     const sut = makeSut([]);
 
     await expect(sut.handle({ eventName: 'unknown.event', payload: '{}' })).rejects.toBeInstanceOf(

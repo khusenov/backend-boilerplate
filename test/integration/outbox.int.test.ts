@@ -13,7 +13,8 @@ import {
 } from '@/infrastructure/events/dispatch-domain-event-job-handler';
 import { DomainEventSerializer } from '@/infrastructure/events/domain-event-serializer';
 import { DomainEventHandlerRegistry } from '@/infrastructure/events/domain-event-handler-registry';
-import { domainEventFactories } from '@/infrastructure/events/domain-event-factories';
+import { DomainEventCodecRegistry } from '@/infrastructure/events/domain-event-codec-registry';
+import { domainEventCodecs } from '@/infrastructure/events/domain-event-codecs';
 import { BullMqJobQueue } from '@/infrastructure/jobs/bullmq-job-queue';
 import { JobWorker } from '@/infrastructure/jobs/job-worker';
 import type { Logger } from '@/application/shared/ports/logger';
@@ -157,7 +158,9 @@ describe('outbox (integration)', () => {
 
       const registry = new DomainEventHandlerRegistry({ handlers: [logHandler] });
       const dispatchHandler = new DispatchDomainEventJobHandler({
-        domainEventSerializer: new DomainEventSerializer({ factories: domainEventFactories }),
+        domainEventSerializer: new DomainEventSerializer({
+          domainEventCodecRegistry: new DomainEventCodecRegistry({ codecs: domainEventCodecs }),
+        }),
         domainEventHandlerRegistry: registry,
       });
       const worker = new JobWorker({

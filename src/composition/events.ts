@@ -7,7 +7,8 @@ import { UserCreatedLogHandler } from '@/application/user/events/user-created-lo
 import { InProcessDomainEventDispatcher } from '@/infrastructure/events/in-process-domain-event-dispatcher';
 import { DomainEventHandlerRegistry } from '@/infrastructure/events/domain-event-handler-registry';
 import { DomainEventSerializer } from '@/infrastructure/events/domain-event-serializer';
-import { domainEventFactories } from '@/infrastructure/events/domain-event-factories';
+import { DomainEventCodecRegistry } from '@/infrastructure/events/domain-event-codec-registry';
+import { domainEventCodecs } from '@/infrastructure/events/domain-event-codecs';
 import {
   DispatchDomainEventJobHandler,
   DISPATCH_DOMAIN_EVENT_JOB,
@@ -22,6 +23,7 @@ declare module '@fastify/awilix' {
     domainEventDispatcher: DomainEventDispatcher;
     domainEventHandlers: DomainEventHandler[];
     domainEventHandlerRegistry: DomainEventHandlerRegistry;
+    domainEventCodecRegistry: DomainEventCodecRegistry;
     domainEventSerializer: DomainEventSerializer;
     dispatchDomainEventJobHandler: JobHandler<
       DispatchDomainEventPayload,
@@ -48,9 +50,10 @@ export const eventsRegistrations = {
     ({ domainEventHandlers }: Pick<Cradle, 'domainEventHandlers'>) =>
       new DomainEventHandlerRegistry({ handlers: domainEventHandlers }),
   ).singleton(),
-  domainEventSerializer: asFunction(
-    () => new DomainEventSerializer({ factories: domainEventFactories }),
+  domainEventCodecRegistry: asFunction(
+    () => new DomainEventCodecRegistry({ codecs: domainEventCodecs }),
   ).singleton(),
+  domainEventSerializer: asClass(DomainEventSerializer).singleton(),
   dispatchDomainEventJobHandler: asClass(DispatchDomainEventJobHandler).singleton(),
   outboxRelay: asClass(OutboxRelay).singleton(),
 } satisfies RegistrationMap;

@@ -85,7 +85,8 @@ emailVerificationCodeRepository.create(code); … }` — with the save-then-stag
 5. **Dispatching.** The `JobWorker` picks up each `DISPATCH_DOMAIN_EVENT_JOB` and runs
    `DispatchDomainEventJobHandler.handle`. It rebuilds the concrete event from its stored JSON via
    `DomainEventSerializer.deserialize(eventName, payload)` — a lookup of `eventName` in the
-   `domainEventFactories` registry followed by the matching factory call — then awaits
+   `DomainEventCodecRegistry` followed by envelope validation and the matching `codec.decode` call —
+   then awaits
    `handler.handle(event)` for every handler the `DomainEventHandlerRegistry` holds under that
    `eventName`, in registration order.
 6. **Handling.** The subscriber runs. For `user.created`, `UserCreatedLogHandler` writes a structured
@@ -131,13 +132,23 @@ Failure paths that matter:
   published row, and once `DATA_RETENTION_TTL` elapses the row is deleted outright. When the failed job
   then ages out (7 days / 5 000 entries) or is cleaned wholesale, the event is unrecoverable. Recovery
   is therefore: inspect and retry the job from the Bull Board dashboard (`BULL_BOARD_ENABLED`, see
-  [background-jobs.md](./background-jobs.md)) after fixing the handler or factory — and **never**
+  [background-jobs.md](./background-jobs.md)) after fixing the handler or codec — and **never**
   blanket-clean the failed set (`queue.clean(…, 'failed')`); filter by job name the way the purge script
   does.
-- **Unknown event.** If a stored `eventName` has no entry in `domainEventFactories`, `deserialize`
-  throws `UnknownDomainEventError`; the dispatch job fails and retries, and will keep failing until a
-  factory is registered. The terminal state above applies in full — register the factory and retry the
-  job from Bull Board before it ages out, because nothing will re-deliver the event afterwards.
+- **Unknown event.** If a stored `eventName` has no codec in the `DomainEventCodecRegistry`,
+  `deserialize` throws `UnknownDomainEventError`; the dispatch job fails and retries, and will keep
+  failing until a codec is registered. The terminal state above applies in full — register the codec and
+  retry the job from Bull Board before it ages out, because nothing will re-deliver the event afterwards.
+- **Unreadable row.** If the stored envelope is not valid JSON, fails
+  `domainEventEnvelopeSchema`, names a different event than the row, or carries a payload the codec's
+  schema rejects, `deserialize` throws `DomainEventDecodeError`. Retrying cannot help — the bytes on
+  disk do not change — so this is permanent until the row is removed or a codec that can read it ships.
+  The error's `details` carry the event name and the Zod issue paths, never the payload content.
+- **Version mismatch.** If the envelope's `eventVersion` differs from the registered codec's,
+  `deserialize` throws `DomainEventVersionMismatchError` (a subclass of `DomainEventDecodeError`, so one
+  `catch` covers every unreadable row). This is what a payload change deployed without draining the
+  outbox looks like: fail-fast rather than a silently half-decoded event. Recovery is to ship a codec
+  reading that version, or accept the loss.
 
 ## Architecture
 
@@ -145,36 +156,63 @@ The feature is split across the port/adapter boundary. The domain owns the `Doma
 the event buffer on `AggregateRoot`. The application layer defines the abstractions — the
 `DomainEventHandler` and `DomainEventDispatcher` ports, and the `OutboxStaging` contract exposed on the
 unit-of-work `TransactionContext`. Infrastructure supplies every concrete: outbox writer, serializer,
-factory registry, handler registry, relay, and dispatch job handler. Dependencies point inward — the
+codec registry, handler registry, relay, and dispatch job handler. Dependencies point inward — the
 aggregate depends on nothing, the use cases depend on the `UnitOfWork`/`OutboxStaging` interfaces (never
 on Prisma or BullMQ), and concretes bind to ports only under `src/composition/**`. Delivery rides on the
 generic background-job ports (`JobQueue`, `JobScheduler`, `JobHandler`) documented in
 [background-jobs.md](./background-jobs.md); this feature does not re-implement queueing.
 
-| Component                                 | Layer                   | Responsibility                                                                                                                                                                     | File                                                                           |
-| ----------------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `DomainEvent`                             | Domain                  | Abstract base for every event; carries `aggregateId`, `eventName`, and a caller-supplied `occurredAt`                                                                              | `src/domain/shared/domain-event.ts`                                            |
-| `AggregateRoot`                           | Domain                  | Extends `Entity` with the event buffer (protected `recordEvent(...)` appends, public `pullDomainEvents()` drains and clears) and a `readonly version` for optimistic concurrency   | `src/domain/shared/aggregate-root.ts`                                          |
-| `Entity`                                  | Domain                  | Base identity/timestamps/soft-delete for all entities — holds **no** event machinery                                                                                               | `src/domain/shared/entity.ts`                                                  |
-| `UserCreatedEvent`                        | Domain                  | Concrete event for user creation; pins routing key `EVENT_NAME = 'user.created'` and carries `email`                                                                               | `src/domain/user/events/user-created-event.ts`                                 |
-| `User`                                    | Domain                  | Records `UserCreatedEvent` in its private `build(...)`, reached from both `create(...)` and `register(...)`                                                                        | `src/domain/user/user-entity.ts`                                               |
-| `DomainEventHandler`                      | Application (port)      | Interface a subscriber implements: an `eventName` to bind to and an async `handle`                                                                                                 | `src/application/shared/ports/domain-event-handler.ts`                         |
-| `DomainEventDispatcher`                   | Application (port)      | Interface for fanning a batch of events out to handlers — currently dormant (see Design decisions)                                                                                 | `src/application/shared/ports/domain-event-dispatcher.ts`                      |
-| `OutboxStaging` (on `TransactionContext`) | Application (port)      | `stage(events)` — how a use case hands events to the running transaction for outbox persistence                                                                                    | `src/application/shared/ports/unit-of-work.ts`                                 |
-| `UserCreatedLogHandler`                   | Application             | Subscribes to `user.created` and logs the creation                                                                                                                                 | `src/application/user/events/user-created-log-handler.ts`                      |
-| `CreateUser` / `RegisterUser`             | Application             | The two producers: save the user and stage its pulled events inside one `uow.run(...)`                                                                                             | `src/application/user/create-user.ts`, `src/application/auth/register-user.ts` |
-| `PrismaUnitOfWork`                        | Infrastructure          | Runs the business callback and flushes staged events to the outbox in the same DB transaction                                                                                      | `src/infrastructure/persistence/prisma-unit-of-work.ts`                        |
-| `PrismaOutboxWriter`                      | Infrastructure          | Serializes staged events and `createMany`s them into `outbox_messages` with the transactional client                                                                               | `src/infrastructure/persistence/prisma-outbox-writer.ts`                       |
-| `DomainEventSerializer`                   | Infrastructure          | `serialize` (event → JSON string) and `deserialize` (event name + JSON → concrete event via a factory); throws `UnknownDomainEventError` for unknown names                         | `src/infrastructure/events/domain-event-serializer.ts`                         |
-| `SerializedDomainEvent`                   | Infrastructure          | Shape of the parsed JSON a factory reads (`aggregateId`, `eventName`, `occurredAt` string, plus payload fields)                                                                    | `src/infrastructure/events/serialized-domain-event.ts`                         |
-| `domainEventFactories`                    | Infrastructure          | Registry mapping each `eventName` to a factory that reconstructs its concrete event class                                                                                          | `src/infrastructure/events/domain-event-factories.ts`                          |
-| `DomainEventHandlerRegistry`              | Infrastructure          | Indexes handlers into a `Map<eventName, handler[]>` once at construction; `handlersFor(eventName)` looks them up                                                                   | `src/infrastructure/events/domain-event-handler-registry.ts`                   |
-| `OutboxRelay`                             | Infrastructure          | Repeatable job (`OUTBOX_RELAY_JOB`): reads unpublished rows, enqueues one dispatch job per row keyed on the row id, marks the enqueued rows published                              | `src/infrastructure/events/outbox-relay.ts`                                    |
-| `DispatchDomainEventJobHandler`           | Infrastructure          | Per-event job (`DISPATCH_DOMAIN_EVENT_JOB`): deserializes the event and fans it out over the registry, propagating failures for retry                                              | `src/infrastructure/events/dispatch-domain-event-job-handler.ts`               |
-| `InProcessDomainEventDispatcher`          | Infrastructure          | Synchronous, error-isolating `DomainEventDispatcher` adapter — registered but not on the runtime path (see Design decisions)                                                       | `src/infrastructure/events/in-process-domain-event-dispatcher.ts`              |
-| `startWorker`                             | Composition root        | Starts the `JobWorker` and schedules `OUTBOX_RELAY_JOB` every `OUTBOX_RELAY_INTERVAL_MS`; invoked by the worker entry point `src/worker.ts`                                        | `src/start-worker.ts`                                                          |
-| `JOB_NAMES`                               | Composition root        | The closed job catalogue; includes `OUTBOX_RELAY_JOB` and `DISPATCH_DOMAIN_EVENT_JOB`, which the container's `jobWorker` maps to `outboxRelay` and `dispatchDomainEventJobHandler` | `src/job-catalogue.ts`                                                         |
-| `OutboxMessage` (`outbox_messages`)       | Infrastructure (schema) | The outbox table: `id`, `aggregate_id`, `event_name`, `payload`, `occurred_at`, `published_at`, indexed on `(published_at, occurred_at)`                                           | `prisma/schema.prisma`                                                         |
+| Component                                 | Layer                   | Responsibility                                                                                                                                                                                        | File                                                                           |
+| ----------------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `DomainEvent`                             | Domain                  | Abstract base for every event; carries `aggregateId`, `eventName`, and a caller-supplied `occurredAt`                                                                                                 | `src/domain/shared/domain-event.ts`                                            |
+| `AggregateRoot`                           | Domain                  | Extends `Entity` with the event buffer (protected `recordEvent(...)` appends, public `pullDomainEvents()` drains and clears) and a `readonly version` for optimistic concurrency                      | `src/domain/shared/aggregate-root.ts`                                          |
+| `Entity`                                  | Domain                  | Base identity/timestamps/soft-delete for all entities — holds **no** event machinery                                                                                                                  | `src/domain/shared/entity.ts`                                                  |
+| `UserCreatedEvent`                        | Domain                  | Concrete event for user creation; pins routing key `EVENT_NAME = 'user.created'` and carries `email`                                                                                                  | `src/domain/user/events/user-created-event.ts`                                 |
+| `User`                                    | Domain                  | Records `UserCreatedEvent` in its private `build(...)`, reached from both `create(...)` and `register(...)`                                                                                           | `src/domain/user/user-entity.ts`                                               |
+| `DomainEventHandler`                      | Application (port)      | Interface a subscriber implements: an `eventName` to bind to and an async `handle`                                                                                                                    | `src/application/shared/ports/domain-event-handler.ts`                         |
+| `DomainEventDispatcher`                   | Application (port)      | Interface for fanning a batch of events out to handlers — currently dormant (see Design decisions)                                                                                                    | `src/application/shared/ports/domain-event-dispatcher.ts`                      |
+| `OutboxStaging` (on `TransactionContext`) | Application (port)      | `stage(events)` — how a use case hands events to the running transaction for outbox persistence                                                                                                       | `src/application/shared/ports/unit-of-work.ts`                                 |
+| `UserCreatedLogHandler`                   | Application             | Subscribes to `user.created` and logs the creation                                                                                                                                                    | `src/application/user/events/user-created-log-handler.ts`                      |
+| `CreateUser` / `RegisterUser`             | Application             | The two producers: save the user and stage its pulled events inside one `uow.run(...)`                                                                                                                | `src/application/user/create-user.ts`, `src/application/auth/register-user.ts` |
+| `PrismaUnitOfWork`                        | Infrastructure          | Runs the business callback and flushes staged events to the outbox in the same DB transaction                                                                                                         | `src/infrastructure/persistence/prisma-unit-of-work.ts`                        |
+| `PrismaOutboxWriter`                      | Infrastructure          | Serializes staged events and `createMany`s them into `outbox_messages` with the transactional client                                                                                                  | `src/infrastructure/persistence/prisma-outbox-writer.ts`                       |
+| `DomainEventSerializer`                   | Infrastructure          | `serialize` (event → envelope JSON string) and `deserialize` (event name + JSON → concrete event via the codec); throws `UnknownDomainEventError`, `DomainEventEncodeError`, `DomainEventDecodeError` | `src/infrastructure/events/domain-event-serializer.ts`                         |
+| `domainEventEnvelopeSchema`               | Infrastructure          | Zod schema for the fields every event shares (`eventName`, `eventVersion`, `aggregateId`, `occurredAt` ISO string, nested `payload`); enforced on both write and read                                 | `src/infrastructure/events/domain-event-envelope.ts`                           |
+| `DomainEventCodec`                        | Infrastructure          | Per-event wire contract: `eventName`, `eventVersion`, `encode` (typed projection out) and `decode` (Zod-validated rebuild in)                                                                         | `src/infrastructure/events/domain-event-codec.ts`                              |
+| `DomainEventCodecRegistry`                | Infrastructure          | Indexes codecs into a `Map<eventName, codec>` at construction, rejecting duplicate names and malformed declarations; `codecFor(eventName)` looks one up or throws                                     | `src/infrastructure/events/domain-event-codec-registry.ts`                     |
+| `domainEventCodecs`                       | Infrastructure          | The production codec list — one entry per event, the single place a new event's wire format is registered                                                                                             | `src/infrastructure/events/domain-event-codecs.ts`                             |
+| `DomainEventHandlerRegistry`              | Infrastructure          | Indexes handlers into a `Map<eventName, handler[]>` once at construction; `handlersFor(eventName)` looks them up                                                                                      | `src/infrastructure/events/domain-event-handler-registry.ts`                   |
+| `OutboxRelay`                             | Infrastructure          | Repeatable job (`OUTBOX_RELAY_JOB`): reads unpublished rows, enqueues one dispatch job per row keyed on the row id, marks the enqueued rows published                                                 | `src/infrastructure/events/outbox-relay.ts`                                    |
+| `DispatchDomainEventJobHandler`           | Infrastructure          | Per-event job (`DISPATCH_DOMAIN_EVENT_JOB`): deserializes the event and fans it out over the registry, propagating failures for retry                                                                 | `src/infrastructure/events/dispatch-domain-event-job-handler.ts`               |
+| `InProcessDomainEventDispatcher`          | Infrastructure          | Synchronous, error-isolating `DomainEventDispatcher` adapter — registered but not on the runtime path (see Design decisions)                                                                          | `src/infrastructure/events/in-process-domain-event-dispatcher.ts`              |
+| `startWorker`                             | Composition root        | Starts the `JobWorker` and schedules `OUTBOX_RELAY_JOB` every `OUTBOX_RELAY_INTERVAL_MS`; invoked by the worker entry point `src/worker.ts`                                                           | `src/start-worker.ts`                                                          |
+| `JOB_NAMES`                               | Composition root        | The closed job catalogue; includes `OUTBOX_RELAY_JOB` and `DISPATCH_DOMAIN_EVENT_JOB`, which the container's `jobWorker` maps to `outboxRelay` and `dispatchDomainEventJobHandler`                    | `src/job-catalogue.ts`                                                         |
+| `OutboxMessage` (`outbox_messages`)       | Infrastructure (schema) | The outbox table: `id`, `aggregate_id`, `event_name`, `payload`, `occurred_at`, `published_at`, indexed on `(published_at, occurred_at)`                                                              | `prisma/schema.prisma`                                                         |
+
+### Wire format
+
+One `outbox_messages.payload` holds a JSON **envelope** — the fields every event shares — with the
+event's own fields nested under `payload`:
+
+```json
+{
+  "eventName": "user.created",
+  "eventVersion": 1,
+  "aggregateId": "user-1",
+  "occurredAt": "2026-01-02T03:04:05.678Z",
+  "payload": { "email": "jane@example.com" }
+}
+```
+
+The nesting means an event can never collide with an envelope field — imagine an event carrying its
+own `eventName` — and mirrors what every real event transport does (CloudEvents calls it `data`,
+Kafka/Avro the record body). `domainEventEnvelopeSchema` validates the envelope in **both** directions,
+so the write path cannot produce a row the read path rejects; the codec's own schema does the same for
+`payload`.
+
+`eventVersion` is a fail-fast guard, not an extension point: the reader accepts only the version its
+codec declares and throws `DomainEventVersionMismatchError` for anything else. Bumping it therefore
+requires draining the outbox **and** the dispatch queue first — see the poisoned-event note above.
 
 ## Public surface
 
@@ -194,7 +232,7 @@ export abstract class DomainEvent {
 ```
 
 `occurredAt` is required, which forces the write path to say which instant it means (events never read a
-clock of their own) and forces a deserialization factory to restore the **original** timestamp rather
+clock of their own) and lets the codec restore the **original** timestamp rather
 than silently restamping with the deserialization time. A concrete event pins its `eventName` as a
 `static readonly EVENT_NAME` and adds payload fields, e.g.
 `UserCreatedEvent(aggregateId: string, email: string, occurredAt: Date)` with
@@ -303,7 +341,7 @@ one.
 
 To add a new event, deliver it through the outbox, and react to it, follow the steps below. The example
 adds a `user.deactivated` event with a logging handler. Note the extra step the outbox requires over a
-plain in-process design: a deserialization factory (Step 3) — without it the dispatch job cannot rebuild
+plain in-process design: a wire-format codec (Step 3) — without it the dispatch job cannot rebuild
 the event and throws `UnknownDomainEventError`.
 
 **Step 1 — Define the event (domain).** Create `src/domain/user/events/user-deactivated-event.ts`:
@@ -320,16 +358,16 @@ export class UserDeactivatedEvent extends DomainEvent {
 }
 ```
 
-Accept and forward `occurredAt` so the factory in Step 3 can restore the original timestamp.
+Accept and forward `occurredAt` so the codec in Step 3 can restore the original timestamp.
 
-**Keep the payload JSON-safe.** `DomainEventSerializer.serialize` is a bare `JSON.stringify(event)` —
-there is no custom encoder — so every field the outbox stores must be a **public, JSON-round-trippable
-primitive**. A value object, `Map`, `Set`, or any class instance is flattened to whatever
-`JSON.stringify` makes of it, a `private`/`#`-prefixed field may not be emitted at all, and a `Date`
-returns as a string. `UserCreatedEvent` already respects this at the call site — `User.build(...)` passes
-`user.email.toString()`, not the `Email` value object — and the price of ignoring it is a silent, lossy
-round-trip that surfaces only when a handler runs. Store primitives; make the Step 3 factory rebuild
-anything richer.
+**Keep the payload JSON-safe.** The codec's `encode` names exactly the fields that go on the wire, so
+only those need to be **JSON-round-trippable primitives** — a value object, `Map`, `Set`, or class
+instance is not one, and a `Date` comes back as a string. Because `encode` is an explicit projection
+rather than whole-object serialization, a field you do not name is simply not stored, and field
+visibility no longer matters. `UserCreatedEvent` respects this at the call site — `User.build(...)`
+passes `user.email.toString()`, not the `Email` value object. Store primitives on the wire and let
+`decode` rebuild anything richer (had the event needed an `Email` instance, its `decode` would call
+`Email.create(...)` on the parsed string).
 
 **Step 2 — Record it from the aggregate (domain).** In `src/domain/user/user-entity.ts`, record the
 event where the state transition happens (import `UserDeactivatedEvent` at the top). `User` already
@@ -346,33 +384,76 @@ deactivate(now: Date): void {
 }
 ```
 
-**Step 3 — Register a deserialization factory (infrastructure).** In
-`src/infrastructure/events/domain-event-factories.ts`, add an entry so the dispatch path can rebuild the
-event from its stored JSON:
+**Step 3 — Write the wire-format codec (infrastructure).** A codec owns one event's wire contract in
+both directions. Create `src/infrastructure/events/user-deactivated-event-codec.ts`:
 
 ```ts
-import { UserCreatedEvent } from '@/domain/user/events/user-created-event';
-import { UserDeactivatedEvent } from '@/domain/user/events/user-deactivated-event';
+import { z } from 'zod';
 import type { DomainEvent } from '@/domain/shared/domain-event';
-import type { SerializedDomainEvent } from './serialized-domain-event';
+import { UserDeactivatedEvent } from '@/domain/user/events/user-deactivated-event';
+import type { DomainEventCodec } from './domain-event-codec';
 
-export type DomainEventFactory = (data: SerializedDomainEvent) => DomainEvent;
+type UserDeactivatedPayload = Omit<UserDeactivatedEvent, keyof DomainEvent>;
 
-export const domainEventFactories: Readonly<Record<string, DomainEventFactory>> = {
-  [UserCreatedEvent.EVENT_NAME]: (data) =>
-    new UserCreatedEvent(data.aggregateId, data.email as string, new Date(data.occurredAt)),
-  [UserDeactivatedEvent.EVENT_NAME]: (data) =>
-    new UserDeactivatedEvent(data.aggregateId, new Date(data.occurredAt)),
+const userDeactivatedPayloadSchema = z.object({});
+
+export const userDeactivatedEventCodec: DomainEventCodec<UserDeactivatedEvent> = {
+  eventName: UserDeactivatedEvent.EVENT_NAME,
+  eventVersion: 1,
+  encode: (): UserDeactivatedPayload =>
+    userDeactivatedPayloadSchema.parse({} satisfies UserDeactivatedPayload),
+  decode: (payload, metadata) => {
+    userDeactivatedPayloadSchema.parse(payload);
+    return new UserDeactivatedEvent(metadata.aggregateId, metadata.occurredAt);
+  },
 };
 ```
 
-The factory is the exact inverse of the bare `JSON.stringify` in Step 1, and it carries the whole burden
-of rebuilding non-primitives: `data` is raw parsed JSON, so `occurredAt` arrives as an ISO string and
-must be re-wrapped (`new Date(data.occurredAt)`), and any field the event flattened on the way in has to
-be re-created here (had `UserCreatedEvent` needed an `Email` instance, its factory would call
-`Email.create(data.email as string)`). Fields typed loosely on `SerializedDomainEvent` need a cast, as
-`data.email as string` shows — that cast is unchecked, which is one more reason to keep payloads to
-simple primitives.
+Then append it to the list in `src/infrastructure/events/domain-event-codecs.ts`:
+
+```ts
+export const domainEventCodecs: readonly DomainEventCodec[] = [
+  userCreatedEventCodec,
+  userDeactivatedEventCodec,
+];
+```
+
+Those two edits are the whole registration — `DomainEventSerializer`, `DomainEventCodecRegistry`,
+`OutboxRelay` and `DispatchDomainEventJobHandler` are never touched again.
+
+`UserDeactivatedEvent` carries no fields of its own, so its payload is `{}`. The empty schema still
+earns its place: it accepts `{}`, strips unexpected keys, and rejects `null` or a non-object, so a
+corrupt row is caught rather than waved through. `encode` routes through the schema even though it
+cannot fail here, because the rule is **the schema runs on both directions** — a template that quietly
+exempts itself is how the exemption spreads. Without it, an event whose payload can be empty on write
+but is validated on read can persist rows nothing is able to decode.
+
+Three pieces carry the compile-time guarantee, and each catches something different:
+
+- `type …Payload = Omit<Event, keyof DomainEvent>` derives the wire shape from the event class, so
+  adding or removing a field on the event breaks the build here.
+- `satisfies …Payload` on the object literal catches a renamed, missing, or **mistyped** key
+  (`{ emial: … }`) — `parse` takes `unknown`, so without it the literal is entirely unchecked.
+- the `: …Payload` return annotation catches a schema that no longer produces the payload type.
+
+Envelope fields never appear in a payload: `aggregateId` and `occurredAt` reach `decode` through
+`metadata`, already a real `Date`. Note that `DomainEvent` subclass constructors are positional and
+often same-typed, so keep the argument order visible rather than clever.
+
+The derivation assumes **data-only events**. `Omit` is structural, so a getter or helper method on the
+event would be dragged into the payload type; if an event genuinely needs one, replace the `Omit` with
+an explicit `interface` and rely on the round-trip test instead of the compiler.
+
+One gap the compiler cannot close: rename the event's field and fix `encode` to match, and the schema
+still names the old key while the positional constructor accepts it — `decode` compiles while writing
+one key and reading another. **The compiler catches renames on the encode side; the round-trip test in
+`domain-event-serializer.test.ts` catches the wire break.** Keep both.
+
+Schemas validate the wire _type contract_, not domain rules — `userCreatedEventCodec` checks
+`z.string().min(1)` for `email` and deliberately not `z.email()`, because email validity belongs to the
+`Email` value object and duplicating it here lets the two definitions drift. Payload schemas must also
+avoid `.strict()`: its `unrecognized_keys` issue echoes the rejected key names back through the error's
+`cause`, and outbox payloads carry user data.
 
 **Step 4 — Write the handler (application).** Create
 `src/application/user/events/user-deactivated-log-handler.ts`:
@@ -482,13 +563,24 @@ purely by `eventName`. (Only a brand-new **job**, not a new event, would touch `
   a plain array; the use case decides when events become durable), and the split keeps "has identity"
   and "publishes facts" as separate capabilities. The cost is one more base class in the hierarchy and a
   little ceremony: every producing use case must pull and stage.
-- **JSON payload with a factory registry keyed by `eventName`.** `DomainEventSerializer.serialize` is a
-  plain `JSON.stringify`; `deserialize` looks up `domainEventFactories[eventName]` and calls the
-  factory, which reconstructs the concrete class and restores the original `occurredAt` from the ISO
-  string. The stored payload stays human-readable and storage is decoupled from class shape, at the cost
-  of one registry entry per event type — a missing factory throws `UnknownDomainEventError` at dispatch
-  rather than failing at compile time (mitigated by keying everything off the same `EVENT_NAME`
-  constant).
+- **A validated JSON envelope with one codec per event.** The database is a trust boundary — rows
+  outlive the code that wrote them — so `deserialize` parses every stored row rather than casting it.
+  One codec file owns one event's contract in both directions: `decode` runs untrusted JSON through a Zod
+  schema so a malformed row fails loudly instead of producing a half-populated event, and `encode` is an
+  explicit typed projection derived from the event class, so a renamed, removed, or added field is a
+  **compile** error. The same schema runs on both directions, which is what stops a writer from
+  manufacturing a poison message its own reader would reject. The predecessor was a factory registry
+  whose `data.email as string` cast erased at compile time; a truncated or hand-edited row produced a
+  `UserCreatedEvent` whose `email` was `undefined` while every handler's signature promised a `string`.
+  The cost is one more file per event and a `payload` nesting level; the payoff is that the two failure
+  modes each get the tool that can actually catch them — runtime validation inbound, the type system
+  outbound.
+- **`eventVersion` as a fail-fast guard, not an extension point.** The reader rejects every version but
+  the one its codec declares. With a single version there is nothing to upcast, and a `readableVersions`
+  list without upcasting logic would let a codec _accept_ a version it cannot correctly decode — strictly
+  worse than rejecting it. The field is written now because it goes to disk, and a wire format gets more
+  expensive to change with every row. The price is real: bumping a version requires draining the outbox
+  and the dispatch queue first, since a rejected row's failed job is the event's only surviving copy.
 - **Routing by a string `eventName`.** Handlers self-declare the key they bind to and the
   `DomainEventHandlerRegistry` indexes them into a `Map<string, handler[]>` once at construction. String
   keys keep events and handlers loosely coupled (a handler need not import the emitting aggregate), at
@@ -522,8 +614,27 @@ relay/dispatch path, a real Redis via Testcontainers) end-to-end.
   returns the deleted count. This is the test that pins the "unpublished rows never age out" behaviour
   described under Configuration.
 - **`src/infrastructure/events/domain-event-serializer.test.ts`** — round-trips a `UserCreatedEvent`
-  preserving its fields and original timestamp, serializes `occurredAt` as an ISO-8601 string, and
-  throws `UnknownDomainEventError` for an unregistered event name.
+  through the production codecs; against a stub codec, pins the full envelope shape and the top-level
+  ISO `occurredAt`, throws `UnknownDomainEventError` on both the serialize and deserialize paths, and
+  throws `DomainEventEncodeError` for a payload the reader would reject, an invalid envelope, or an
+  invalid `Date`. On the read side it rejects a missing payload field (**the regression test for the
+  removed `as string` cast**), a wrong-typed field, a missing `payload` object, a legacy flat-format
+  row, malformed JSON, valid-but-non-object JSON, a mismatched `eventName`, an empty `aggregateId`, a
+  non-ISO `occurredAt`, a non-positive `eventVersion`, and an unknown `eventVersion` — plus a guard that
+  payload content reaches neither the message, the `cause`, nor the `details` of the thrown error.
+- **`src/infrastructure/events/user-created-event-codec.test.ts`** — pins the declared name and version;
+  `encode` yields only `email`, omits envelope fields, and refuses a value the reader would reject;
+  `decode` builds a `UserCreatedEvent` from payload plus metadata and rejects a missing, non-string,
+  empty, and non-object payload.
+- **`src/infrastructure/events/domain-event-codec-registry.test.ts`** — resolves every codec in the
+  production list; throws `UnknownDomainEventError` for unknown names and for inherited object property
+  names (`__proto__`, `constructor`, which the predecessor's `Record` lookup resolved truthily); throws
+  `DuplicateDomainEventCodecError` on a repeated `eventName`; and throws
+  `MalformedDomainEventCodecError` for an empty `eventName` or a version of `0`, `-1`, `1.5`, or `NaN`.
+- **`src/infrastructure/events/domain-event-errors.test.ts`** — table-driven across all six error
+  classes: each is an `InternalError` with `kind: Internal`, `isOperational: false`, its own `code` and
+  `name`, and the event name in `details`; plus `cause` preserved when supplied and omitted when not,
+  and `DomainEventVersionMismatchError` being an instance of `DomainEventDecodeError`.
 - **`src/infrastructure/events/domain-event-handler-registry.test.ts`** — groups multiple handlers under
   the same `eventName`, keys handlers by their own `eventName`, and returns an empty list for an
   unregistered name.
@@ -539,7 +650,7 @@ OUTBOX_RELAY_INTERVAL_MS })` (alongside the data-retention job). Without this th
   ticks, so it guards the one wiring step the whole outbox depends on.
 - **`src/infrastructure/events/dispatch-domain-event-job-handler.test.ts`** — deserializes the event and
   invokes every registered handler; **propagates** a handler failure so BullMQ can retry; propagates
-  `UnknownDomainEventError` when no factory exists; and no-ops when no handler is registered.
+  `UnknownDomainEventError` when no codec exists; and no-ops when no handler is registered.
 - **`src/infrastructure/events/in-process-domain-event-dispatcher.test.ts`** — the dormant synchronous
   adapter: routes by `eventName`, invokes every matching handler in registration order, **catches and
   logs** a failing handler without rejecting, and isolates a failure in one event from the next

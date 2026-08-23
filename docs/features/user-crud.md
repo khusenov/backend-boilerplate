@@ -465,8 +465,8 @@ register it in `src/composition/events.ts`, and add it to the `domainEventHandle
 `DomainEventHandlerRegistry` is built from. The existing `UserCreatedLogHandler`
 (`src/application/user/events/user-created-log-handler.ts`) is the reference implementation.
 Because the event is delivered asynchronously through the outbox, a new event type also needs a
-deserialization factory, and its handler must be **idempotent** (at-least-once delivery can invoke
-it more than once for the same event). The full recipe — event → factory → handler → registration —
+wire-format codec, and its handler must be **idempotent** (at-least-once delivery can invoke
+it more than once for the same event). The full recipe — event → codec → handler → registration —
 lives in [domain-events.md](./domain-events.md).
 
 ## Design decisions & trade-offs
