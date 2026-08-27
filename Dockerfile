@@ -1,5 +1,5 @@
 # ---------- Stage 1: build (full toolchain: Prisma CLI, tsup, TypeScript) ----------
-FROM node:24-bookworm-slim AS build
+FROM node:25-bookworm-slim AS build
 WORKDIR /app
 
 RUN apt-get update \
@@ -16,7 +16,7 @@ RUN npm run db:generate \
  && npm run build
 
 # ---------- Stage 2: prod-deps (runtime dependencies only) ----------
-FROM node:24-bookworm-slim AS prod-deps
+FROM node:25-bookworm-slim AS prod-deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 # `prisma` is an optional peer of `@prisma/client`, so npm resolves it as a
@@ -26,7 +26,7 @@ RUN npm ci --omit=dev --ignore-scripts \
  && rm -rf node_modules/prisma node_modules/@prisma/config
 
 # ---------- Stage 3: runtime (lean, non-root) ----------
-FROM node:24-bookworm-slim AS runtime
+FROM node:25-bookworm-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 
