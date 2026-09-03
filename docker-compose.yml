@@ -89,7 +89,7 @@ services:
       - '4318:4318'
 
   loki:
-    image: grafana/loki:3.7.6
+    image: grafana/loki:3.7.7
     container_name: ${APP_NAME:-app}-loki
     command: -config.file=/etc/loki/loki-config.yaml
     volumes:
