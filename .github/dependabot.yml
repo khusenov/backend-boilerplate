@@ -28,6 +28,15 @@ updates:
           - 'major'
           - 'minor'
           - 'patch'
+      vitest:
+        patterns:
+          - 'vitest'
+          - '@vitest/*'
+          - 'vitest-mock-extended'
+        update-types:
+          - 'major'
+          - 'minor'
+          - 'patch'
       production-dependencies:
         dependency-type: 'production'
         update-types:
