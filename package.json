@@ -83,7 +83,10 @@
     "vitest-mock-extended": "^5.1.1"
   },
   "overrides": {
-    "deepmerge-ts": "^8.0.1"
+    "deepmerge-ts": "^8.0.1",
+    "esbuild": "~0.28.1",
+    "mariadb": "~3.4.7",
+    "mysql2": "~3.23.1"
   },
   "dependencies": {
     "@bull-board/api": "^9.10.1",
