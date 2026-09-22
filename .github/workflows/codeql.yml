@@ -15,25 +15,45 @@ permissions:
   contents: read
 
 jobs:
-  analyze:
-    name: Analyze (${{ matrix.language }})
+  # Each language is a separate job with a literal name rather than a matrix leg.
+  # A skipped matrix job publishes one check run named "Analyze (${{ matrix.language }})"
+  # verbatim, which would leave the required contexts absent on Dependabot PRs.
+  analyze-actions:
+    name: Analyze (actions)
     runs-on: ubuntu-latest
+    if: github.actor != 'dependabot[bot]'
     permissions:
       contents: read
       actions: read
       security-events: write
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [actions, javascript-typescript]
     steps:
       - uses: actions/checkout@v7
 
       - uses: github/codeql-action/init@v4
         with:
-          languages: ${{ matrix.language }}
+          languages: actions
           build-mode: none
 
       - uses: github/codeql-action/analyze@v4
         with:
-          category: '/language:${{ matrix.language }}'
+          category: '/language:actions'
+
+  analyze-javascript-typescript:
+    name: Analyze (javascript-typescript)
+    runs-on: ubuntu-latest
+    if: github.actor != 'dependabot[bot]'
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: '/language:javascript-typescript'
