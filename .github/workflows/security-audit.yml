@@ -1,0 +1,57 @@
+name: Security audit
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Audit production dependencies
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit production dependencies
+        id: audit
+        run: |
+          set +e
+          npm run deps:audit > audit.log 2>&1
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          cat audit.log
+
+      - name: Open or update the advisory report
+        if: steps.audit.outputs.exit_code != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: Production dependency advisories need review
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          body=$(
+            printf '`npm run deps:audit` failed on `main`.\n\nRun: %s\n\n```\n%s\n```\n' \
+              "$RUN_URL" "$(tail -c 55000 audit.log)"
+          )
+          existing=$(gh issue list --state open --search "in:title $TITLE" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$TITLE" --body "$body"
+          fi
