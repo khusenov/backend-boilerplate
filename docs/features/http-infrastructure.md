@@ -75,7 +75,7 @@ them with a remediation hint (`openssl rand -base64 48`).
 
 A second boot-time guard sits beside it: importing `src/config/http-transport.ts` runs
 `parseTrustProxy(env.TRUST_PROXY)`, which throws on any value outside the grammar
-`false | true | 1…32`. The two fire at different import times, so there is no single locatable
+`false | true | <address list>`. The two fire at different import times, so there is no single locatable
 guard point — but both run before either entry point calls `listen()`, because `app.ts` and
 `worker.ts` each import `http-transport` at module load. A malformed `TRUST_PROXY` fails the boot
 rather than surfacing as a request-time surprise.
@@ -367,7 +367,7 @@ every route handler reaching for its use case in `request.diScope.cradle`.
 | `Page` / `PageQuery` / `PageSlice`                              | Shared           | Pagination types shared by use cases, repositories, and response schemas                                                                                                                   | `src/shared/pagination.ts`                                   |
 | `env`                                                           | Config           | Parse + validate the whole environment once at boot (`envalid`), exported frozen                                                                                                           | `src/config/env.ts`                                          |
 | `assertProductionSecrets`                                       | Config           | Boot-time guard: refuse to start when a production secret is weak                                                                                                                          | `src/config/assert-production-secrets.ts`                    |
-| `parseTrustProxy`                                               | Config           | Boot-time guard and parser for the `TRUST_PROXY` grammar; rejects `0`, address lists, and out-of-range counts                                                                              | `src/config/trust-proxy.ts`                                  |
+| `parseTrustProxy`                                               | Config           | Boot-time guard and parser for the `TRUST_PROXY` grammar; rejects hop counts, which Fastify no longer honours                                                                              | `src/config/trust-proxy.ts`                                  |
 | `trustProxy` / `httpLimits`                                     | Config           | Derived transport configuration read once from `env`; the single owner of the environment-to-consumer mapping for both servers                                                             | `src/config/http-transport.ts`                               |
 | `toServiceIdentity`                                             | Config           | Derive `{ service, environment, version }` for logs/traces from env                                                                                                                        | `src/config/service-identity.ts`                             |
 
@@ -563,7 +563,7 @@ or a boot-time guard.
 | `WEB_ORIGIN`               | `—` (devDefault `http://localhost:5173`)                  | Allowed CORS origin; passed to `@fastify/cors` with `credentials: true`.                                                                                                                                                   |
 | `RATE_LIMIT_MAX`           | `100`                                                     | Global rate-limit ceiling per window.                                                                                                                                                                                      |
 | `RATE_LIMIT_WINDOW`        | `1 minute`                                                | Global rate-limit window; also reused by the per-route auth buckets.                                                                                                                                                       |
-| `TRUST_PROXY`              | `false`                                                   | How far to trust `X-Forwarded-For` when resolving `request.ip`. Parsed by `parseTrustProxy` at boot. **Security-sensitive** — see [Trusted proxies](#trusted-proxies-and-the-rate-limiter-bucket-key).                     |
+| `TRUST_PROXY`              | `false`                                                   | Which proxies may be believed when resolving `request.ip` from `X-Forwarded-For`. Parsed by `parseTrustProxy` at boot. **Security-sensitive** — see [Trusted proxies](#trusted-proxies-and-the-rate-limiter-bucket-key).   |
 | `BODY_LIMIT_BYTES`         | `1048576`                                                 | Maximum request body in bytes; a larger body yields `413`.                                                                                                                                                                 |
 | `REQUEST_TIMEOUT_MS`       | `30000`                                                   | How long a request may take to _arrive_ (headers plus body) before Fastify answers `408`. Also read by the worker's probe server. Does not bound handler execution.                                                        |
 | `KEEP_ALIVE_TIMEOUT_MS`    | `72000`                                                   | Idle keep-alive window; keep it above your load balancer's idle timeout.                                                                                                                                                   |
@@ -629,29 +629,38 @@ shorter-lived one is reported as a lifetime leak instead of silently captured.
 Because the limiter keys on `request.ip`, `TRUST_PROXY` decides whether it can be bypassed. What
 `request.ip` resolves to is decided entirely by `trustProxy`, which Fastify delegates to
 **`@fastify/proxy-addr`**: it builds the candidate list right-to-left — socket address first, then
-`X-Forwarded-For` reversed — and walks as many entries as it is told to trust.
+`X-Forwarded-For` reversed — and walks left for as long as each address it meets is one it trusts.
 
-| `TRUST_PROXY` | `request.ip` resolves to              | Spoofable?                                 |
-| ------------- | ------------------------------------- | ------------------------------------------ |
-| `false`       | the socket address                    | No                                         |
-| `true`        | the leftmost `X-Forwarded-For` entry  | **Yes** — the client writes that entry     |
-| `1`, `2`, …   | the entry N hops back from the socket | No, **only** when N matches the real chain |
+| `TRUST_PROXY`                   | `request.ip` resolves to                             | Spoofable?                                    |
+| ------------------------------- | ---------------------------------------------------- | --------------------------------------------- |
+| `false`                         | the socket address                                   | No                                            |
+| `true`                          | the leftmost `X-Forwarded-For` entry                 | **Yes** — the client writes that entry        |
+| an address, CIDR or named range | the first entry whose peer is outside the trust list | No, when the list names only your own proxies |
 
 Take one proxy in front and a malicious client sending `X-Forwarded-For: 198.51.100.1` (a lie). The
 proxy _appends_ the real peer, so the server sees `X-Forwarded-For: 198.51.100.1, 203.0.113.9`. With
-`TRUST_PROXY=1` the resolved address is `203.0.113.9` — the real client. With `TRUST_PROXY=true`, or
-an **inflated** hop count such as `2` against that one-proxy chain, it is `198.51.100.1` — the address
-the attacker chose, letting them mint unlimited fresh buckets. Both hazards are pinned by tests. Use
-`true` only when the edge provably strips inbound `X-Forwarded-For`; otherwise count the real chain.
+`TRUST_PROXY` naming that proxy's own address, the walk trusts the peer it actually connected to,
+steps one entry left, finds `203.0.113.9` outside the trust list and stops — the real client. With
+`TRUST_PROXY=true`, or a trust list stretched to also cover `203.0.113.9`, it resolves to
+`198.51.100.1` — the address the attacker chose, letting them mint unlimited fresh buckets. Both
+hazards are pinned by tests. Use `true` only when the edge provably strips inbound `X-Forwarded-For`;
+otherwise name your proxies and nothing beyond them.
+
+**Hop counts are rejected at boot.** Earlier revisions of this boilerplate accepted `TRUST_PROXY=1`
+and handed the integer to Fastify, which then trusted that many entries without ever checking who the
+peer was. Fastify closed that hole in **5.12.1**: a hop count cannot verify the immediate peer, so a
+client reaching the socket directly could forge an entire chain and have the Nth entry believed. Since
+5.12.1 a numeric `trustProxy` is inert — it fails closed, and `request.ip` silently falls back to the
+socket address. Left unhandled that is the worse failure for this app: every proxied request would
+collapse onto a single limiter bucket and throttle all users as one client. `parseTrustProxy`
+therefore rejects numeric values outright, turning a silent loss of client identity into a loud boot
+error that names the accepted forms.
 
 The shipped default is `false`, which is also what `docker-compose.yml` pins, because that topology
-publishes port 8000 directly with no ingress in front. The **address/CIDR-list grammar** Fastify would
-otherwise accept (`['10.0.0.0/8', 'loopback']`) is deliberately unsupported: validating it would mean
-reproducing `@fastify/proxy-addr`'s acceptance set in the boot-time guard or taking on `ipaddr.js` as
-a direct dependency, and hop counts already cover single- and multi-proxy deployments.
-`TRUST_PROXY=10.0.0.0/8` is rejected at boot with a message naming every accepted form. The shape this
-forecloses is a _variable_ hop count — one service reached both through an ingress and directly by
-in-cluster peers, where no single integer is correct.
+publishes port 8000 directly with no ingress in front. Address **syntax** is validated by
+`@fastify/proxy-addr` when the server is constructed, so a malformed CIDR still fails the boot;
+`parseTrustProxy` deliberately does not reproduce that acceptance set, which would mean taking on
+`ipaddr.js` as a direct dependency to say the same thing twice.
 
 ### Limits that bypass the error envelope
 
@@ -1119,13 +1128,14 @@ Unit tests run under Vitest beside the code they cover. `src/container.ts` and
   envelope and **strips unknown fields** from items.
 - `src/presentation/http/server-options.test.ts` — every input field lands on its Fastify option with
   `maxParamLength` nested under `routerOptions`, then boots probe apps to pin the four client-address
-  outcomes (`false` → socket address; hop count `1` → the real peer, discarding the forged leftmost
-  entry; `true` and an inflated hop count `2` → the forged entry) and the request limits (oversized
+  outcomes (`false` → socket address; `'loopback'` → the real peer, discarding the forged leftmost
+  entry; `true` and a trust list stretched past the real peer → the forged entry) and the request limits (oversized
   body `413`, body within the limit `200`, over-long route parameter `414`, short parameter `200`).
 - `src/config/trust-proxy.test.ts` — the `TRUST_PROXY` grammar: `'false'`, `''` and whitespace-only
-  trust nothing; `'true'` trusts every hop; casing and surrounding whitespace are ignored; `'1'` and
-  `'32'` become hop counts; `'0'`, `'33'`, `'-1'`, `'1.5'`, `'01'` and `'10.0.0.0/8'` are rejected; and
-  the error message names both the variable and the offending value.
+  trust nothing; `'true'` trusts every hop; keyword casing and surrounding whitespace are ignored;
+  addresses, CIDRs, named ranges and comma-separated lists pass through for Fastify to compile, with
+  address casing preserved for IPv6; `'1'`, `'0'`, `'01'`, `'-1'`, `'1.5'` and `'33'` are rejected as
+  hop counts; and the error message names both the variable and the offending value.
 - `src/config/assert-production-secrets.test.ts` — the boot-time guard: a no-op outside production; in
   production it passes at exactly the minimum length, throws naming the offending key when one is
   short or empty, names every weak secret in one error, and includes the `openssl rand` hint.
@@ -1156,12 +1166,12 @@ Integration tests (real container, Redis-backed; configured by `vitest.integrati
   `/v1/auth/reset-password` count in independent buckets, verifies the counters live under
   `RATE_LIMIT_KEY_NAMESPACE`-prefixed keys (read back through `app.diContainer.cradle.rateLimitRedis`),
   and proves fail-open by disconnecting that handle and still receiving a `401` rather than a block. It
-  stays green under the suite's `TRUST_PROXY=1` because its requests carry no `X-Forwarded-For`.
+  stays green under the suite's `TRUST_PROXY=loopback` because its requests carry no `X-Forwarded-For`.
 - `test/integration/http-hardening.int.test.ts` — pins the **wiring**, not just the factory: asserts
   `app.server.requestTimeout` equals `env.REQUEST_TIMEOUT_MS` and
   `app.initialConfig.routerOptions?.maxParamLength` equals `env.MAX_PARAM_LENGTH`, then proves a forged
-  `X-Forwarded-For` entry is discarded end to end under the configured hop count
-  (`test/integration/setup-env.ts` sets `TRUST_PROXY=1`). Two details make it worth its weight.
+  `X-Forwarded-For` entry is discarded end to end under the configured trust list
+  (`test/integration/setup-env.ts` sets `TRUST_PROXY=loopback`). Two details make it worth its weight.
   `BODY_LIMIT_BYTES` and `KEEP_ALIVE_TIMEOUT_MS` deliberately equal Fastify's own defaults, so
   asserting them would pass even if the options were never applied — only `requestTimeout` (`0` → 30 s)
   and `routerOptions` (absent → present) discriminate. And `requestTimeout` is **absent from Fastify's

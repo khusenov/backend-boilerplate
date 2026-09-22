@@ -1,28 +1,29 @@
-export type TrustProxySetting = boolean | number;
+export type TrustProxySetting = boolean | string;
 
 const TRUST_NOTHING = 'false';
 const TRUST_EVERY_HOP = 'true';
-const MAX_HOP_COUNT = 32;
-const HOP_COUNT_PATTERN = /^[1-9]\d*$/;
+const NUMERIC_PATTERN = /^-?\d+(?:\.\d+)?$/;
 
 export function parseTrustProxy(raw: string): TrustProxySetting {
-  const value = raw.trim().toLowerCase();
+  const value = raw.trim();
+  const keyword = value.toLowerCase();
 
-  if (value === '' || value === TRUST_NOTHING) {
+  if (keyword === '' || keyword === TRUST_NOTHING) {
     return false;
   }
-  if (value === TRUST_EVERY_HOP) {
+  if (keyword === TRUST_EVERY_HOP) {
     return true;
   }
-  if (HOP_COUNT_PATTERN.test(value)) {
-    const hopCount = Number.parseInt(value, 10);
-    if (hopCount <= MAX_HOP_COUNT) {
-      return hopCount;
-    }
+  if (NUMERIC_PATTERN.test(keyword)) {
+    throw new Error(
+      `Invalid TRUST_PROXY value "${raw}": a hop count cannot verify the immediate peer, so a ` +
+        `client connecting directly can forge X-Forwarded-For by sending that many hops. ` +
+        `Fastify ignores hop counts and resolves request.ip from the socket instead. Name the ` +
+        `proxies you trust: "${TRUST_NOTHING}", "${TRUST_EVERY_HOP}", an address or CIDR ` +
+        `("10.0.0.0/8"), a named range ("loopback", "linklocal", "uniquelocal"), or a ` +
+        `comma-separated list of those.`,
+    );
   }
 
-  throw new Error(
-    `Invalid TRUST_PROXY value "${raw}": expected "${TRUST_NOTHING}" (or empty), ` +
-      `"${TRUST_EVERY_HOP}", or a hop count from 1 to ${MAX_HOP_COUNT}.`,
-  );
+  return value;
 }

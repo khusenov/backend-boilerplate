@@ -18,42 +18,46 @@ describe('parseTrustProxy', () => {
     expect(parseTrustProxy('true')).toBe(true);
   });
 
-  it('ignores casing and surrounding whitespace', () => {
+  it('ignores casing and surrounding whitespace on the keywords', () => {
     expect(parseTrustProxy(' FALSE ')).toBe(false);
     expect(parseTrustProxy(' True ')).toBe(true);
-    expect(parseTrustProxy(' 2 ')).toBe(2);
   });
 
-  it('reads a positive integer as a hop count', () => {
-    expect(parseTrustProxy('1')).toBe(1);
-    expect(parseTrustProxy('32')).toBe(32);
+  it('passes a single address through for Fastify to compile', () => {
+    expect(parseTrustProxy('10.0.0.1')).toBe('10.0.0.1');
   });
 
-  it('rejects zero, which Fastify would collapse to no trust at all', () => {
-    expect(() => parseTrustProxy('0')).toThrow(/hop count from 1 to 32/);
+  it('passes a CIDR block through', () => {
+    expect(parseTrustProxy('10.0.0.0/8')).toBe('10.0.0.0/8');
   });
 
-  it('rejects a hop count above the supported maximum', () => {
-    expect(() => parseTrustProxy('33')).toThrow(/hop count from 1 to 32/);
+  it('passes a named range through', () => {
+    expect(parseTrustProxy('uniquelocal')).toBe('uniquelocal');
   });
 
-  it('rejects a negative hop count', () => {
-    expect(() => parseTrustProxy('-1')).toThrow(/hop count from 1 to 32/);
+  it('passes a comma-separated list through', () => {
+    expect(parseTrustProxy('loopback, 10.0.0.0/8')).toBe('loopback, 10.0.0.0/8');
   });
 
-  it('rejects a fractional hop count', () => {
-    expect(() => parseTrustProxy('1.5')).toThrow(/hop count from 1 to 32/);
+  it('preserves address casing, which IPv6 notation depends on', () => {
+    expect(parseTrustProxy('FD00::/8')).toBe('FD00::/8');
   });
 
-  it('rejects a zero-padded hop count', () => {
-    expect(() => parseTrustProxy('01')).toThrow(/hop count from 1 to 32/);
+  it('rejects a hop count, which cannot verify the immediate peer', () => {
+    expect(() => parseTrustProxy('1')).toThrow(/hop count cannot verify the immediate peer/);
   });
 
-  it('rejects an address list, which this grammar does not support', () => {
-    expect(() => parseTrustProxy('10.0.0.0/8')).toThrow(/hop count from 1 to 32/);
+  it('rejects zero, padded, negative and fractional hop counts alike', () => {
+    for (const value of ['0', '01', '-1', '1.5', '33']) {
+      expect(() => parseTrustProxy(value)).toThrow(/hop count cannot verify the immediate peer/);
+    }
   });
 
   it('names the offending variable and its value', () => {
-    expect(() => parseTrustProxy('ture')).toThrow(/TRUST_PROXY value "ture"/);
+    expect(() => parseTrustProxy('2')).toThrow(/TRUST_PROXY value "2"/);
+  });
+
+  it('lists the accepted forms so the message is actionable', () => {
+    expect(() => parseTrustProxy('1')).toThrow(/loopback.*linklocal.*uniquelocal/);
   });
 });

@@ -31,7 +31,7 @@ describe('http hardening (integration)', () => {
     expect(app.initialConfig.routerOptions?.maxParamLength).toBe(env.MAX_PARAM_LENGTH);
   });
 
-  it('resolves the client address through the configured proxy hop count', async () => {
+  it('resolves the client address through the trusted proxy in front of it', async () => {
     const response = await app.inject({
       method: 'GET',
       url: '/client-address',

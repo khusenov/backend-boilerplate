@@ -46,7 +46,7 @@ function readClientAddress(trustProxy: TrustProxySetting): Promise<string> {
 describe('httpHardeningOptions', () => {
   it('maps every configured limit onto its Fastify option', () => {
     const options = httpHardeningOptions({
-      trustProxy: 1,
+      trustProxy: 'loopback',
       bodyLimitBytes: 2048,
       requestTimeoutMs: 5000,
       keepAliveTimeoutMs: 6000,
@@ -54,7 +54,7 @@ describe('httpHardeningOptions', () => {
     });
 
     expect(options).toEqual({
-      trustProxy: 1,
+      trustProxy: 'loopback',
       bodyLimit: 2048,
       requestTimeout: 5000,
       keepAliveTimeout: 6000,
@@ -68,16 +68,18 @@ describe('client address resolution', () => {
     await expect(readClientAddress(false)).resolves.toBe(SOCKET_ADDRESS);
   });
 
-  it('discards a client-forged entry when the hop count matches the chain', async () => {
-    await expect(readClientAddress(1)).resolves.toBe(REAL_PEER_ADDRESS);
+  it('discards a client-forged entry when only the immediate peer is trusted', async () => {
+    await expect(readClientAddress('loopback')).resolves.toBe(REAL_PEER_ADDRESS);
   });
 
   it('accepts a client-forged entry when every hop is trusted', async () => {
     await expect(readClientAddress(true)).resolves.toBe(FORGED_CLIENT_ADDRESS);
   });
 
-  it('accepts a client-forged entry when the hop count exceeds the chain', async () => {
-    await expect(readClientAddress(2)).resolves.toBe(FORGED_CLIENT_ADDRESS);
+  it('accepts a client-forged entry when the trust list reaches past the real peer', async () => {
+    await expect(readClientAddress(`loopback, ${REAL_PEER_ADDRESS}`)).resolves.toBe(
+      FORGED_CLIENT_ADDRESS,
+    );
   });
 });
 
