@@ -46,7 +46,7 @@ async function buildTestApp(
 ): Promise<FastifyInstance> {
   const app = fastify({ logger: false });
   await registerTestContainer(app, { idempotencyStore: asValue(store) });
-  registerErrorHandler(app);
+  registerErrorHandler(app, { translator: { translate: () => undefined } });
   await app.register(idempotencyPlugin);
   app.post('/things', { config: { idempotency: true } }, () => handler());
   app.post('/free', () => handler());
@@ -77,7 +77,7 @@ describe('idempotencyPlugin', () => {
 
   it('replays a deterministic 4xx so the same input yields the same error', async () => {
     const handler = vi.fn(() => {
-      throw new ConflictError('User already exists', { code: 'USER_EXISTS' });
+      throw new ConflictError('User already exists', { code: 'EMAIL_ALREADY_TAKEN' });
     });
     app = await buildTestApp(new InMemoryIdempotencyStore(), handler);
 

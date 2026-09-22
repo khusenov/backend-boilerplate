@@ -20,6 +20,6 @@ export class EmailAlreadyTakenError extends ConflictError {
 
 export class UserNotFoundError extends NotFoundError {
   constructor(id: string) {
-    super(`User with id ${id} not found`, { code: 'USER_NOT_FOUND' });
+    super(`User with id ${id} not found`, { code: 'USER_NOT_FOUND', details: { id } });
   }
 }
