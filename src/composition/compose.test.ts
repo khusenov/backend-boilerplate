@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { mock } from 'vitest-mock-extended';
 import { createAppContainer } from '@/container';
 import { createPlatformRegistrations } from '@/composition/platform';
+import { i18nRegistrations } from '@/composition/i18n';
 import { persistenceRegistrations } from '@/composition/persistence';
 import { securityRegistrations } from '@/composition/security';
 import { metricsRegistrations } from '@/composition/metrics';
@@ -38,6 +39,7 @@ const CONFIG_BACKED_KEYS = [
 function moduleKeys(): string[] {
   return [
     createPlatformRegistrations(mock<FastifyBaseLogger>()),
+    i18nRegistrations,
     persistenceRegistrations,
     securityRegistrations,
     metricsRegistrations,

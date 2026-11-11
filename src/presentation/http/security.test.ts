@@ -13,7 +13,7 @@ async function buildTestApp(): Promise<FastifyInstance> {
   const app = fastify({ logger: false });
   await app.register(fastifyHelmet, helmetOptions(false));
   await app.register(fastifyRateLimit, rateLimitOptions(2, '1 minute'));
-  registerErrorHandler(app);
+  registerErrorHandler(app, { translator: { translate: () => undefined } });
 
   app.get('/ping', () => ({ ok: true }));
   app.post('/auth/login', { config: { rateLimit: { max: 1, timeWindow: '1 minute' } } }, () => ({

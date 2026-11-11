@@ -2,7 +2,7 @@ import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@
 
 export class RoleNotFoundError extends NotFoundError {
   constructor(id: string) {
-    super(`Role with id ${id} not found`, { code: 'ROLE_NOT_FOUND' });
+    super(`Role with id ${id} not found`, { code: 'ROLE_NOT_FOUND', details: { id } });
   }
 }
 
