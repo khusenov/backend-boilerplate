@@ -1,7 +1,8 @@
 import { AppError, type ErrorDetails, ErrorKind } from './app-error';
+import type { ErrorCodeType } from './error-code';
 
 export interface SemanticErrorOptions {
-  code?: string;
+  code?: ErrorCodeType;
   details?: ErrorDetails;
   cause?: unknown;
 }

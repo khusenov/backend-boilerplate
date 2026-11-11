@@ -1,6 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { CompleteRegistrations } from '@/composition/registration-map';
 import { createPlatformRegistrations } from '@/composition/platform';
+import { i18nRegistrations } from '@/composition/i18n';
 import { persistenceRegistrations } from '@/composition/persistence';
 import { securityRegistrations } from '@/composition/security';
 import { metricsRegistrations } from '@/composition/metrics';
@@ -17,6 +18,7 @@ import { retentionRegistrations } from '@/composition/retention';
 export function createRegistrations(baseLogger: FastifyBaseLogger): CompleteRegistrations {
   return {
     ...createPlatformRegistrations(baseLogger),
+    ...i18nRegistrations,
     ...persistenceRegistrations,
     ...securityRegistrations,
     ...metricsRegistrations,

@@ -84,7 +84,9 @@ describe('ConflictError', () => {
   });
 
   it('accepts a custom code', () => {
-    expect(new ConflictError('conflict', { code: 'EMAIL_TAKEN' }).code).toBe('EMAIL_TAKEN');
+    expect(new ConflictError('conflict', { code: 'EMAIL_ALREADY_TAKEN' }).code).toBe(
+      'EMAIL_ALREADY_TAKEN',
+    );
   });
 
   it('is operational', () => {
@@ -114,7 +116,9 @@ describe('UnauthorizedError', () => {
   });
 
   it('accepts a custom code', () => {
-    expect(new UnauthorizedError('denied', { code: 'TOKEN_EXPIRED' }).code).toBe('TOKEN_EXPIRED');
+    expect(new UnauthorizedError('denied', { code: 'INVALID_ACCESS_TOKEN' }).code).toBe(
+      'INVALID_ACCESS_TOKEN',
+    );
   });
 
   it('is operational', () => {

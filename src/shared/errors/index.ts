@@ -6,6 +6,7 @@ export {
   type SerializedError,
   type AppErrorOptions,
 } from './app-error';
+export { ErrorCode, isErrorCode, type ErrorCodeType } from './error-code';
 export {
   ValidationError,
   NotFoundError,

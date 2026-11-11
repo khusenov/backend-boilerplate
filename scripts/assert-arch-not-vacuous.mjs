@@ -1,6 +1,13 @@
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
-const cruiseReport = JSON.parse(readFileSync(0, 'utf8'));
+const REPORT_MAX_BYTES = 64 * 1024 * 1024;
+
+const cruiseReport = JSON.parse(
+  execFileSync('depcruise', ['src', '--output-type', 'json'], {
+    encoding: 'utf8',
+    maxBuffer: REPORT_MAX_BYTES,
+  }),
+);
 const modulesCruised = cruiseReport.summary.totalCruised;
 
 if (modulesCruised === 0) {
