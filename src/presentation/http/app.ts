@@ -27,6 +27,7 @@ import {
   correlationIdPlugin,
 } from '@/presentation/http/plugins/correlation-id';
 import { randomUUID } from 'node:crypto';
+import { localePlugin } from '@/presentation/http/plugins/locale';
 import { metricsPlugin } from '@/presentation/http/plugins/metrics';
 import { metricsRoutes } from '@/presentation/http/routes/metrics-routes';
 import { bullBoardPlugin } from '@/presentation/http/plugins/bull-board';
@@ -65,6 +66,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     strictBooleanEnforced: true,
   });
   await app.register(correlationIdPlugin);
+  await app.register(localePlugin, { defaultLocale: container.cradle.defaultLocale });
   if (env.METRICS_ENABLED) {
     await app.register(metricsPlugin, { metricsRecorder: container.cradle.metricsRecorder });
   }
@@ -73,7 +75,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(authPlugin);
   await app.register(idempotencyPlugin);
 
-  registerErrorHandler(app);
+  registerErrorHandler(app, { translator: container.cradle.translator });
 
   if (!env.isProduction) {
     await app.register(fastifySwagger, {

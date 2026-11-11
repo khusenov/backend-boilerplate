@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { bool, cleanEnv, email, host, num, port, str } from 'envalid';
 import { APP_NAME, appIdentity } from './app-identity';
 import { assertProductionSecrets } from './assert-production-secrets';
+import { FALLBACK_LOCALE, SUPPORTED_LOCALES } from './locales';
 
 export const env = cleanEnv(process.env, {
   APP_NAME: str({
@@ -15,6 +16,11 @@ export const env = cleanEnv(process.env, {
   LOG_LEVEL: str({
     choices: ['fatal', 'error', 'warn', 'info', 'debug', 'trace'],
     default: 'info',
+  }),
+  DEFAULT_LOCALE: str({
+    choices: [...SUPPORTED_LOCALES],
+    default: FALLBACK_LOCALE,
+    desc: 'Language served when the client sends no usable Accept-Language header',
   }),
   DATABASE_URL: str(),
   JWT_ACCESS_SECRET: str({

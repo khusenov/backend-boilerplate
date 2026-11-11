@@ -29,7 +29,7 @@ type TokenServiceMock = ReturnType<typeof makeTokenService>;
 async function buildApp(service: AccessTokenService): Promise<FastifyInstance> {
   const app = fastify({ logger: false });
 
-  registerErrorHandler(app);
+  registerErrorHandler(app, { translator: { translate: () => undefined } });
 
   await registerTestContainer(app, { accessTokenService: asValue(service) });
 
@@ -118,7 +118,7 @@ describe('authPlugin', () => {
   describe('accessTokenService.verify rejects', () => {
     it('propagates an UnauthorizedError from verify', async () => {
       vi.mocked(service.verify).mockRejectedValue(
-        new UnauthorizedError('Token expired', { code: 'TOKEN_EXPIRED' }),
+        new UnauthorizedError('Token expired', { code: 'INVALID_ACCESS_TOKEN' }),
       );
       const res = await app.inject({
         method: 'GET',
@@ -126,7 +126,7 @@ describe('authPlugin', () => {
         headers: { authorization: 'Bearer expired.token' },
       });
       expect(res.statusCode).toBe(401);
-      expect(res.json<{ error: { code: string } }>().error.code).toBe('TOKEN_EXPIRED');
+      expect(res.json<{ error: { code: string } }>().error.code).toBe('INVALID_ACCESS_TOKEN');
     });
   });
 });

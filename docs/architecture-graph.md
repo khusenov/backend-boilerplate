@@ -32,8 +32,8 @@ src_container_ts-->src_container_options_ts
 src_domain-->src_shared
 src_infrastructure-->src_application
 src_infrastructure-->src_domain
-src_infrastructure-->src_config
 src_infrastructure-->src_shared
+src_infrastructure-->src_config
 src_instrumentation_ts-->src_infrastructure
 src_job_catalogue_ts-->src_application
 src_job_catalogue_ts-->src_infrastructure
@@ -43,8 +43,8 @@ src_main_ts-->src_container_ts
 src_main_ts-->src_infrastructure
 src_main_ts-->src_presentation
 src_presentation-->src_config
-src_presentation-->src_shared
 src_presentation-->src_application
+src_presentation-->src_shared
 src_presentation-->src_domain
 src_scripts-->src_application
 src_scripts-->src_config

@@ -10,7 +10,8 @@
 [Public surface](#public-surface) ([bootstrap](#bootstrap-api),
 [mounts](#operational-mounts-this-feature-owns), [URLs](#url-layout),
 [plugin options](#plugin-option-contracts), [error envelope](#error-response-envelope),
-[pagination](#pagination-envelope), [shared blocks](#shared-building-blocks),
+[localization](#localized-error-messages), [pagination](#pagination-envelope),
+[shared blocks](#shared-building-blocks),
 [decorators](#route-decorators-config-flags-and-identity-helpers)) ·
 [Configuration](#configuration) ([this feature](#read-by-this-feature),
 [siblings](#read-by-sibling-features), [code-level](#code-level-options),
@@ -34,10 +35,12 @@ sits on one shared application factory and one shared set of request/response co
 feature is that foundation. `buildApp` assembles the Fastify application **around a dependency
 container handed to it**, fixes the order in which cross-cutting plugins run, and mounts the
 versioned `/v1` API surface. It also defines how requests are validated, how responses are shaped,
-and how **every** error becomes a uniform JSON envelope with the right HTTP status.
+and how **every** error becomes a uniform JSON envelope with the right HTTP status — in the
+language the caller asked for.
 
 Its reason to exist is the Dependency Rule. HTTP concerns — status codes, headers, response shapes,
-security policy, URL versioning — must live at the presentation boundary and nowhere else. That is
+security policy, URL versioning, human-readable prose — must live at the presentation boundary and
+nowhere else. That is
 what lets the domain and application layers throw meaningful errors and return plain objects without
 importing Fastify or knowing what a `409` is.
 
@@ -100,7 +103,7 @@ export const APP_CONTAINER_OPTIONS = {
 } as const satisfies ContainerOptions;
 ```
 
-`createRegistrations(baseLogger)` (`src/composition/compose.ts`) merges the thirteen per-module
+`createRegistrations(baseLogger)` (`src/composition/compose.ts`) merges the fourteen per-module
 registration maps under `src/composition/**` into one `CompleteRegistrations` object, so the
 container is complete on return — no observable half-wired state, no second call to remember. Three
 entry points build one this way (`src/main.ts`, `src/worker.ts`, `src/scripts/sync-auth.ts`), as does
@@ -121,16 +124,18 @@ instance the entry point created, so `buildApp` is never handed the logger a sec
 
 Because the container is complete before `buildApp` is called, every cradle read inside `buildApp` is
 valid from its first line; the factory carries no internal "wire here, read below" constraint.
-`buildApp` reads exactly five keys at composition time, three of them only inside the branch that
+`buildApp` reads exactly seven keys at composition time, three of them only inside the branch that
 needs them:
 
-| Cradle key        | Read where                           | Passed to                                    |
-| ----------------- | ------------------------------------ | -------------------------------------------- |
-| `baseLogger`      | the `fastify()` factory call         | Fastify's `loggerInstance`                   |
-| `metricsRecorder` | inside `if (env.METRICS_ENABLED)`    | `metricsPlugin`'s `MetricsPluginOptions`     |
-| `dashboardQueue`  | inside `if (env.BULL_BOARD_ENABLED)` | `bullBoardPlugin`'s `BullBoardPluginOptions` |
-| `rateLimitRedis`  | inside `if (rateLimit)`              | `@fastify/rate-limit`'s `redis` option       |
-| `healthCheck`     | the `healthRoutes` registration      | `healthRoutes`' `HealthRoutesOptions`        |
+| Cradle key        | Read where                           | Passed to                                           |
+| ----------------- | ------------------------------------ | --------------------------------------------------- |
+| `baseLogger`      | the `fastify()` factory call         | Fastify's `loggerInstance`                          |
+| `defaultLocale`   | the `localePlugin` registration      | `localePlugin`'s `LocalePluginOptions`              |
+| `translator`      | the `registerErrorHandler` call      | `registerErrorHandler`'s `ErrorHandlerDependencies` |
+| `metricsRecorder` | inside `if (env.METRICS_ENABLED)`    | `metricsPlugin`'s `MetricsPluginOptions`            |
+| `dashboardQueue`  | inside `if (env.BULL_BOARD_ENABLED)` | `bullBoardPlugin`'s `BullBoardPluginOptions`        |
+| `rateLimitRedis`  | inside `if (rateLimit)`              | `@fastify/rate-limit`'s `redis` option              |
+| `healthCheck`     | the `healthRoutes` registration      | `healthRoutes`' `HealthRoutesOptions`               |
 
 The branch placement is load-bearing. The PROXY cradle resolves lazily on property access, and both
 `rateLimitRedis` and `dashboardQueue` **open live connections when resolved** (`createRateLimitRedis`
@@ -204,8 +209,9 @@ and its hook never fires for any other route.
 The escape hatch is **`fastify-plugin`** (imported as `fp`). Wrapping a plugin in `fp(...)` skips the
 child context, so its hooks and decorators attach to the parent instance and are visible to
 everything registered after it. That is why every first-party cross-cutting plugin here is an `fp`
-wrapper: `correlationIdPlugin` (`plugins/correlation-id.ts`), `metricsPlugin` (`plugins/metrics.ts`,
-typed `fp<MetricsPluginOptions>`), `authPlugin` (`plugins/authenticate.ts`), and `idempotencyPlugin`
+wrapper: `correlationIdPlugin` (`plugins/correlation-id.ts`), `localePlugin` (`plugins/locale.ts`,
+typed `fp<LocalePluginOptions>`), `metricsPlugin` (`plugins/metrics.ts`, typed
+`fp<MetricsPluginOptions>`), `authPlugin` (`plugins/authenticate.ts`), and `idempotencyPlugin`
 (`plugins/idempotency.ts`). The `@fastify/*` plugins ship their own `fp` wrapper for the same reason,
 which is how `reply.unauthorized`, `request.diScope`, `request.cookies` and the helmet/CORS/rate-limit
 hooks reach the whole app. The one deliberate exception is **`bullBoardPlugin`** — a plain
@@ -225,13 +231,14 @@ await app.register(fastifySensible);
 await app.register(fastifyHelmet /* helmetOptions */);
 await app.register(fastifyAwilixPlugin /* container + dispose flags */);
 await app.register(correlationIdPlugin);
+await app.register(localePlugin /* defaultLocale */);
 if (env.METRICS_ENABLED) await app.register(metricsPlugin /* metricsRecorder */);
 await app.register(fastifyCors /* origin + credentials */);
 await app.register(fastifyCookie /* secret when set */);
 await app.register(authPlugin);
 await app.register(idempotencyPlugin);
 
-registerErrorHandler(app);
+registerErrorHandler(app, { translator });
 
 if (!env.isProduction) {
   await app.register(fastifySwagger /* openapi + jsonSchemaTransform */);
@@ -247,30 +254,31 @@ await app.register(apiV1Routes, { prefix: API_V1_PREFIX });
 
 What fixes each position:
 
-| #   | Registered                                                                         | Constraint on its position                                                                                                                                                                 |
-| --- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1   | Zod validator + serializer compilers (**`fastify-type-provider-zod`**)             | Before routes — a route picks up the compilers in force when it is added                                                                                                                   |
-| 2   | **`@fastify/sensible`**                                                            | Before any route or plugin that calls a decorator such as `reply.unauthorized(...)`; nothing else constrains it                                                                            |
-| 3   | **`@fastify/helmet`** with `helmetOptions(env.isProduction)`                       | Before routes, so its header hook covers every response                                                                                                                                    |
-| 4   | **`@fastify/awilix`** with the injected container                                  | Before everything that resolves from `request.diScope.cradle` — its `onRequest` hook is what creates that scope                                                                            |
-| 5   | `correlationIdPlugin`                                                              | First among hook-adding first-party plugins, so the id is in context for every later hook, handler, log line, and error body ([Structured Logging](./structured-logging.md))               |
-| 6   | `metricsPlugin` — only when `env.METRICS_ENABLED`                                  | Before routes, or responses of earlier routes go unobserved ([Metrics](./metrics.md))                                                                                                      |
-| 7   | **`@fastify/cors`** with `{ origin: env.WEB_ORIGIN, credentials: true }`           | Before routes, so preflight handling and headers cover every route                                                                                                                         |
-| 8   | **`@fastify/cookie`** (`{ secret: env.COOKIE_SECRET }` when set, else `{}`)        | Before the auth routes that read and write the refresh cookie — in practice, before routes                                                                                                 |
-| 9   | `authPlugin`                                                                       | Before any route plugin referencing `app.authenticate`, or that reference is `undefined` at registration; also after `@fastify/awilix` ([Authentication](./authentication.md))             |
-| 10  | `idempotencyPlugin`                                                                | Before routes so its `preHandler`/`onSend` hooks wrap opted-in routes; its `preHandler` runs after validation, so the fingerprint hashes the parsed body ([Idempotency](./idempotency.md)) |
-| 11  | `registerErrorHandler(app)`                                                        | Before the routes whose throws it should catch — anything registered after it is covered, anything before is not                                                                           |
-| 12  | **`@fastify/swagger`** + **`@fastify/swagger-ui`** — only when `!env.isProduction` | Before the routes it documents (it harvests schemas via `onRoute`), or `/docs` renders an empty spec; `swagger-ui` must follow `swagger`                                                   |
-| 13  | `bullBoardPlugin` — only when `env.BULL_BOARD_ENABLED`                             | Deliberately before the limiter, so the dashboard sits outside the API quota ([Background Jobs](./background-jobs.md))                                                                     |
-| 14  | **`@fastify/rate-limit`** — only when `rateLimit` (default `true`)                 | Before the routes it should limit — the boundary that puts the three routers inside the quota and Bull Board outside it                                                                    |
-| 15  | `healthRoutes`, `metricsRoutes`, `apiV1Routes`                                     | Last, because everything above only reaches routes registered after it                                                                                                                     |
+| #   | Registered                                                                         | Constraint on its position                                                                                                                                                                    |
+| --- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Zod validator + serializer compilers (**`fastify-type-provider-zod`**)             | Before routes — a route picks up the compilers in force when it is added                                                                                                                      |
+| 2   | **`@fastify/sensible`**                                                            | Before any route or plugin that calls a decorator such as `reply.unauthorized(...)`; nothing else constrains it                                                                               |
+| 3   | **`@fastify/helmet`** with `helmetOptions(env.isProduction)`                       | Before routes, so its header hook covers every response                                                                                                                                       |
+| 4   | **`@fastify/awilix`** with the injected container                                  | Before everything that resolves from `request.diScope.cradle` — its `onRequest` hook is what creates that scope                                                                               |
+| 5   | `correlationIdPlugin`                                                              | First among hook-adding first-party plugins, so the id is in context for every later hook, handler, log line, and error body ([Structured Logging](./structured-logging.md))                  |
+| 6   | `localePlugin`                                                                     | Before routes so its `onRequest`/`onSend` hooks cover every response, and before `registerErrorHandler`, which reads `request.locale` ([Localized error messages](#localized-error-messages)) |
+| 7   | `metricsPlugin` — only when `env.METRICS_ENABLED`                                  | Before routes, or responses of earlier routes go unobserved ([Metrics](./metrics.md))                                                                                                         |
+| 8   | **`@fastify/cors`** with `{ origin: env.WEB_ORIGIN, credentials: true }`           | Before routes, so preflight handling and headers cover every route                                                                                                                            |
+| 9   | **`@fastify/cookie`** (`{ secret: env.COOKIE_SECRET }` when set, else `{}`)        | Before the auth routes that read and write the refresh cookie — in practice, before routes                                                                                                    |
+| 10  | `authPlugin`                                                                       | Before any route plugin referencing `app.authenticate`, or that reference is `undefined` at registration; also after `@fastify/awilix` ([Authentication](./authentication.md))                |
+| 11  | `idempotencyPlugin`                                                                | Before routes so its `preHandler`/`onSend` hooks wrap opted-in routes; its `preHandler` runs after validation, so the fingerprint hashes the parsed body ([Idempotency](./idempotency.md))    |
+| 12  | `registerErrorHandler(app, { translator })`                                        | Before the routes whose throws it should catch — anything registered after it is covered, anything before is not                                                                              |
+| 13  | **`@fastify/swagger`** + **`@fastify/swagger-ui`** — only when `!env.isProduction` | Before the routes it documents (it harvests schemas via `onRoute`), or `/docs` renders an empty spec; `swagger-ui` must follow `swagger`                                                      |
+| 14  | `bullBoardPlugin` — only when `env.BULL_BOARD_ENABLED`                             | Deliberately before the limiter, so the dashboard sits outside the API quota ([Background Jobs](./background-jobs.md))                                                                        |
+| 15  | **`@fastify/rate-limit`** — only when `rateLimit` (default `true`)                 | Before the routes it should limit — the boundary that puts the three routers inside the quota and Bull Board outside it                                                                       |
+| 16  | `healthRoutes`, `metricsRoutes`, `apiV1Routes`                                     | Last, because everything above only reaches routes registered after it                                                                                                                        |
 
 Three positions carry a non-obvious detail. **Step 4** passes no `injectionMode`: supplying it
 alongside `container` makes the plugin refuse to register ("If you are passing pre-created container
 explicitly, you cannot specify injection mode"), which rejects the `await app.register(...)` and fails
-the boot — the injection mode lives in `APP_CONTAINER_OPTIONS`. **Step 9** registers a _decorator_,
+the boot — the injection mode lives in `APP_CONTAINER_OPTIONS`. **Step 10** registers a _decorator_,
 not a global hook, so it does nothing until a route group wires it (`userRoutes` opens with
-`app.addHook('onRequest', app.authenticate)`). **Step 15** mounts `healthRoutes` under `/health` with
+`app.addHook('onRequest', app.authenticate)`). **Step 16** mounts `healthRoutes` under `/health` with
 `container.cradle.healthCheck`, `metricsRoutes` under `/metrics` when `env.METRICS_ENABLED`, and
 `apiV1Routes` under `API_V1_PREFIX`; both operational routers opt out of the limiter in their own
 `onRoute` hook (`route.config = { ...route.config, rateLimit: false }`), so a kubelet polling
@@ -308,16 +316,20 @@ Every failure funnels through `registerErrorHandler`'s single `setErrorHandler`
 `KIND_TO_STATUS`, a Fastify `error.validation` to `400`/`VALIDATION`, any other error carrying a 4xx
 `statusCode` to that status, and anything else to `500`. The full mapping is tabulated under
 [Error-response envelope](#error-response-envelope). Operational errors log at `info`, non-operational
-at `error`, and the `500` body carries the generic message `Internal Server Error` so internal detail
-never leaks. An unmatched route is caught by `setNotFoundHandler` → `404` with code `ROUTE_NOT_FOUND`
-and message `Route <METHOD> <URL> not found`; because the resource routers exist only under `/v1`, an
-unversioned call like `GET /users` lands here.
+at `error`, and a non-operational error is reduced by `publicErrorBody` to its `code` plus a generic
+message — dropping both `details` and the developer message — so internal detail never leaks. Every
+message the client sees is looked up by `code` in the negotiated language (see
+[Localized error messages](#localized-error-messages)). An unmatched route is caught by
+`setNotFoundHandler` → `404` with code `ROUTE_NOT_FOUND` and the catalogued `error.ROUTE_NOT_FOUND`
+message; because the resource routers exist only under `/v1`, an unversioned call like `GET /users`
+lands here.
 
 ## Architecture
 
 This feature is not port/adapter-shaped like the others. It is the **HTTP application factory**, the
-**composition-root entry** that feeds it, the one **infrastructure** adapter the boundary owns (the
-limiter's Redis handle), and the framework-free **shared** vocabulary (`src/shared/errors`,
+**composition-root entry** that feeds it, the two **infrastructure** adapters the boundary owns (the
+limiter's Redis handle and the ICU translator behind the `Translator` port), and the framework-free
+**shared** vocabulary (`src/shared/errors`, `src/shared/i18n`, `src/shared/validation`,
 `src/shared/pagination`) that both the boundary and the inner layers speak. Inner layers throw
 **semantic `AppError`s** — framework-free classes naming the _kind_ of failure (`NotFoundError`,
 `ConflictError`, …) rather than an HTTP status — and return plain DTOs / `Page` objects with no HTTP
@@ -343,11 +355,18 @@ every route handler reaching for its use case in `request.diScope.cradle`.
 | `APP_CONTAINER_OPTIONS`                                         | Composition root | The shared `ContainerOptions` leaf (`InjectionMode.PROXY`, `strict: true`) used by production and the unit-test kit alike                                                                  | `src/container-options.ts`                                   |
 | `baseLogger` cradle registration                                | Composition root | Puts Fastify's root `FastifyBaseLogger` in the cradle beside the `Logger` port that wraps it                                                                                               | `src/composition/platform.ts`                                |
 | `createRateLimitRedis`                                          | Infrastructure   | Builds the limiter's dedicated `ioredis` client (tight connect/command timeouts, no offline queue); registered as the `rateLimitRedis` singleton with a `disconnect` disposer              | `src/infrastructure/security/rate-limit-redis.ts`            |
+| `IcuTranslator`                                                 | Infrastructure   | ICU adapter for the `Translator` port (`intl-messageformat`); caches one formatter per `(locale, key)` and degrades to `undefined` with a warning rather than throwing                     | `src/infrastructure/i18n/icu-translator.ts`                  |
+| `messageCatalogue`                                              | Infrastructure   | The per-locale message tables, each closed with `satisfies Record<MessageKey, string>` so a missing translation fails the build                                                            | `src/infrastructure/i18n/messages/catalogue.ts`              |
+| `Translator`                                                    | Application      | One-method port turning a `MessageKey` plus a `Locale` into prose, or `undefined` when it cannot                                                                                           | `src/application/shared/ports/translator.ts`                 |
 | `buildHealthApp`                                                | Presentation     | The worker's minimal probe server — Fastify + the Zod compilers + `/health` and (when enabled) `/metrics`, skipping the whole cross-cutting chain. See [Health Checks](./health-checks.md) | `src/presentation/http/health-app.ts`                        |
 | `API_V1_PREFIX`                                                 | Presentation     | The single constant naming the current API URL version (`/v1`)                                                                                                                             | `src/presentation/http/api-version.ts`                       |
 | `apiV1Routes`                                                   | Presentation     | Mounts the v1 resource routers (`/auth`, `/users`, `/roles`, `/permissions`) under the version prefix                                                                                      | `src/presentation/http/routes/api-v1-routes.ts`              |
 | `registerErrorHandler`                                          | Presentation     | Single `setErrorHandler` + `setNotFoundHandler`; maps every error to the JSON envelope                                                                                                     | `src/presentation/http/error-handler.ts`                     |
 | `KIND_TO_STATUS`                                                | Presentation     | Maps each `ErrorKindType` to its HTTP status code                                                                                                                                          | `src/presentation/http/error-handler.ts`                     |
+| `publicErrorBody`                                               | Presentation     | The one named policy for what an error may show an untrusted client; redacts a non-operational error to its `code` plus a generic message                                                  | `src/presentation/http/error-body.ts`                        |
+| `toValidationFields`                                            | Presentation     | Maps Fastify's `error.validation` issues to the public `{ field, rule, message }` shape, pinned to Zod's issue-code union                                                                  | `src/presentation/http/validation-errors.ts`                 |
+| `candidateOrder` / `pickLocale`                                 | Presentation     | The pure locale decisions `localePlugin` delegates to, so the plugin itself stays branch-free                                                                                              | `src/presentation/http/locale-negotiation.ts`                |
+| `withVaryValue`                                                 | Presentation     | Merges a header name into an existing `Vary` value without duplicating or dropping entries                                                                                                 | `src/presentation/http/vary.ts`                              |
 | `helmetOptions` / `rateLimitOptions`                            | Presentation     | The helmet CSP toggle, and the limiter's `max`, `timeWindow`, `skipOnError`, Redis `nameSpace`, and `errorResponseBuilder`; the Redis handle is spread in by `buildApp`                    | `src/presentation/http/security.ts`                          |
 | `httpHardeningOptions`                                          | Presentation     | Pure projection of the five transport limits onto Fastify's option names, nesting `maxParamLength` under `routerOptions`; used by `buildApp` and `buildHealthApp`                          | `src/presentation/http/server-options.ts`                    |
 | `errorResponse`                                                 | Presentation     | Zod response contract routes declare for error statuses                                                                                                                                    | `src/presentation/http/schemas/error-schema.ts`              |
@@ -355,6 +374,7 @@ every route handler reaching for its use case in `request.diScope.cradle`.
 | `timestamp`                                                     | Presentation     | Zod response contract for date fields (`z.date()`)                                                                                                                                         | `src/presentation/http/schemas/timestamp-schema.ts`          |
 | `correlationIdPlugin`                                           | Presentation     | Per-request correlation id (see [Structured Logging](./structured-logging.md))                                                                                                             | `src/presentation/http/plugins/correlation-id.ts`            |
 | `metricsPlugin` / `MetricsPluginOptions`                        | Presentation     | `onResponse` hook recording HTTP metrics through an injected `MetricsRecorder` (see [Metrics](./metrics.md))                                                                               | `src/presentation/http/plugins/metrics.ts`                   |
+| `localePlugin` / `LocalePluginOptions`                          | Presentation     | Negotiates `request.locale` from `Accept-Language` and stamps `Content-Language` / `Vary` on every response                                                                                | `src/presentation/http/plugins/locale.ts`                    |
 | `authPlugin`                                                    | Presentation     | `authenticate` decorator for bearer auth (see [Authentication](./authentication.md))                                                                                                       | `src/presentation/http/plugins/authenticate.ts`              |
 | `idempotencyPlugin`                                             | Presentation     | `preHandler`/`onSend` hooks replaying or storing responses for opted-in routes (see [Idempotency](./idempotency.md))                                                                       | `src/presentation/http/plugins/idempotency.ts`               |
 | `bullBoardPlugin` / `BullBoardPluginOptions`                    | Presentation     | Basic-auth-guarded Bull Board mount over an injected `Queue`; the only cross-cutting plugin left encapsulated (see [Background Jobs](./background-jobs.md))                                | `src/presentation/http/plugins/bull-board.ts`                |
@@ -363,9 +383,13 @@ every route handler reaching for its use case in `request.diScope.cradle`.
 | `AppError`                                                      | Shared           | Abstract base error carrying `kind`, `code`, `details`, `isOperational`, `timestamp`, `toJSON()`                                                                                           | `src/shared/errors/app-error.ts`                             |
 | `ErrorKind`                                                     | Shared           | The closed set of error kinds (`VALIDATION`…`INTERNAL`)                                                                                                                                    | `src/shared/errors/app-error.ts`                             |
 | `ValidationError` … `InternalError`                             | Shared           | The semantic `AppError` subclasses inner layers throw                                                                                                                                      | `src/shared/errors/semantic-errors.ts`                       |
+| `ErrorCode` / `isErrorCode`                                     | Shared           | The closed registry every error code must come from, and the guard the error handler uses to tell a registry code from a Fastify `FST_ERR_*` one                                           | `src/shared/errors/error-code.ts`                            |
+| `MessageKey` / `errorMessageKey` / `validationMessageKey`       | Shared           | The catalogue key type derived from the registry, and the only two functions that build one                                                                                                | `src/shared/i18n/message-key.ts`                             |
+| `VALIDATION_RULES` / `ValidationRule`                           | Shared           | The public vocabulary for field-level failures, published in OpenAPI as an enum                                                                                                            | `src/shared/validation/validation-rule.ts`                   |
 | `normalizePageQuery` / `createPage`                             | Shared           | Framework-free pagination: clamp request input, compute page metadata                                                                                                                      | `src/shared/pagination.ts`                                   |
 | `Page` / `PageQuery` / `PageSlice`                              | Shared           | Pagination types shared by use cases, repositories, and response schemas                                                                                                                   | `src/shared/pagination.ts`                                   |
 | `env`                                                           | Config           | Parse + validate the whole environment once at boot (`envalid`), exported frozen                                                                                                           | `src/config/env.ts`                                          |
+| `SUPPORTED_LOCALES` / `Locale` / `FALLBACK_LOCALE`              | Config           | The languages this deployment can serve and the last-resort locale when a request carries none                                                                                             | `src/config/locales.ts`                                      |
 | `assertProductionSecrets`                                       | Config           | Boot-time guard: refuse to start when a production secret is weak                                                                                                                          | `src/config/assert-production-secrets.ts`                    |
 | `parseTrustProxy`                                               | Config           | Boot-time guard and parser for the `TRUST_PROXY` grammar; rejects hop counts, which Fastify no longer honours                                                                              | `src/config/trust-proxy.ts`                                  |
 | `trustProxy` / `httpLimits`                                     | Config           | Derived transport configuration read once from `env`; the single owner of the environment-to-consumer mapping for both servers                                                             | `src/config/http-transport.ts`                               |
@@ -428,6 +452,12 @@ Every business endpoint lives under `API_V1_PREFIX` (`/v1`): `/v1/auth/*`, `/v1/
 For anything mounting these plugins directly (the unit tests do):
 
 ```ts
+interface LocalePluginOptions {
+  defaultLocale: Locale;
+} // plugins/locale.ts
+interface ErrorHandlerDependencies {
+  translator: Translator;
+} // error-handler.ts
 interface MetricsPluginOptions {
   metricsRecorder: MetricsRecorder;
 } // plugins/metrics.ts
@@ -456,7 +486,7 @@ which callers spread straight into `fastify(...)` without naming the type.
 ### Error-response envelope
 
 Every failure — validation, auth, rate limit, unknown crash, unknown route — comes back as
-`{ "error": { "code": "EMAIL_TAKEN", "message": "…", "details": { … }, "requestId": "a1b2c3d4-…" } }`.
+`{ "error": { "code": "EMAIL_ALREADY_TAKEN", "message": "…", "details": { … }, "requestId": "a1b2c3d4-…" } }`.
 The shape is guaranteed by _construction_, not validation: `setErrorHandler` and `setNotFoundHandler`
 are the single producers of every error body, and they build it unconditionally. `errorResponse` (in
 `error-schema.ts`) is a separate, **opt-in** Zod contract a route declares for a given status — it
@@ -466,22 +496,126 @@ with no `response` map (`POST /v1/auth/logout` declares only a `body` schema). `
 `requestId` are always present, `details` is optional, and `requestId` equals the correlation id
 (`x-request-id`), so a client error report is traceable to that request's log lines.
 
-| HTTP status | `code`                          | Source                                                    |
-| ----------- | ------------------------------- | --------------------------------------------------------- |
-| 400         | `VALIDATION` (or a custom code) | `ValidationError`, or a Fastify schema-validation failure |
-| 401         | `UNAUTHORIZED`                  | `UnauthorizedError`                                       |
-| 403         | `FORBIDDEN`                     | `ForbiddenError`                                          |
-| 404         | `NOT_FOUND` / `ROUTE_NOT_FOUND` | `NotFoundError` / unmatched route                         |
-| 409         | `CONFLICT`                      | `ConflictError`                                           |
-| 429         | `RATE_LIMITED`                  | rate limiter's `errorResponseBuilder`                     |
-| 4xx         | `error.code ?? 'BAD_REQUEST'`   | any non-`AppError` with a 4xx `statusCode`                |
-| 500         | `INTERNAL`                      | `InternalError` or any unhandled error (generic message)  |
+| HTTP status | `code`                            | Source                                                                                          |
+| ----------- | --------------------------------- | ----------------------------------------------------------------------------------------------- |
+| 400         | `VALIDATION` (or a registry code) | `ValidationError`, or a Fastify schema-validation failure (which also carries `details.fields`) |
+| 401         | `UNAUTHORIZED`                    | `UnauthorizedError`                                                                             |
+| 403         | `FORBIDDEN`                       | `ForbiddenError`                                                                                |
+| 404         | `NOT_FOUND` / `ROUTE_NOT_FOUND`   | `NotFoundError` / unmatched route                                                               |
+| 409         | `CONFLICT`                        | `ConflictError`                                                                                 |
+| 429         | `RATE_LIMITED`                    | rate limiter's `errorResponseBuilder`                                                           |
+| 4xx         | `error.code ?? 'BAD_REQUEST'`     | any non-`AppError` with a 4xx `statusCode`                                                      |
+| 500         | `INTERNAL`                        | `InternalError` or any unhandled error (generic message)                                        |
 
 The status is governed by the error's `kind`; the `code` defaults to the kind string but a semantic
-error accepts a **custom** `code` (e.g. `new ConflictError('…', { code: 'EMAIL_TAKEN' })`) that
-overrides the default while the status stays fixed. The idempotency plugin uses exactly this mechanism
+error accepts any member of the closed **`ErrorCode` registry** (`src/shared/errors/error-code.ts`) —
+e.g. `new ConflictError('…', { code: 'EMAIL_ALREADY_TAKEN' })` — which overrides the default while the
+status stays fixed. `SemanticErrorOptions.code` is typed `ErrorCodeType`, so inventing a code outside
+the registry is a compile error; adding one to the registry obliges a message in every catalogue. The idempotency plugin uses exactly this mechanism
 for its `409 IDEMPOTENCY_KEY_IN_PROGRESS` and `400 IDEMPOTENCY_KEY_INVALID` /
 `IDEMPOTENCY_KEY_MISMATCH` answers (see [Idempotency](./idempotency.md)).
+
+### Localized error messages
+
+Every user-facing string in an error body is produced at the HTTP boundary and nowhere else. A domain
+or application error carries a stable machine `code` plus structured `details`; `registerErrorHandler`
+turns `(code, details, locale)` into prose by asking the **`Translator`** port
+(`src/application/shared/ports/translator.ts`) for `error.<CODE>`, and falls back to the error's
+English developer message whenever the catalogue has no entry or the template cannot be formatted.
+The English sentence therefore stays in the constructor on purpose: it is the log/developer message
+and the last-resort fallback, while the catalogue holds the wording a client reads.
+
+`localePlugin` (`plugins/locale.ts`) negotiates the locale once per request from `Accept-Language`
+through `@fastify/accepts`, writes it to `request.locale`, stamps `Content-Language` on every response
+(including 404s, since root `onRequest` hooks run for the not-found context) and merges
+`Accept-Language` into `Vary`, so a CDN cannot hand a Russian body to an English client. A request
+that expresses no usable preference gets `DEFAULT_LOCALE`. The plugin itself contains **no
+conditional** — negotiation is delegated to `candidateOrder`/`pickLocale` (`locale-negotiation.ts`)
+and header merging to `withVaryValue` (`vary.ts`), which is what keeps the 100 % branch gate over
+`plugins/**` achievable rather than aspirational.
+
+The pieces, from the inside out:
+
+| Module                                       | Owns                                                                               |
+| -------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `src/config/locales.ts`                      | `SUPPORTED_LOCALES` (`en`, `ru`), the `Locale` type, `FALLBACK_LOCALE`             |
+| `src/shared/errors/error-code.ts`            | the closed `ErrorCode` registry and `isErrorCode`                                  |
+| `src/shared/validation/validation-rule.ts`   | `VALIDATION_RULES` — the public vocabulary for field-level failures                |
+| `src/shared/i18n/message-key.ts`             | `MessageKey`, derived from both, plus the only two functions that build a key      |
+| `src/application/shared/ports/translator.ts` | the one-method port, returning `string \| undefined`                               |
+| `src/infrastructure/i18n/messages/*.ts`      | one catalogue per locale, each closed with `satisfies Record<MessageKey, string>`  |
+| `src/infrastructure/i18n/icu-translator.ts`  | the ICU adapter (`intl-messageformat`), with a per-`(locale, key)` formatter cache |
+| `src/composition/i18n.ts`                    | `messageCatalogue`, `translator` and `defaultLocale` in the cradle                 |
+
+Three compile-time closures do the work a linter or a runtime check would do worse. `MessageKey` is a
+template-literal type over the registry, so `translate('erorr.USER_NOT_FOUND', …)` does not compile.
+Each catalogue's `satisfies Record<MessageKey, string>` makes a missing translation a build error, so
+adding a code to `ErrorCode` obliges a sentence in **every** language. And
+`messages/catalogue.ts`'s `satisfies Record<Locale, LocaleMessages>` makes a locale without a
+catalogue a build error. Adding a language is therefore exactly three files — `locales.ts`, the new
+catalogue, `messages/catalogue.ts` — and the compiler names the one you forget.
+
+The translator **never throws**. It sits on the error path, so a missing key or a bad ICU template
+degrades to the English developer message rather than raising a second exception or shipping a raw
+`{id}` to a client. It logs a warning and negatively caches the failure, so a broken template is
+compiled and reported once rather than on every request.
+
+Two rules keep catalogue authoring honest. Any value a template names must appear in the error's
+`details` under that same name — that is why `UserNotFoundError` passes `details: { id }`. And in ICU
+a `'` opens a quoted literal, so `"Don't {id} do it"` swallows the placeholder; write `''` for a
+literal apostrophe. `messages/catalogue.test.ts` reads the parsed AST specifically to catch that.
+
+#### Field-level validation errors
+
+A schema failure keeps Fastify's structured `error.validation` array instead of flattening it to one
+English sentence. The `400` body carries `details.fields`, one entry per failed field:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION",
+    "message": "Запрос содержит некорректные данные.",
+    "details": {
+      "fields": [
+        {
+          "field": "email",
+          "rule": "invalid_format",
+          "message": "Значение не соответствует ожидаемому формату."
+        },
+        { "field": "password", "rule": "too_small", "message": "Минимальная длина — 8 символов." }
+      ]
+    },
+    "requestId": "a1b2c3d4-…"
+  }
+}
+```
+
+`rule` is a `ValidationRule` and is published in OpenAPI as an enum by `errorResponse`, whose
+`details` is now a union of `{ fields }` and an open record — the second arm is what keeps an
+`AppError`'s arbitrary `details` (such as `PermissionDeniedError`'s `{ required }`) alive through the
+Zod serializer. In `validation-errors.ts`, `ZOD_KEYWORD_TO_RULE satisfies Record<$ZodIssueCode, ValidationRule>`
+pins the map to Zod's own union, so a rename like v4's `invalid_string` → `invalid_format` breaks the
+build instead of silently collapsing every affected field to a generic sentence.
+
+Two contract facts worth publishing to clients: `field` is **section-relative** — `instancePath` does
+not say whether the body, querystring or params failed, so a body `email` and a querystring `email`
+both serialize as `"email"` — and array indices serialize as `tags.0`, not `tags[0]`.
+
+#### Redaction
+
+`publicErrorBody` (`error-body.ts`) is the single named policy for what an error may show an untrusted
+client: an operational error round-trips `toJSON()` unchanged, while a non-operational one is reduced
+to its `code` plus `INTERNAL_FALLBACK_MESSAGE`, dropping both `details` and the developer message. The
+error handler localizes that **redacted** body, so a 500's internals cannot reach a client as a
+message, as a `details` field, or as an ICU interpolation value. The policy deliberately does **not**
+live in `AppError.toJSON()`: that is the ECMAScript serialization protocol `JSON.stringify` invokes
+implicitly, so a future outbox row, job payload or error-reporting sink would silently lose `details`
+with no call site to grep for.
+
+Known gaps: an idempotent replay returns the cached body byte-for-byte while `Content-Language`
+reflects the new request, because `fingerprintRequest()` hashes method, URL and body but not headers;
+and email templates are not localized, since the worker builds its app through `buildHealthApp` and
+has no request context to read a locale from.
 
 ### Pagination envelope
 
@@ -495,7 +629,8 @@ List endpoints accept `page` and `pageSize` query parameters (defaults `page=1`,
 ### Shared building blocks
 
 ```ts
-// src/shared/errors  — throw meaning, not HTTP. Each also takes { code?, details?, cause? }.
+// src/shared/errors  — throw meaning, not HTTP. Each also takes { code?: ErrorCodeType,
+//                      details?, cause? }; `code` must be a member of the ErrorCode registry.
 new ValidationError(message);    // → 400          new NotFoundError(message); // → 404
 new ConflictError(message);      // → 409          new ForbiddenError(message?); // → 403 'Forbidden'
 new UnauthorizedError(message?); // → 401 'Unauthorized'
@@ -508,7 +643,8 @@ function createPage<T>(items: T[], total: number, query: PageQuery): Page<T>; //
 // src/presentation/http/schemas  — Zod response contracts feature routes reference
 function paginated<Item extends z.ZodType>(item: Item); // page envelope
 const timestamp; // z.date() for date fields
-const errorResponse; // the error envelope
+const errorResponse; // the error envelope, with details typed as { fields } | an open record
+const validationFieldError; // one { field, rule, message } entry of details.fields
 ```
 
 ### Route decorators, config flags, and identity helpers
@@ -516,6 +652,8 @@ const errorResponse; // the error envelope
 ```ts
 app.authenticate;                  // FastifyInstance decorator — verifies the bearer token and sets
 request.user?: AccessTokenPayload; // request.user; wire it as an onRequest/preHandler hook
+
+request.locale?: Locale;           // the negotiated language, set by localePlugin's onRequest hook
 
 app.diContainer;                   // the container buildApp was given (root cradle)
 request.diScope;                   // its per-request child scope, disposed on response
@@ -556,6 +694,7 @@ or a boot-time guard.
 | `PORT`                     | `8000`                                                    | Listen port of the API process.                                                                                                                                                                                            |
 | `WORKER_PORT`              | `8001`                                                    | Listen port of the worker's probe server — the app built by `buildHealthApp` and started in `src/worker.ts`. See [Health Checks](./health-checks.md).                                                                      |
 | `LOG_LEVEL`                | `info`                                                    | Pino level (`fatal`…`trace`); `main.ts` passes it to `createBaseLogger`, whose logger lands in the cradle as `baseLogger` and becomes Fastify's `loggerInstance`. See [Structured Logging](./structured-logging.md).       |
+| `DEFAULT_LOCALE`           | `en`                                                      | Language served to a client that sends no usable `Accept-Language`; one of `SUPPORTED_LOCALES` (`src/config/locales.ts`). See [Localized error messages](#localized-error-messages).                                       |
 | `JWT_ACCESS_SECRET`        | `—`                                                       | Access-token signing secret (required); the boot-time guard demands ≥ 32 chars in production. See [Authentication](./authentication.md).                                                                                   |
 | `REFRESH_TOKEN_TTL`        | `1209600`                                                 | Refresh-token lifetime in seconds (14 days); also the refresh-cookie `Max-Age` set by `cookies.ts`.                                                                                                                        |
 | `COOKIE_SECRET`            | `''` (empty)                                              | When non-empty, cookies are signed; passed to `@fastify/cookie` and read by the cookie helpers. The boot-time guard demands ≥ 32 chars in production.                                                                      |
@@ -721,9 +860,12 @@ It becomes the right HTTP response automatically — no `try/catch`, no status c
 ```ts
 // inside a use case (application layer)
 if (await this.users.findByEmail(email)) {
-  throw new ConflictError('Email already registered', { code: 'EMAIL_TAKEN', details: { email } });
+  throw new ConflictError('Email already registered', {
+    code: 'EMAIL_ALREADY_TAKEN',
+    details: { email },
+  });
 }
-// → 409 { "error": { "code": "EMAIL_TAKEN", "message": "…", "details": {…}, "requestId": "…" } }
+// → 409 { "error": { "code": "EMAIL_ALREADY_TAKEN", "message": "…", "details": {…}, "requestId": "…" } }
 ```
 
 ### Add a new error kind
@@ -790,7 +932,7 @@ Then add exactly one line to `buildApp`:
 await app.register(idempotencyPlugin);
 await app.register(tenantPlugin); // hooks must wrap routes → before route registration
 
-registerErrorHandler(app);
+registerErrorHandler(app, { translator: container.cradle.translator });
 ```
 
 If the plugin needs a collaborator from the graph, **declare it as a plugin option and let `buildApp`
@@ -818,12 +960,13 @@ applicable rule allows, then register before every route:
 | resolves per request from `request.diScope.cradle`     | **after** `fastifyAwilixPlugin` (that's what creates `request.diScope`)  |
 | needs a value from the graph at composition time       | anywhere — the container arrives fully wired; take it as a plugin option |
 | adds hooks that must wrap routes                       | **before** the route registrations at the end of `buildApp`              |
-| must observe or translate errors thrown by other hooks | **before** `registerErrorHandler(app)`                                   |
+| must observe or translate errors thrown by other hooks | **before** `registerErrorHandler(app, …)`                                |
 | should be exempt from / covered by the global limiter  | **before** / **after** `fastifyRateLimit`                                |
 | deliberately scopes its hooks to one mount only        | drop the `fp()` wrapper (this is what `bullBoardPlugin` does)            |
 
-Give it a sibling test under `plugins/` — the existing five (`authenticate.test.ts`,
-`correlation-id.test.ts`, `idempotency.test.ts`, `metrics.test.ts`, `bull-board.test.ts`) build a bare
+Give it a sibling test under `plugins/` — the existing six (`authenticate.test.ts`,
+`correlation-id.test.ts`, `idempotency.test.ts`, `locale.test.ts`, `metrics.test.ts`,
+`bull-board.test.ts`) build a bare
 Fastify instance, register the plugin with a `vitest-mock-extended` `mock<T>()` or a
 `registerTestContainer` stub for its collaborators, and `inject` requests at it.
 
@@ -980,7 +1123,7 @@ app.post(
   lifetime is the actual requirement. Two supporting choices follow: `APP_CONTAINER_OPTIONS` lives in
   a leaf module rather than an export of `container.ts`, so the unit-test kit shares the exact
   injection mode and strictness without a _value_ import of `createRegistrations` dragging all
-  thirteen composition modules (Prisma, ioredis, bullmq, argon2, jose) into lean unit tests; and
+  fourteen composition modules (Prisma, ioredis, bullmq, argon2, jose) into lean unit tests; and
   `injectionMode` is a container property rather than a plugin option because
   `@fastify/awilix@8.2.1` rejects `{ container, injectionMode }` together.
 - **Registration order is load-bearing for hooks, not for wiring.** Misordering the chain fails
@@ -1106,12 +1249,33 @@ Unit tests run under Vitest beside the code they cover. `src/container.ts` and
   `.options` equals `{ injectionMode: InjectionMode.PROXY, strict: true }`; `cradle.baseLogger` is the
   very logger the factory was given.
 - `src/composition/compose.test.ts` — builds a real container through `createAppContainer` and asserts
-  the merged registration map is complete and free of duplicate keys across the thirteen modules.
-- `src/presentation/http/error-handler.test.ts` — routes that throw each error type; asserts every
-  `AppError` subclass maps to its status (400/404/409/401/403/500), a Fastify `error.validation` yields
-  `400`/`VALIDATION`, a non-`AppError` 4xx uses its own `statusCode` and `code` (falling back to
-  `BAD_REQUEST`), an unhandled error yields `500`/`INTERNAL` with the generic message, unknown routes
-  yield `404`/`ROUTE_NOT_FOUND`, and every body carries `requestId`.
+  the merged registration map is complete and free of duplicate keys across the fourteen modules.
+- `src/presentation/http/error-handler.test.ts` — routes that throw each error type, wired to a real
+  `IcuTranslator` over the shipped catalogues; asserts every `AppError` subclass maps to its status
+  (400/404/409/401/403/500), a Fastify `error.validation` yields `400`/`VALIDATION` plus localized
+  `details.fields`, a non-`AppError` 4xx uses its own `statusCode` and `code` (falling back to
+  `BAD_REQUEST`) and is localized only when that code is in the registry, an unhandled error yields
+  `500`/`INTERNAL`, unknown routes yield `404`/`ROUTE_NOT_FOUND`, and every body carries `requestId`.
+  It also pins the localization contract: a catalogued code interpolates from `details`, an
+  unformattable template falls back to the developer message, a non-operational error loses its
+  `details` and developer message, a request with no `locale` decorator uses `FALLBACK_LOCALE`, and a
+  second app registering `localePlugin` with `defaultLocale: 'ru'` answers in Russian.
+- `src/presentation/http/plugins/locale.test.ts` — negotiation against `defaultLocale: 'ru'` (so no
+  assertion passes vacuously): regional tags match their base language, q-values outrank candidate
+  order, and an unsupported, absent, wildcard or malformed header falls back to the default; asserts
+  `Content-Language` on every response including a 404, and that `Vary` gains `Accept-Language`
+  without dropping a value the route already set.
+- `src/presentation/http/locale-negotiation.test.ts`, `vary.test.ts`, `validation-errors.test.ts` and
+  `error-body.test.ts` — the pure decisions the plugin and the error handler delegate to: candidate
+  ordering and locale choice, `Vary` merging over every shape `getHeader` returns, Zod-issue → public
+  field error (including the `unknown` rule and the `''` message fallback), and the operational /
+  non-operational redaction policy.
+- `src/infrastructure/i18n/icu-translator.test.ts`, `icu-values.test.ts` and
+  `messages/catalogue.test.ts` — the ICU adapter's plural rules in both locales, its `undefined`-on-miss
+  contract and its negative cache (a malformed template is compiled and logged once), the coercion of
+  arbitrary `details` into ICU-formattable values, and a catalogue check that every locale defines the
+  same keys and the same ICU argument names, read from the parsed AST rather than a regex so an
+  apostrophe that quotes a placeholder out of existence is caught.
 - `src/presentation/http/security.test.ts` — registers helmet and rate-limit with the real option
   builders; asserts `x-content-type-options: nosniff`, the `x-ratelimit-*` headers, a `429` in the
   `RATE_LIMITED` envelope once the global limit trips, an independently enforced stricter per-route
@@ -1167,6 +1331,11 @@ Integration tests (real container, Redis-backed; configured by `vitest.integrati
   `RATE_LIMIT_KEY_NAMESPACE`-prefixed keys (read back through `app.diContainer.cradle.rateLimitRedis`),
   and proves fail-open by disconnecting that handle and still receiving a `401` rather than a block. It
   stays green under the suite's `TRUST_PROXY=loopback` because its requests carry no `X-Forwarded-For`.
+- `test/integration/i18n.int.test.ts` — a real `POST /v1/auth/register` with an invalid body answers
+  in Russian with `details.fields` and `Content-Language: ru` when the client asks for it and in the
+  default language when it does not; a 403 on `PATCH /v1/roles/{id}` still serializes its arbitrary
+  `details.required` through the widened `errorResponse` union; and a missing role id returns the
+  localized `ROLE_NOT_FOUND` body through the Zod serializer.
 - `test/integration/http-hardening.int.test.ts` — pins the **wiring**, not just the factory: asserts
   `app.server.requestTimeout` equals `env.REQUEST_TIMEOUT_MS` and
   `app.initialConfig.routerOptions?.maxParamLength` equals `env.MAX_PARAM_LENGTH`, then proves a forged
