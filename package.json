@@ -75,7 +75,7 @@
     "lint-staged": "^17.6.0",
     "prettier": "^3.9.10",
     "prisma": "^7.10.1",
-    "tsup": "^8.5.1",
+    "tsup": "^9.0.0",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.1",
