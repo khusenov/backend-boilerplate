@@ -79,8 +79,8 @@
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.1",
-    "vitest": "^5.0.1",
-    "vitest-mock-extended": "^5.1.1"
+    "vitest": "^5.1.1",
+    "vitest-mock-extended": "^6.0.1"
   },
   "overrides": {
     "esbuild": "~0.28.1",
